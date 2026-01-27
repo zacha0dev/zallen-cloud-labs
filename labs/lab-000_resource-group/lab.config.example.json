@@ -1,0 +1,9 @@
+{
+  "location": "centralus",
+  "rgPrefix": "rg-azure-labs",
+  "vnetPrefix": "vnet-azure-labs",
+  "vnetCidr": "10.50.0.0/16",
+  "subnet1Cidr": "10.50.1.0/24",
+  "subnet2Cidr": "10.50.2.0/24",
+  "subs": ["sub01", "sub02"]
+}

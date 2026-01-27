@@ -74,3 +74,7 @@ logs/
 !logs/.keep
 logs/*.log
 logs/*.txt
+
+
+
+labs/**/lab.config.json

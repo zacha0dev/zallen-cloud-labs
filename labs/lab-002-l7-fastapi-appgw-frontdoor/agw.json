@@ -1,0 +1,88 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "type": "string" },
+    "agwName": { "type": "string" },
+    "pipName": { "type": "string" },
+    "subnetId": { "type": "string" },
+    "backendIp": { "type": "string" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/applicationGateways",
+      "apiVersion": "2023-11-01",
+      "name": "[parameters('agwName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": { "name": "Standard_v2", "tier": "Standard_v2", "capacity": 1 },
+        "gatewayIPConfigurations": [
+          {
+            "name": "gwipc",
+            "properties": { "subnet": { "id": "[parameters('subnetId')]" } }
+          }
+        ],
+        "frontendIPConfigurations": [
+          {
+            "name": "feip",
+            "properties": {
+              "publicIPAddress": { "id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('pipName'))]" }
+            }
+          }
+        ],
+        "frontendPorts": [ { "name": "feport80", "properties": { "port": 80 } } ],
+        "backendAddressPools": [
+          { "name": "poolFastapi", "properties": { "backendAddresses": [ { "ipAddress": "[parameters('backendIp')]" } ] } }
+        ],
+        "backendHttpSettingsCollection": [
+          {
+            "name": "hsFastapi",
+            "properties": {
+              "port": 8000,
+              "protocol": "Http",
+              "cookieBasedAffinity": "Disabled",
+              "pickHostNameFromBackendAddress": false,
+              "probe": { "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('agwName')), '/probes/probeFastapi')]" }
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "probeFastapi",
+            "properties": {
+              "protocol": "Http",
+              "path": "/health",
+              "interval": 30,
+              "timeout": 30,
+              "unhealthyThreshold": 3,
+              "pickHostNameFromBackendHttpSettings": false, "host": "127.0.0.1"
+            }
+          }
+        ],
+        "httpListeners": [
+          {
+            "name": "listener80",
+            "properties": {
+              "frontendIPConfiguration": { "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('agwName')), '/frontendIPConfigurations/feip')]" },
+              "frontendPort": { "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('agwName')), '/frontendPorts/feport80')]" },
+              "protocol": "Http"
+            }
+          }
+        ],
+        "requestRoutingRules": [
+          {
+            "name": "ruleFastapi",
+            "properties": {
+              "ruleType": "Basic",
+              "httpListener": { "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('agwName')), '/httpListeners/listener80')]" },
+              "backendAddressPool": { "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('agwName')), '/backendAddressPools/poolFastapi')]" },
+              "backendHttpSettings": { "id": "[concat(resourceId('Microsoft.Network/applicationGateways', parameters('agwName')), '/backendHttpSettingsCollection/hsFastapi')]" },
+              "priority": 100
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+
