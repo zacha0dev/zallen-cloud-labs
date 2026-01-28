@@ -77,8 +77,8 @@ Write-Host "  AWS: $AwsProfile ($AwsRegion)" -ForegroundColor Gray
 if (-not $Force) {
   Write-Host ""
   Write-Host "This creates billable resources:" -ForegroundColor Yellow
-  Write-Host "  Azure: vWAN hub (~\$0.25/hr), VPN Gateway, VM" -ForegroundColor Gray
-  Write-Host "  AWS: VPN Connection (~\$0.05/hr), VGW" -ForegroundColor Gray
+  Write-Host "  Azure: vWAN hub (~`$0.25/hr), VPN Gateway, VM" -ForegroundColor Gray
+  Write-Host "  AWS: VPN Connection (~`$0.05/hr), VGW" -ForegroundColor Gray
   $confirm = Read-Host "Type DEPLOY to proceed"
   if ($confirm -ne "DEPLOY") { throw "Cancelled." }
 }
