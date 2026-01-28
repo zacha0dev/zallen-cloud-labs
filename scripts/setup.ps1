@@ -26,21 +26,26 @@ if (-not (Test-Path $PkgSetup)) {
   throw "Missing setup script: $PkgSetup"
 }
 
-& $PkgSetup @{
-  DoLogin = $DoLogin
+# Splat parameters — only include SubscriptionKey when caller provided one,
+# otherwise the empty string would fail the ValidateSet on .packages/setup.ps1.
+$pkgParams = @{
+  DoLogin   = $DoLogin
   UpgradeAz = $UpgradeAz
-  SubscriptionKey = $SubscriptionKey
 }
+if ($SubscriptionKey) { $pkgParams["SubscriptionKey"] = $SubscriptionKey }
+
+& $PkgSetup @pkgParams
 
 if ($IncludeAWS) {
   if (-not (Test-Path $AwsPreflight)) {
     throw "Missing AWS setup script: $AwsPreflight"
   }
 
-  & $AwsPreflight @{
+  $awsParams = @{
     Profile = $AwsProfile
-    Region = $AwsRegion
+    Region  = $AwsRegion
   }
+  & $AwsPreflight @awsParams
 } else {
   Write-Host ""
   Write-Host "AWS setup skipped (Azure-only mode)." -ForegroundColor DarkGray
