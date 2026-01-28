@@ -50,16 +50,39 @@ This lab deploys a fully functional Site-to-Site VPN between Azure Virtual WAN a
 
 ## Quick Start
 
+From the repo root:
+
 ```powershell
-# 1. Deploy (takes 25-35 min)
+# 1. Setup (first time only)
+.\scripts\setup.ps1 -DoLogin -IncludeAWS
+
+# 2. Navigate to lab
+cd labs/lab-003-vwan-aws-vpn-bgp-apipa
+
+# 3. Deploy (takes 25-35 min)
 .\scripts\deploy.ps1
 
-# 2. Validate connectivity
+# 4. Validate connectivity (wait 5-10 min after deploy)
 .\scripts\validate.ps1
 
-# 3. Clean up
+# 5. Clean up when done
 .\scripts\destroy.ps1
 ```
+
+### Using Different Subscriptions
+
+Scripts use subscription from `.data/subs.json`. Override with `-SubscriptionKey`:
+
+```powershell
+# Use default subscription from config
+.\scripts\deploy.ps1
+
+# Use a specific subscription key
+.\scripts\deploy.ps1 -SubscriptionKey sub01
+.\scripts\deploy.ps1 -SubscriptionKey prod
+```
+
+See [docs/labs-config.md](../../docs/labs-config.md) for subscription configuration.
 
 ## Configuration
 

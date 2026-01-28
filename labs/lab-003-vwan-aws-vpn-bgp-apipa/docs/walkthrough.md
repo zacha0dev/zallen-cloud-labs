@@ -1,22 +1,35 @@
 # Lab 003 Walkthrough
 
+Complete step-by-step guide for deploying Azure vWAN ↔ AWS VPN with BGP.
+
 ## Prerequisites Check
 
-```powershell
-# Ensure tools are installed
-az --version
-terraform --version
-aws --version
+From the **repo root**, run setup first:
 
-# Run setup if not done
+```powershell
+# Run setup (first time only)
 .\scripts\setup.ps1 -DoLogin -IncludeAWS
+
+# Verify tools are installed
+az --version      # Azure CLI
+terraform --version
+aws --version     # AWS CLI
 ```
 
+This creates `.data/subs.json` with your Azure subscription.
+
 ## Step 1: Deploy
+
+Navigate to the lab and run deploy:
 
 ```powershell
 cd labs/lab-003-vwan-aws-vpn-bgp-apipa
 .\scripts\deploy.ps1
+```
+
+**Using a specific subscription:**
+```powershell
+.\scripts\deploy.ps1 -SubscriptionKey sub01
 ```
 
 Type `DEPLOY` when prompted.
@@ -56,6 +69,9 @@ Total wait: **5-10 minutes**
 
 ```powershell
 .\scripts\validate.ps1
+
+# Or with specific subscription
+.\scripts\validate.ps1 -SubscriptionKey sub01
 ```
 
 ### Expected Output
@@ -127,9 +143,12 @@ ping 10.20.1.x  # AWS subnet
 
 ```powershell
 .\scripts\destroy.ps1
+
+# Or with specific subscription
+.\scripts\destroy.ps1 -SubscriptionKey sub01
 ```
 
-Type `DELETE` when prompted.
+Type `DELETE` when prompted (or use `-Force` to skip).
 
 ### Cleanup Order
 1. AWS: Terraform destroy (VPN, CGW, VGW, VPC)

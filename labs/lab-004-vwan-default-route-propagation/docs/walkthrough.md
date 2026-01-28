@@ -1,19 +1,33 @@
 # Lab 004 Walkthrough
 
+Complete step-by-step guide for deploying vWAN default route propagation lab.
+
 ## Prerequisites
 
-Run the repo setup first:
+From the **repo root**, run setup first:
+
 ```powershell
+# Run setup (first time only)
 .\scripts\setup.ps1 -DoLogin
+
+# Verify Azure CLI is installed
+az --version
 ```
 
-This sets up Azure CLI and creates `.data/subs.json` with your subscription.
+This creates `.data/subs.json` with your Azure subscription.
 
 ## Step 1: Deploy
+
+Navigate to the lab and run deploy:
 
 ```powershell
 cd labs/lab-004-vwan-default-route-propagation
 .\scripts\deploy.ps1
+```
+
+**Using a specific subscription:**
+```powershell
+.\scripts\deploy.ps1 -SubscriptionKey sub01
 ```
 
 Type `DEPLOY` when prompted. Takes 30-45 min (vWAN hubs are slow).
@@ -31,6 +45,9 @@ Type `DEPLOY` when prompted. Takes 30-45 min (vWAN hubs are slow).
 
 ```powershell
 .\scripts\validate.ps1
+
+# Or with specific subscription
+.\scripts\validate.ps1 -SubscriptionKey sub01
 ```
 
 Expected output:
@@ -54,9 +71,12 @@ Result: 6 passed, 0 failed
 
 ```powershell
 .\scripts\destroy.ps1
+
+# Or with specific subscription
+.\scripts\destroy.ps1 -SubscriptionKey sub01
 ```
 
-Type `DELETE` when prompted. Takes 10-20 min.
+Type `DELETE` when prompted (or use `-Force` to skip). Takes 10-20 min.
 
 ## Manual Verification (Optional)
 

@@ -57,18 +57,41 @@ rt-fw-default  Default RT        Default RT    Default RT
 
 ## Quick Start
 
+From the repo root:
+
 ```powershell
-# 1. Deploy infrastructure (30-45 min for vWAN)
+# 1. Setup (first time only)
+.\scripts\setup.ps1 -DoLogin
+
+# 2. Navigate to lab
+cd labs/lab-004-vwan-default-route-propagation
+
+# 3. Deploy infrastructure (30-45 min for vWAN)
 .\scripts\deploy.ps1
 
-# 2. Validate route propagation
+# 4. Validate route propagation
 .\scripts\validate.ps1
 
-# 3. Clean up when done
+# 5. Clean up when done
 .\scripts\destroy.ps1
 ```
 
-Uses subscription from `.data/subs.json` (lab by default). VM password is hardcoded for lab simplicity.
+### Using Different Subscriptions
+
+Scripts use subscription from `.data/subs.json`. Override with `-SubscriptionKey`:
+
+```powershell
+# Use default subscription from config
+.\scripts\deploy.ps1
+
+# Use a specific subscription key
+.\scripts\deploy.ps1 -SubscriptionKey sub01
+.\scripts\deploy.ps1 -SubscriptionKey prod
+```
+
+See [docs/labs-config.md](../../docs/labs-config.md) for subscription configuration.
+
+VM credentials are hardcoded for lab simplicity (azureuser / Lab004Pass#2026!).
 
 ## Cost Estimate
 
