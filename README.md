@@ -45,6 +45,7 @@ aws sts get-caller-identity --profile aws-labs
 - `labs/lab-001-virtual-wan-hub-routing`
 - `labs/lab-002-l7-fastapi-appgw-frontdoor`
 - `labs/lab-003-vwan-aws-vpn-bgp-apipa`
+- `labs/lab-004-vwan-default-route-propagation`
 
 ---
 Zachary Allen - 2026

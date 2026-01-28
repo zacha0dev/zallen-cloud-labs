@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "eastus2"
+    },
+    "rgName": {
+      "value": "rg-lab-004-vwan-route-prop"
+    },
+    "vwanName": {
+      "value": "vwan-lab-004"
+    },
+    "hubAName": {
+      "value": "vhub-a-lab-004"
+    },
+    "hubBName": {
+      "value": "vhub-b-lab-004"
+    },
+    "adminUsername": {
+      "value": "azureuser"
+    },
+    "adminPassword": {
+      "value": ""
+    },
+    "vmSize": {
+      "value": "Standard_B1s"
+    }
+  }
+}

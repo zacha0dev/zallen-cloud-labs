@@ -11,6 +11,9 @@
 !.data/lab-003/
 .data/lab-003/*
 !.data/lab-003/config.template.json
+!.data/lab-004/
+.data/lab-004/*
+!.data/lab-004/config.template.json
 
 # In case someone places local configs elsewhere
 **/subs.json
