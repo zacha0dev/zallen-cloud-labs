@@ -2,42 +2,42 @@
 
 Azure Labs is a lightweight set of scripts and lab scaffolds to help you build Azure-first networking scenarios quickly, with optional AWS interoperability where noted.
 
-## Quick Start (Azure-only)
-1. Run the setup wrapper:
-   ```powershell
-   .\scripts\setup.ps1
-   ```
-2. Run the default helper:
-   ```powershell
-   .\run.ps1
-   ```
+## Quick Start
+
+```powershell
+# Full setup (installs tooling, prompts for Azure + AWS login)
+.\scripts\setup.ps1 -DoLogin
+
+# Check status
+.\run.ps1 status
+```
+
+For detailed setup instructions, see **[docs/setup-overview.md](docs/setup-overview.md)**.
 
 ## AWS Setup (Optional)
-AWS integration is **optional** and only required for labs that declare AWS support in their config.
 
-### Account prep
-- Use MFA on your AWS account.
-- Use least-privilege IAM users/roles for lab work.
-- **Never** commit access keys or credential files to the repo.
+AWS integration is only required for hybrid labs (e.g., `lab-003`).
 
-### Install AWS CLI
+| Guide | Description |
+|-------|-------------|
+| [AWS Account Setup](docs/aws-account-setup.md) | Create account, billing guardrails |
+| [AWS Identity Center (SSO)](docs/aws-identity-center-sso.md) | Set up browser-based login |
+| [AWS CLI Profile Setup](docs/aws-cli-profile-setup.md) | Configure `aws-labs` profile |
+| [AWS Troubleshooting](docs/aws-troubleshooting.md) | Common errors and fixes |
+
+**Quick AWS setup:**
 ```powershell
+# Install CLI
 winget install Amazon.AWSCLI
-```
 
-### Configure credentials
-```powershell
-aws configure
-```
+# Configure SSO profile (recommended)
+aws configure sso --profile aws-labs
 
-### Verify credentials
-```powershell
-aws sts get-caller-identity
-```
+# Login
+aws sso login --profile aws-labs
 
-### Run AWS setup checks
-```powershell
-./scripts/aws/setup-aws.ps1
+# Verify
+aws sts get-caller-identity --profile aws-labs
 ```
 
 ## Labs

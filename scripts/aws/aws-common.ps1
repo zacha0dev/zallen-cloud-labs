@@ -105,7 +105,7 @@ function Clear-AwsCredentialCache {
 function Ensure-AwsAuth {
   <# Validates credentials for a profile with granular diagnostics.
      Detects: missing profile, no SSO config, expired token, generic failure.
-     Prints the exact next-step command for each case. #>
+     Prints the exact next-step command and doc pointer for each case. #>
   param(
     [Parameter(Mandatory = $true)][string]$Profile,
     [switch]$DoLogin
@@ -120,15 +120,26 @@ function Ensure-AwsAuth {
 
   $profileExists = ($profiles.Count -gt 0 -and ($profiles -contains $Profile))
 
+  # Check if ~/.aws/config exists at all
+  $awsConfigPath = Join-Path $env:USERPROFILE ".aws" "config"
+  $configExists = Test-Path $awsConfigPath
+
   if (-not $profileExists) {
     # Case 1: profile does not exist at all
-    Write-Host "" -ForegroundColor Yellow
+    Write-Host ""
     Write-Host "AWS profile '$Profile' does not exist." -ForegroundColor Yellow
-    Write-Host "" -ForegroundColor Yellow
+
+    if (-not $configExists) {
+      Write-Host "No AWS CLI configuration found (~/.aws/config missing)." -ForegroundColor Yellow
+    }
+
+    Write-Host ""
     Write-Host "Next step:" -ForegroundColor White
     Write-Host "  aws configure sso --profile $Profile" -ForegroundColor Cyan
-    Write-Host "" -ForegroundColor Gray
+    Write-Host ""
     Write-Host "(Or for IAM access keys: aws configure --profile $Profile)" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "See: docs/aws-cli-profile-setup.md" -ForegroundColor DarkGray
 
     if ($DoLogin) {
       Write-Host ""
@@ -146,7 +157,7 @@ function Ensure-AwsAuth {
         return
       }
     }
-    throw "AWS profile '$Profile' not configured. See the commands above."
+    throw "AWS profile '$Profile' not configured. Run: aws configure sso --profile $Profile"
   }
 
   # Profile exists — check if SSO is configured
@@ -156,12 +167,18 @@ function Ensure-AwsAuth {
 
   if ($hasSso) {
     # Case 2: SSO configured but token expired / not logged in
-    Write-Host "" -ForegroundColor Yellow
+    Write-Host ""
     Write-Host "AWS profile '$Profile' is configured (SSO) but not authenticated." -ForegroundColor Yellow
     Write-Host "The SSO session has likely expired." -ForegroundColor Yellow
-    Write-Host "" -ForegroundColor White
+    Write-Host ""
     Write-Host "Next step:" -ForegroundColor White
     Write-Host "  aws sso login --profile $Profile" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "If you see 'No AWS accounts are available to you':" -ForegroundColor Gray
+    Write-Host "  Your user is not assigned to an AWS account in Identity Center." -ForegroundColor Gray
+    Write-Host "  See: docs/aws-identity-center-sso.md" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "For other errors: docs/aws-troubleshooting.md" -ForegroundColor DarkGray
 
     if ($DoLogin) {
       Write-Host ""
@@ -173,17 +190,28 @@ function Ensure-AwsAuth {
         Write-Host "AWS SSO login succeeded." -ForegroundColor Green
         return
       }
+      # Check if "No AWS accounts" scenario
+      Write-Host ""
+      Write-Host "SSO login did not result in valid credentials." -ForegroundColor Yellow
+      Write-Host "If you saw 'No AWS accounts are available to you':" -ForegroundColor Yellow
+      Write-Host "  1. Sign in to AWS Console as admin" -ForegroundColor White
+      Write-Host "  2. Go to IAM Identity Center > AWS accounts" -ForegroundColor White
+      Write-Host "  3. Assign your user to an account with a permission set" -ForegroundColor White
+      Write-Host ""
+      Write-Host "See: docs/aws-identity-center-sso.md" -ForegroundColor DarkGray
     }
     throw "AWS profile '$Profile' SSO login required. Run: aws sso login --profile $Profile"
   }
 
   # Case 3: IAM / static credentials configured but invalid
-  Write-Host "" -ForegroundColor Yellow
+  Write-Host ""
   Write-Host "AWS profile '$Profile' exists but credentials are invalid or expired." -ForegroundColor Yellow
-  Write-Host "" -ForegroundColor White
+  Write-Host ""
   Write-Host "Next step (pick one):" -ForegroundColor White
   Write-Host "  aws configure sso --profile $Profile    # recommended (browser login)" -ForegroundColor Cyan
   Write-Host "  aws configure --profile $Profile         # IAM access key" -ForegroundColor Cyan
+  Write-Host ""
+  Write-Host "See: docs/aws-troubleshooting.md" -ForegroundColor DarkGray
 
   if ($DoLogin) {
     Write-Host ""
@@ -196,7 +224,7 @@ function Ensure-AwsAuth {
       return
     }
   }
-  throw "AWS profile '$Profile' not authenticated. See the commands above."
+  throw "AWS profile '$Profile' not authenticated. See docs/aws-troubleshooting.md"
 }
 
 function Confirm-AwsBudgetWarning {
