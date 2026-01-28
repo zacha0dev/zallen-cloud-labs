@@ -117,12 +117,14 @@ while ($attempt -lt $maxAttempts) {
   $attempt++
   $gw = az network vpn-gateway show -g $ResourceGroup -n $vpnGwName -o json 2>$null | ConvertFrom-Json
 
-  if ($gw -and $gw.ipConfigurations) {
-    foreach ($ipConfig in $gw.ipConfigurations) {
-      if ($ipConfig.publicIpAddress -and $ipConfig.publicIpAddress.id) {
-        $pip = az network public-ip show --ids $ipConfig.publicIpAddress.id --query ipAddress -o tsv 2>$null
-        if ($pip -and $pip -ne "None" -and $pip -notmatch "^$") {
-          $azureVpnIps += $pip
+  if ($gw -and $gw.bgpSettings -and $gw.bgpSettings.bgpPeeringAddresses) {
+    # vWAN VPN Gateway exposes public IPs through bgpSettings.bgpPeeringAddresses[].tunnelIpAddresses
+    foreach ($peerAddr in $gw.bgpSettings.bgpPeeringAddresses) {
+      if ($peerAddr.PSObject.Properties['tunnelIpAddresses'] -and $peerAddr.tunnelIpAddresses) {
+        foreach ($ip in $peerAddr.tunnelIpAddresses) {
+          if ($ip -and $ip -ne "None" -and $ip -notmatch "^$" -and $azureVpnIps -notcontains $ip) {
+            $azureVpnIps += $ip
+          }
         }
       }
     }
