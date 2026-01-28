@@ -122,7 +122,9 @@ while ($attempt -lt $maxAttempts) {
     foreach ($peerAddr in $gw.bgpSettings.bgpPeeringAddresses) {
       if ($peerAddr.PSObject.Properties['tunnelIpAddresses'] -and $peerAddr.tunnelIpAddresses) {
         foreach ($ip in $peerAddr.tunnelIpAddresses) {
-          if ($ip -and $ip -ne "None" -and $ip -notmatch "^$" -and $azureVpnIps -notcontains $ip) {
+          # Filter to only public IPs (exclude 10.x, 172.16-31.x, 192.168.x)
+          $isPrivate = $ip -match "^10\." -or $ip -match "^172\.(1[6-9]|2[0-9]|3[01])\." -or $ip -match "^192\.168\."
+          if ($ip -and $ip -ne "None" -and $ip -notmatch "^$" -and -not $isPrivate -and $azureVpnIps -notcontains $ip) {
             $azureVpnIps += $ip
           }
         }
@@ -224,6 +226,7 @@ if (-not $existingSite) {
     --name $vpnSiteName `
     --location $Location `
     --virtual-wan $vwanName `
+    --ip-address $awsTunnel1Ip `
     --device-vendor "AWS" `
     --device-model "VGW" `
     --asn $AwsBgpAsn `
