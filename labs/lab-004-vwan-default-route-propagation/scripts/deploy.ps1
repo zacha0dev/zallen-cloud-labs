@@ -48,7 +48,7 @@ Write-Host "Location: $Location" -ForegroundColor Gray
 Write-Host ""
 
 if (-not $Force) {
-  Write-Host "This creates billable resources (~\$0.60/hour)." -ForegroundColor Yellow
+  Write-Host "This creates billable resources (~`$0.60/hour)." -ForegroundColor Yellow
   $confirm = Read-Host "Type DEPLOY to proceed"
   if ($confirm -ne "DEPLOY") { throw "Cancelled." }
 }
