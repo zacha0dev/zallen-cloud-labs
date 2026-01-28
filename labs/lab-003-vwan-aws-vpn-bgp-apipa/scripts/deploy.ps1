@@ -219,8 +219,9 @@ $vwanName = "vwan-lab-003"
 $existingSite = az network vpn-site show -g $ResourceGroup -n $vpnSiteName --query name -o tsv 2>$null
 
 if (-not $existingSite) {
-  Write-Host "Creating VPN Site with 2 links..." -ForegroundColor Gray
+  Write-Host "Creating VPN Site..." -ForegroundColor Gray
 
+  # Create site first (without links)
   az network vpn-site create `
     --resource-group $ResourceGroup `
     --name $vpnSiteName `
@@ -229,17 +230,35 @@ if (-not $existingSite) {
     --ip-address $awsTunnel1Ip `
     --device-vendor "AWS" `
     --device-model "VGW" `
-    --asn $AwsBgpAsn `
-    --with-link `
-    --link-1-name "link-tunnel1" `
-    --link-1-ip-address $awsTunnel1Ip `
-    --link-1-bgp-peering-address $awsTunnel1BgpIp `
-    --link-2-name "link-tunnel2" `
-    --link-2-ip-address $awsTunnel2Ip `
-    --link-2-bgp-peering-address $awsTunnel2BgpIp `
     --output none
 
   if ($LASTEXITCODE -ne 0) { throw "VPN Site creation failed." }
+
+  Write-Host "Adding VPN Site links..." -ForegroundColor Gray
+
+  # Add link 1 (tunnel 1)
+  az network vpn-site link add `
+    --resource-group $ResourceGroup `
+    --site-name $vpnSiteName `
+    --name "link-tunnel1" `
+    --ip-address $awsTunnel1Ip `
+    --asn $AwsBgpAsn `
+    --bgp-peering-address $awsTunnel1BgpIp `
+    --output none
+
+  if ($LASTEXITCODE -ne 0) { throw "VPN Site link 1 creation failed." }
+
+  # Add link 2 (tunnel 2)
+  az network vpn-site link add `
+    --resource-group $ResourceGroup `
+    --site-name $vpnSiteName `
+    --name "link-tunnel2" `
+    --ip-address $awsTunnel2Ip `
+    --asn $AwsBgpAsn `
+    --bgp-peering-address $awsTunnel2BgpIp `
+    --output none
+
+  if ($LASTEXITCODE -ne 0) { throw "VPN Site link 2 creation failed." }
 }
 
 # Create VPN connection to the site
