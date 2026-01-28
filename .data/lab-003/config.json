@@ -1,0 +1,31 @@
+{
+  "azure": {
+    "subscriptionId": "00000000-0000-0000-0000-000000000000",
+    "location": "eastus2",
+    "resourceGroup": "rg-azure-labs-lab-003",
+    "vwanName": "vwan-lab-003",
+    "vhubName": "vhub-lab-003",
+    "vhubAddressPrefix": "10.90.0.0/24",
+    "vpnGatewayName": "vpngw-lab-003",
+    "spokeVnetName": "vnet-lab-003",
+    "spokeAddressPrefix": "10.91.0.0/16",
+    "spokeSubnetPrefix": "10.91.1.0/24",
+    "vmName": "vm-lab-003",
+    "adminUsername": "azureuser",
+    "adminPassword": "CHANGE_ME"
+  },
+  "aws": {
+    "profile": "aws-labs",
+    "region": "us-east-2",
+    "bgpAsnAws": 65001,
+    "bgpAsnAzure": 65000,
+    "vpcCidr": "10.20.0.0/16",
+    "publicSubnetCidr": "10.20.1.0/24",
+    "apipaPairs": [
+      { "azure": "169.254.21.1/30", "aws": "169.254.21.2/30" },
+      { "azure": "169.254.22.1/30", "aws": "169.254.22.2/30" },
+      { "azure": "169.254.23.1/30", "aws": "169.254.23.2/30" },
+      { "azure": "169.254.24.1/30", "aws": "169.254.24.2/30" }
+    ]
+  }
+}

@@ -6,6 +6,8 @@
 .data/
 !.data/.keep
 !.data/subs.example.json
+!.data/accounts.aws.template.json
+!.data/lab-003/config.json
 
 # In case someone places local configs elsewhere
 **/subs.json
@@ -13,6 +15,8 @@
 **/*secret*.json
 **/*.secrets.*
 **/*.local.*
+.data/accounts.aws.json
+.data/lab-003/outputs.json
 .env
 .env.*
 !.env.example
@@ -47,6 +51,7 @@ dist/
 **/*.arm.json
 **/*.generated.json
 **/what-if*.json
+**/aws-vpn-output.json
 
 # --- IaC state files (avoid accidents) ---
 *.tfstate
@@ -54,6 +59,11 @@ dist/
 .terraform/
 terraform.tfvars
 *.tfvars
+
+# --- AWS credentials / local config ---
+**/.aws/
+**/aws-credentials*
+**/aws-credential*
 
 # --- Editor / OS ---
 .vscode/

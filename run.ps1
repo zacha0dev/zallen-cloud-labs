@@ -23,7 +23,7 @@ function Title([string]$t) {
 function RepoRoot { (Resolve-Path $PSScriptRoot).Path }
 $root     = RepoRoot
 
-$pkgSetup = Join-Path $root ".packages\setup.ps1"
+$pkgSetup = Join-Path $root "scripts\setup.ps1"
 
 $dataDir   = Join-Path $root ".data"
 $subsPath  = Join-Path $dataDir "subs.json"
@@ -378,7 +378,7 @@ function Run-Main {
     }
 
     # 2) Tooling/self-test only if needed
-    if (-not (Test-Path $pkgSetup)) { throw "Missing: .packages/setup.ps1" }
+    if (-not (Test-Path $pkgSetup)) { throw "Missing: scripts/setup.ps1" }
     if (-not (Setup-Is-Current)) {
       Write-Host ""
       Write-Host "Tooling + self-test" -ForegroundColor Cyan
