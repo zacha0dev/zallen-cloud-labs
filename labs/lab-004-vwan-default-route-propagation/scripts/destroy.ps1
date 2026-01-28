@@ -13,24 +13,15 @@ $ErrorActionPreference = "Stop"
 
 $LabRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..")
-$SubsPath = Join-Path $RepoRoot ".data\subs.json"
+
+# Load shared helpers
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
 
 $ResourceGroup = "rg-lab-004-vwan-route-prop"
 
-function Get-SubscriptionId([string]$Key) {
-  if (-not (Test-Path $SubsPath)) {
-    throw "Missing $SubsPath. Run scripts\setup.ps1 first."
-  }
-  $subs = Get-Content $SubsPath -Raw | ConvertFrom-Json
-  $sub = $subs.subscriptions.$Key
-  if (-not $sub -or -not $sub.id -or $sub.id -eq "00000000-0000-0000-0000-000000000000") {
-    throw "Invalid subscription '$Key' in $SubsPath."
-  }
-  return $sub.id
-}
-
 # Setup
-$SubscriptionId = Get-SubscriptionId $SubscriptionKey
+Show-ConfigPreflight -RepoRoot $RepoRoot
+$SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 az account get-access-token 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated. Run: az login" }
 az account set --subscription $SubscriptionId | Out-Null

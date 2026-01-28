@@ -92,10 +92,15 @@ function Normalize-SubsConfig($cfg) {
 
   $names = Get-PropNames $cfg.subscriptions
 
-  # Remove template keys if present (lab/prod)
+  # Remove template keys only if they have placeholder values
+  $placeholderId = "00000000-0000-0000-0000-000000000000"
   foreach ($k in @("lab","prod")) {
     if ($names -contains $k) {
-      $cfg.subscriptions.PSObject.Properties.Remove($k)
+      $subObj = $cfg.subscriptions.$k
+      $isPlaceholder = (-not $subObj) -or (-not $subObj.id) -or ($subObj.id -eq $placeholderId)
+      if ($isPlaceholder) {
+        $cfg.subscriptions.PSObject.Properties.Remove($k)
+      }
     }
   }
 

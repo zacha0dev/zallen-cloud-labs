@@ -13,17 +13,12 @@ $ErrorActionPreference = "Stop"
 
 $LabRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..")
-$SubsPath = Join-Path $RepoRoot ".data\subs.json"
 $OutputsPath = Join-Path $RepoRoot ".data\lab-003\outputs.json"
 $AwsDir = Join-Path $LabRoot "aws"
 
+# Load shared helpers
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
 . (Join-Path $RepoRoot "scripts\aws\aws-common.ps1")
-
-function Get-SubscriptionId([string]$Key) {
-  if (-not (Test-Path $SubsPath)) { throw "Missing $SubsPath." }
-  $subs = Get-Content $SubsPath -Raw | ConvertFrom-Json
-  return $subs.subscriptions.$Key.id
-}
 
 Write-Host ""
 Write-Host "Lab 003: Destroy Resources" -ForegroundColor Cyan
@@ -43,7 +38,8 @@ if (Test-Path $OutputsPath) {
 }
 
 # Auth checks
-$SubscriptionId = Get-SubscriptionId $SubscriptionKey
+Show-ConfigPreflight -RepoRoot $RepoRoot
+$SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 az account get-access-token 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated." }
 az account set --subscription $SubscriptionId | Out-Null

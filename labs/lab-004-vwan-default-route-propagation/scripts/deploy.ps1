@@ -14,9 +14,11 @@ $ErrorActionPreference = "Stop"
 
 $LabRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..")
-$SubsPath = Join-Path $RepoRoot ".data\subs.json"
 $TemplatePath = Join-Path $LabRoot "infra\main.bicep"
 $ParametersPath = Join-Path $LabRoot "infra\main.parameters.json"
+
+# Load shared helpers
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
 
 # Lab defaults - hardcoded for speed (lab environment only)
 $ResourceGroup = "rg-lab-004-vwan-route-prop"
@@ -29,22 +31,11 @@ function Require-Command($name) {
   }
 }
 
-function Get-SubscriptionId([string]$Key) {
-  if (-not (Test-Path $SubsPath)) {
-    throw "Missing $SubsPath. Run scripts\setup.ps1 first."
-  }
-  $subs = Get-Content $SubsPath -Raw | ConvertFrom-Json
-  $sub = $subs.subscriptions.$Key
-  if (-not $sub -or -not $sub.id -or $sub.id -eq "00000000-0000-0000-0000-000000000000") {
-    throw "Invalid subscription '$Key' in $SubsPath. Update with real values."
-  }
-  return $sub.id
-}
-
 Require-Command az
 
 # Get subscription from repo config
-$SubscriptionId = Get-SubscriptionId $SubscriptionKey
+Show-ConfigPreflight -RepoRoot $RepoRoot
+$SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 
 # Validate Azure auth
 az account get-access-token 2>&1 | Out-Null

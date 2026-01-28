@@ -16,11 +16,12 @@ $ErrorActionPreference = "Stop"
 
 $LabRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..")
-$SubsPath = Join-Path $RepoRoot ".data\subs.json"
 $OutputsPath = Join-Path $RepoRoot ".data\lab-003\outputs.json"
 $AzureDir = Join-Path $LabRoot "azure"
 $AwsDir = Join-Path $LabRoot "aws"
 
+# Load shared helpers
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
 . (Join-Path $RepoRoot "scripts\aws\aws-common.ps1")
 
 # Lab defaults
@@ -28,18 +29,6 @@ $ResourceGroup = "rg-lab-003-vwan-aws"
 $AdminPassword = "Lab003Pass#2026!"
 $AzureBgpAsn = 65515
 $AwsBgpAsn = 65001
-
-function Get-SubscriptionId([string]$Key) {
-  if (-not (Test-Path $SubsPath)) {
-    throw "Missing $SubsPath. Run scripts\setup.ps1 first."
-  }
-  $subs = Get-Content $SubsPath -Raw | ConvertFrom-Json
-  $sub = $subs.subscriptions.$Key
-  if (-not $sub -or -not $sub.id -or $sub.id -eq "00000000-0000-0000-0000-000000000000") {
-    throw "Invalid subscription '$Key' in $SubsPath."
-  }
-  return $sub.id
-}
 
 function Require-Command($name, $installHint) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -72,7 +61,9 @@ Ensure-AwsCli
 Require-AwsProfile -Profile $AwsProfile
 $AwsRegion = Require-AwsRegion -Region $AwsRegion
 
-$SubscriptionId = Get-SubscriptionId $SubscriptionKey
+# Load config with preflight
+Show-ConfigPreflight -RepoRoot $RepoRoot
+$SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 
 # Azure auth check
 az account get-access-token 2>&1 | Out-Null
