@@ -114,13 +114,52 @@ function Ensure-AzPowerShell {
   }
 }
 
+function Clear-AzureCredentialCache {
+  # Remove local MSAL / token caches so az login starts fresh.
+  $home_ = $env:USERPROFILE
+  if (-not $home_) { $home_ = $env:HOME }
+  $azDir = Join-Path $home_ ".azure"
+
+  foreach ($pattern in @("msal_token_cache*", "accessTokens.json", "TokenCache.dat")) {
+    $files = Get-ChildItem -Path $azDir -Filter $pattern -ErrorAction SilentlyContinue
+    foreach ($f in $files) {
+      Remove-Item -Path $f.FullName -Force -ErrorAction SilentlyContinue
+      Warn "Cleared stale cache: $($f.Name)"
+    }
+  }
+}
+
+function Test-AzureTokenFresh {
+  # az account show can succeed with cached metadata even when the token is expired.
+  # Actually try to obtain a fresh token to be sure.
+  az account get-access-token --query "expiresOn" -o tsv 1>$null 2>$null
+  return ($LASTEXITCODE -eq 0)
+}
+
 function Ensure-AzureAuth {
   Next-Step "Checking Azure auth"
+
+  $needsLogin = $false
+
   az account show 1>$null 2>$null
   if ($LASTEXITCODE -ne 0) {
     Warn "Azure CLI not authenticated."
+    $needsLogin = $true
+  } else {
+    # Session metadata exists — verify the token is actually fresh
+    if (-not (Test-AzureTokenFresh)) {
+      Warn "Azure token expired or stale. Clearing credential caches..."
+      Clear-AzureCredentialCache
+      $needsLogin = $true
+    } else {
+      $sub = (az account show --query "name" -o tsv)
+      OK "Azure CLI authenticated (subscription: $sub)"
+    }
+  }
+
+  if ($needsLogin) {
     if ($DoLogin) {
-      Warn "Running: az login"
+      Warn "Running: az login (opens browser)"
       az login
       az account show 1>$null 2>$null
       if ($LASTEXITCODE -ne 0) { throw "az login failed or was cancelled." }
@@ -129,9 +168,6 @@ function Ensure-AzureAuth {
     } else {
       Warn "Run: az login  (or rerun setup with -DoLogin)"
     }
-  } else {
-    $sub = (az account show --query "name" -o tsv)
-    OK "Azure CLI authenticated (subscription: $sub)"
   }
 
   Import-Module Az -ErrorAction Stop

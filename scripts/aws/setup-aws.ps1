@@ -1,12 +1,22 @@
 <#+
 setup-aws.ps1
-AWS setup checks for Azure Labs.
+AWS environment setup for Azure Labs.
+
+Ensures:
+- AWS CLI installed (via winget if needed)
+- Named profile exists and is authenticated
+- Region resolved
+- Caller identity validated
+
+Optional:
+- -DoLogin  => attempts aws sso login / aws configure on auth failure
 #>
 
 [CmdletBinding()]
 param(
   [string]$Profile = "aws-labs",
-  [string]$Region
+  [string]$Region,
+  [switch]$DoLogin
 )
 
 Set-StrictMode -Version Latest
@@ -18,11 +28,13 @@ Clear-Host
 Write-Host "AWS Setup" -ForegroundColor Cyan
 Write-Host "---------" -ForegroundColor Cyan
 
-Require-AwsCli
+# 1. Ensure AWS CLI is installed
+Ensure-AwsCli
 
 $awsVer = (aws --version 2>&1) | Out-String
 Write-Host "AWS CLI: $($awsVer.Trim())" -ForegroundColor DarkGray
 
+# 2. Resolve region (falls back to env vars, then default us-east-2)
 $resolvedRegion = Require-AwsRegion -Region $Region
 
 # Show configured region from aws configure (informational)
@@ -33,7 +45,12 @@ try {
   }
 } catch { }
 
+# 3. Ensure profile exists
 Require-AwsProfile -Profile $Profile
+
+# 4. Validate identity — offer login on failure if -DoLogin
+Ensure-AwsAuth -Profile $Profile -DoLogin:$DoLogin
+
 $identity = Get-AwsIdentity -Profile $Profile
 
 Write-Host "Profile: $Profile" -ForegroundColor Green

@@ -23,7 +23,8 @@ function Title([string]$t) {
 function RepoRoot { (Resolve-Path $PSScriptRoot).Path }
 $root     = RepoRoot
 
-$pkgSetup = Join-Path $root "scripts\setup.ps1"
+$pkgSetup  = Join-Path $root "scripts\setup.ps1"
+$awsCommon = Join-Path $root "scripts\aws\aws-common.ps1"
 
 $dataDir   = Join-Path $root ".data"
 $subsPath  = Join-Path $dataDir "subs.json"
@@ -44,6 +45,17 @@ function HasCmd([string]$name) { [bool](Get-Command $name -ErrorAction SilentlyC
 function Az-Authenticated {
   if (-not (HasCmd "az")) { return $false }
   az account show 1>$null 2>$null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Aws-Available {
+  return (HasCmd "aws")
+}
+
+function Aws-Authenticated {
+  param([string]$Profile = "aws-labs")
+  if (-not (Aws-Available)) { return $false }
+  aws sts get-caller-identity --profile $Profile --output json 1>$null 2>$null
   return ($LASTEXITCODE -eq 0)
 }
 
@@ -317,6 +329,23 @@ function Show-Status {
   } else {
     Write-Host "Tooling state: not verified yet" -ForegroundColor Yellow
   }
+
+  # AWS status
+  Write-Host ""
+  if (Aws-Available) {
+    $awsVer = (aws --version 2>&1) | Out-String
+    Write-Host "AWS CLI: $($awsVer.Trim())" -ForegroundColor Green
+    if (Aws-Authenticated) {
+      $id = aws sts get-caller-identity --profile aws-labs --output json 2>$null | ConvertFrom-Json
+      if ($id) {
+        Write-Host "AWS account: $($id.Account)  arn: $($id.Arn)" -ForegroundColor Green
+      }
+    } else {
+      Write-Host "AWS: not authenticated (run: .\scripts\setup.ps1 -IncludeAWS -DoLogin)" -ForegroundColor Yellow
+    }
+  } else {
+    Write-Host "AWS CLI: not installed (run: .\scripts\setup.ps1 -IncludeAWS)" -ForegroundColor Yellow
+  }
 }
 
 function Show-Help {
@@ -343,10 +372,16 @@ function Needs-Work {
     $needsAuth = (-not (Az-Authenticated))
   }
 
+  # AWS: not blocking, but informational
+  $needsAwsCli  = (-not (Aws-Available))
+  $needsAwsAuth = (-not $needsAwsCli -and -not (Aws-Authenticated))
+
   return [pscustomobject]@{
-    needsSubs  = $needsSubs
-    needsSetup = $needsSetup
-    needsAuth  = $needsAuth
+    needsSubs    = $needsSubs
+    needsSetup   = $needsSetup
+    needsAuth    = $needsAuth
+    needsAwsCli  = $needsAwsCli
+    needsAwsAuth = $needsAwsAuth
   }
 }
 
@@ -384,6 +419,23 @@ function Run-Main {
       Write-Host "Tooling + self-test" -ForegroundColor Cyan
       & $pkgSetup
       Mark-Setup-Current
+    }
+
+    # 3) AWS (optional, non-blocking)
+    if ($w.needsAwsCli -or $w.needsAwsAuth) {
+      Write-Host ""
+      Write-Host "AWS environment not fully configured." -ForegroundColor Yellow
+      $awsAns = Read-Host "Set up AWS now? (y/n)"
+      if ($awsAns.Trim().ToLower() -eq "y") {
+        $awsSetup = Join-Path $root "scripts\aws\setup-aws.ps1"
+        if (Test-Path $awsSetup) {
+          & $awsSetup -DoLogin
+        } else {
+          Write-Host "AWS setup script not found: $awsSetup" -ForegroundColor Yellow
+        }
+      } else {
+        Write-Host "AWS setup skipped." -ForegroundColor DarkGray
+      }
     }
 
     Show-Status
