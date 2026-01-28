@@ -17,6 +17,7 @@
 **/*.local.*
 .data/accounts.aws.json
 .data/lab-003/outputs.json
+.data/**/outputs.json
 .env
 .env.*
 !.env.example
