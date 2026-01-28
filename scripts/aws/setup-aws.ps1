@@ -45,10 +45,8 @@ try {
   }
 } catch { }
 
-# 3. Ensure profile exists
-Require-AwsProfile -Profile $Profile
-
-# 4. Validate identity — offer login on failure if -DoLogin
+# 3. Validate profile + auth (Ensure-AwsAuth handles missing profile,
+#    expired SSO, and invalid IAM creds with granular guidance)
 Ensure-AwsAuth -Profile $Profile -DoLogin:$DoLogin
 
 $identity = Get-AwsIdentity -Profile $Profile

@@ -103,39 +103,100 @@ function Clear-AwsCredentialCache {
 }
 
 function Ensure-AwsAuth {
-  <# Validates credentials for a profile; offers login/re-configure on failure. #>
+  <# Validates credentials for a profile with granular diagnostics.
+     Detects: missing profile, no SSO config, expired token, generic failure.
+     Prints the exact next-step command for each case. #>
   param(
     [Parameter(Mandatory = $true)][string]$Profile,
     [switch]$DoLogin
   )
 
+  # --- fast path: already authenticated ---
   if (Test-AwsIdentity -Profile $Profile) { return }
 
-  Write-Host "AWS credentials for profile '$Profile' are expired or invalid." -ForegroundColor Yellow
+  # --- diagnose the specific failure ---
+  $profiles = @()
+  try { $profiles = @(aws configure list-profiles 2>$null) } catch { $profiles = @() }
+
+  $profileExists = ($profiles.Count -gt 0 -and ($profiles -contains $Profile))
+
+  if (-not $profileExists) {
+    # Case 1: profile does not exist at all
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "AWS profile '$Profile' does not exist." -ForegroundColor Yellow
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "Next step:" -ForegroundColor White
+    Write-Host "  aws configure sso --profile $Profile" -ForegroundColor Cyan
+    Write-Host "" -ForegroundColor Gray
+    Write-Host "(Or for IAM access keys: aws configure --profile $Profile)" -ForegroundColor Gray
+
+    if ($DoLogin) {
+      Write-Host ""
+      Write-Host "Running: aws configure sso --profile $Profile" -ForegroundColor Yellow
+      aws configure sso --profile $Profile
+      if (Test-AwsIdentity -Profile $Profile) {
+        Write-Host "AWS profile configured and authenticated." -ForegroundColor Green
+        return
+      }
+      # fall back to basic configure
+      Write-Host "SSO configure did not complete. Trying basic configure..." -ForegroundColor Yellow
+      aws configure --profile $Profile
+      if (Test-AwsIdentity -Profile $Profile) {
+        Write-Host "AWS profile configured." -ForegroundColor Green
+        return
+      }
+    }
+    throw "AWS profile '$Profile' not configured. See the commands above."
+  }
+
+  # Profile exists — check if SSO is configured
+  $ssoStartUrl = $null
+  try { $ssoStartUrl = (aws configure get sso_start_url --profile $Profile 2>$null) } catch { }
+  $hasSso = (-not [string]::IsNullOrWhiteSpace($ssoStartUrl))
+
+  if ($hasSso) {
+    # Case 2: SSO configured but token expired / not logged in
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "AWS profile '$Profile' is configured (SSO) but not authenticated." -ForegroundColor Yellow
+    Write-Host "The SSO session has likely expired." -ForegroundColor Yellow
+    Write-Host "" -ForegroundColor White
+    Write-Host "Next step:" -ForegroundColor White
+    Write-Host "  aws sso login --profile $Profile" -ForegroundColor Cyan
+
+    if ($DoLogin) {
+      Write-Host ""
+      Write-Host "Clearing stale SSO caches..." -ForegroundColor DarkGray
+      Clear-AwsCredentialCache
+      Write-Host "Running: aws sso login --profile $Profile" -ForegroundColor Yellow
+      aws sso login --profile $Profile
+      if (Test-AwsIdentity -Profile $Profile) {
+        Write-Host "AWS SSO login succeeded." -ForegroundColor Green
+        return
+      }
+    }
+    throw "AWS profile '$Profile' SSO login required. Run: aws sso login --profile $Profile"
+  }
+
+  # Case 3: IAM / static credentials configured but invalid
+  Write-Host "" -ForegroundColor Yellow
+  Write-Host "AWS profile '$Profile' exists but credentials are invalid or expired." -ForegroundColor Yellow
+  Write-Host "" -ForegroundColor White
+  Write-Host "Next step (pick one):" -ForegroundColor White
+  Write-Host "  aws configure sso --profile $Profile    # recommended (browser login)" -ForegroundColor Cyan
+  Write-Host "  aws configure --profile $Profile         # IAM access key" -ForegroundColor Cyan
 
   if ($DoLogin) {
-    Write-Host "Clearing stale credential caches..." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Clearing stale credential caches..." -ForegroundColor DarkGray
     Clear-AwsCredentialCache
-
-    Write-Host "Attempting: aws sso login --profile $Profile" -ForegroundColor Yellow
-    aws sso login --profile $Profile 2>$null
-    if (Test-AwsIdentity -Profile $Profile) {
-      Write-Host "AWS login succeeded." -ForegroundColor Green
-      return
-    }
-
-    Write-Host "SSO login did not resolve credentials. Trying: aws configure --profile $Profile" -ForegroundColor Yellow
-    Write-Host "(Enter your Access Key ID, Secret Access Key, region, and output format.)" -ForegroundColor Gray
+    Write-Host "Running: aws configure --profile $Profile" -ForegroundColor Yellow
     aws configure --profile $Profile
     if (Test-AwsIdentity -Profile $Profile) {
       Write-Host "AWS credentials configured." -ForegroundColor Green
       return
     }
-
-    throw "AWS profile '$Profile' still not usable after login attempts."
   }
-
-  throw "AWS profile '$Profile' not authenticated. Re-run with -DoLogin or run: aws sso login --profile $Profile"
+  throw "AWS profile '$Profile' not authenticated. See the commands above."
 }
 
 function Confirm-AwsBudgetWarning {
