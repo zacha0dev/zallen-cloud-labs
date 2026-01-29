@@ -221,13 +221,15 @@ $existingSite = az network vpn-site show -g $ResourceGroup -n $vpnSiteName --que
 if (-not $existingSite) {
   Write-Host "Creating VPN Site..." -ForegroundColor Gray
 
-  # Create site first (without links)
+  # Create site with address-prefix (required when using BGP on links)
+  # The address-prefix is the AWS VPC CIDR that will be reachable via this site
   az network vpn-site create `
     --resource-group $ResourceGroup `
     --name $vpnSiteName `
     --location $Location `
     --virtual-wan $vwanName `
     --ip-address $awsTunnel1Ip `
+    --address-prefixes "10.20.0.0/16" `
     --device-vendor "AWS" `
     --device-model "VGW" `
     --output none
