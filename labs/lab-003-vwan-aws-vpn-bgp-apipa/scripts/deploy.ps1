@@ -325,48 +325,54 @@ $vwanName = "vwan-lab-003"
 $existingSite = az network vpn-site show -g $ResourceGroup -n $vpnSiteName --query name -o tsv 2>$null
 
 if (-not $existingSite) {
-  Write-Host "Creating VPN Site..." -ForegroundColor Gray
+  Write-Host "Creating VPN Site with links..." -ForegroundColor Gray
 
-  # Create site with address-prefix (required when using BGP on links)
-  # The address-prefix is the AWS VPC CIDR that will be reachable via this site
+  # Azure requires the first link to have the same name as the site (legacy migration requirement)
+  # So we create the site directly with both links inline using JSON
+  $vpnSiteLinksJson = @"
+[
+  {
+    "name": "$vpnSiteName",
+    "properties": {
+      "ipAddress": "$awsTunnel1Ip",
+      "bgpProperties": {
+        "asn": $AwsBgpAsn,
+        "bgpPeeringAddress": "$awsTunnel1BgpIp"
+      }
+    }
+  },
+  {
+    "name": "link-tunnel2",
+    "properties": {
+      "ipAddress": "$awsTunnel2Ip",
+      "bgpProperties": {
+        "asn": $AwsBgpAsn,
+        "bgpPeeringAddress": "$awsTunnel2BgpIp"
+      }
+    }
+  }
+]
+"@
+
+  # Write links to temp file for az cli
+  $linksFile = Join-Path $env:TEMP "vpn-site-links.json"
+  Set-Content -Path $linksFile -Value $vpnSiteLinksJson -Encoding UTF8
+
   az network vpn-site create `
     --resource-group $ResourceGroup `
     --name $vpnSiteName `
     --location $Location `
     --virtual-wan $vwanName `
-    --ip-address $awsTunnel1Ip `
     --address-prefixes "10.20.0.0/16" `
     --device-vendor "AWS" `
     --device-model "VGW" `
+    --vpn-site-links $linksFile `
     --output none
+
+  Remove-Item $linksFile -Force -ErrorAction SilentlyContinue
 
   if ($LASTEXITCODE -ne 0) { throw "VPN Site creation failed." }
-
-  Write-Host "Adding VPN Site links..." -ForegroundColor Gray
-
-  # Add link 1 (tunnel 1)
-  az network vpn-site link add `
-    --resource-group $ResourceGroup `
-    --site-name $vpnSiteName `
-    --name "link-tunnel1" `
-    --ip-address $awsTunnel1Ip `
-    --asn $AwsBgpAsn `
-    --bgp-peering-address $awsTunnel1BgpIp `
-    --output none
-
-  if ($LASTEXITCODE -ne 0) { throw "VPN Site link 1 creation failed." }
-
-  # Add link 2 (tunnel 2)
-  az network vpn-site link add `
-    --resource-group $ResourceGroup `
-    --site-name $vpnSiteName `
-    --name "link-tunnel2" `
-    --ip-address $awsTunnel2Ip `
-    --asn $AwsBgpAsn `
-    --bgp-peering-address $awsTunnel2BgpIp `
-    --output none
-
-  if ($LASTEXITCODE -ne 0) { throw "VPN Site link 2 creation failed." }
+  Write-Host "  VPN Site created with 2 links" -ForegroundColor Green
 }
 
 # Create VPN connection to the site
