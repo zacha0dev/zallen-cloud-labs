@@ -60,13 +60,14 @@ From the repo root:
 cd labs/lab-003-vwan-aws-vpn-bgp-apipa
 
 # 3. Deploy (takes 25-35 min)
-.\scripts\deploy.ps1
+.\scripts\deploy.ps1 -AdminPassword (Read-Host -AsSecureString "VM Password")
 
 # 4. Validate connectivity (wait 5-10 min after deploy)
 .\scripts\validate.ps1
 
-# 5. Clean up when done
-.\scripts\destroy.ps1
+# 5. Clean up when done (use -WhatIf to preview)
+.\scripts\destroy.ps1 -WhatIf   # Preview what will be deleted
+.\scripts\destroy.ps1           # Actually delete resources
 ```
 
 ### Using Different Subscriptions
@@ -75,11 +76,13 @@ Scripts use subscription from `.data/subs.json`. Override with `-SubscriptionKey
 
 ```powershell
 # Use default subscription from config
-.\scripts\deploy.ps1
+.\scripts\deploy.ps1 -AdminPassword (Read-Host -AsSecureString "Password")
 
 # Use a specific subscription key
-.\scripts\deploy.ps1 -SubscriptionKey sub01
-.\scripts\deploy.ps1 -SubscriptionKey prod
+.\scripts\deploy.ps1 -SubscriptionKey sub01 -AdminPassword (Read-Host -AsSecureString "Password")
+
+# With owner tag for resource tracking
+.\scripts\deploy.ps1 -AdminPassword (Read-Host -AsSecureString "Password") -Owner "yourname"
 ```
 
 See [docs/labs-config.md](../../docs/labs-config.md) for subscription configuration.
@@ -96,6 +99,19 @@ Uses repo-level config from `.data/subs.json` for Azure subscription.
 | Azure Spoke | 10.200.0.0/24 | Spoke VNet for test VM |
 | AWS VPC | 10.20.0.0/16 | AWS VPC CIDR |
 
+## Resource Tagging
+
+All resources are tagged for tracking and safe cleanup:
+
+| Tag | Value | Description |
+|-----|-------|-------------|
+| `project` | azure-labs | Repository identifier |
+| `lab` | lab-003 | Lab identifier |
+| `env` | lab | Environment type |
+| `owner` | (optional) | Your name/alias for tracking |
+
+Use `-Owner "yourname"` when deploying to add owner tracking.
+
 ## APIPA Tunnel Addressing
 
 | Tunnel | AWS (CGW) Side | Azure Side |
@@ -109,14 +125,19 @@ Uses repo-level config from `.data/subs.json` for Azure subscription.
 Lab 003: VPN Validation
 ========================
 
-Azure Checks:
+Azure VPN Site Checks:
+[PASS] VPN Site exists - vpnsite-aws-lab-003
+[PASS] VPN Site Links count >= 2 - 2 link(s)
+[PASS] APIPA (169.254.x.x) in BGP properties - 169.254.21.2, 169.254.22.2
+
+Azure VPN Gateway Checks:
 [PASS] VPN Gateway exists - vpngw-lab-003
-[PASS] VPN Site connections - 1 connection(s)
+[PASS] VPN Gateway connections - 1 connection(s)
+[PASS] BGP enabled on VPN connection
 
 Azure BGP Peer Status:
   Peer 169.254.21.1 : Connected
   Peer 169.254.22.1 : Connected
-
 [PASS] BGP sessions established - 2 peer(s) connected
 
 AWS Checks:
@@ -125,11 +146,10 @@ AWS Checks:
 AWS Tunnel Status:
   52.x.x.x : UP
   52.y.y.y : UP
-
 [PASS] At least one tunnel UP - 2 tunnel(s) up
 
 ========================
-Summary: 5 passed, 0 failed
+Summary: 9 passed, 0 failed
 ========================
 ```
 
@@ -170,7 +190,7 @@ labs/lab-003-vwan-aws-vpn-bgp-apipa/
 ├── scripts/
 │   ├── deploy.ps1              # Orchestrated deployment
 │   ├── validate.ps1            # PASS/FAIL validation
-│   └── destroy.ps1             # Safe teardown
+│   └── destroy.ps1             # Safe teardown (-WhatIf supported)
 └── docs/
     ├── prerequisites.md
     ├── aws-sso-setup.md

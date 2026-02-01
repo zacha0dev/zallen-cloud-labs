@@ -1,6 +1,13 @@
 # Azure Labs
 
-Azure Labs is a lightweight set of scripts and lab scaffolds to help you build Azure-first networking scenarios quickly, with optional AWS interoperability where noted.
+A hands-on collection of Azure networking labs with Infrastructure-as-Code (Bicep + Terraform). Build real hybrid cloud scenarios including Virtual WAN, VPN gateways, and AWS interoperability.
+
+## Features
+
+- **PowerShell-driven** - Consistent deploy/validate/destroy workflow
+- **Infrastructure-as-Code** - Azure Bicep + AWS Terraform
+- **Safe cleanup** - Tag-based resource tracking, WhatIf preview modes
+- **Cross-cloud** - Azure ↔ AWS hybrid networking labs
 
 ## Quick Start
 
@@ -10,9 +17,33 @@ Azure Labs is a lightweight set of scripts and lab scaffolds to help you build A
 
 # Check status
 .\run.ps1 status
+
+# Run a lab (example: Lab 003)
+cd labs/lab-003-vwan-aws-vpn-bgp-apipa
+.\scripts\deploy.ps1 -AdminPassword (Read-Host -AsSecureString "Password")
+.\scripts\validate.ps1
+.\scripts\destroy.ps1
 ```
 
 For detailed setup instructions, see **[docs/setup-overview.md](docs/setup-overview.md)**.
+
+## Configuration
+
+Labs use `.data/subs.json` for Azure subscription configuration:
+
+```json
+{
+  "default": "your-subscription-id",
+  "dev": "dev-subscription-id"
+}
+```
+
+Override with `-SubscriptionKey`:
+```powershell
+.\scripts\deploy.ps1 -SubscriptionKey dev -AdminPassword $pwd
+```
+
+See [docs/labs-config.md](docs/labs-config.md) for details.
 
 ## AWS Setup (Optional)
 
@@ -41,11 +72,19 @@ aws sts get-caller-identity --profile aws-labs
 ```
 
 ## Labs
-- `labs/lab-000_resource-group`
-- `labs/lab-001-virtual-wan-hub-routing`
-- `labs/lab-002-l7-fastapi-appgw-frontdoor`
-- `labs/lab-003-vwan-aws-vpn-bgp-apipa`
-- `labs/lab-004-vwan-default-route-propagation`
+
+| Lab | Description |
+|-----|-------------|
+| [lab-000](labs/lab-000_resource-group/) | Resource Group basics |
+| [lab-001](labs/lab-001-virtual-wan-hub-routing/) | Virtual WAN hub routing |
+| [lab-002](labs/lab-002-l7-fastapi-appgw-frontdoor/) | L7 load balancing with App Gateway + Front Door |
+| [lab-003](labs/lab-003-vwan-aws-vpn-bgp-apipa/) | **Azure vWAN ↔ AWS VPN** with BGP over APIPA |
+| [lab-004](labs/lab-004-vwan-default-route-propagation/) | vWAN default route propagation |
+
+Each lab includes:
+- `scripts/deploy.ps1` - Deploy infrastructure
+- `scripts/validate.ps1` - Verify connectivity and configuration
+- `scripts/destroy.ps1` - Clean up resources (supports `-WhatIf`)
 
 ---
 Zachary Allen - 2026
