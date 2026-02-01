@@ -61,6 +61,20 @@ variable "psk_vpn1_tunnel2" {
   sensitive   = true
 }
 
+variable "psk_vpn2_tunnel1" {
+  description = "Pre-shared key for VPN2 Tunnel 1 (Tunnel 3)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "psk_vpn2_tunnel2" {
+  description = "Pre-shared key for VPN2 Tunnel 2 (Tunnel 4)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # APIPA inside tunnel IPs for BGP
 variable "tunnel1_inside_cidr" {
   description = "Inside CIDR for VPN1 Tunnel 1 (AWS side APIPA)"
@@ -72,6 +86,18 @@ variable "tunnel2_inside_cidr" {
   description = "Inside CIDR for VPN1 Tunnel 2 (AWS side APIPA)"
   type        = string
   default     = "169.254.22.0/30"
+}
+
+variable "tunnel3_inside_cidr" {
+  description = "Inside CIDR for VPN2 Tunnel 1 (AWS side APIPA) - connects to Azure Instance 1"
+  type        = string
+  default     = "169.254.23.0/30"
+}
+
+variable "tunnel4_inside_cidr" {
+  description = "Inside CIDR for VPN2 Tunnel 2 (AWS side APIPA) - connects to Azure Instance 1"
+  type        = string
+  default     = "169.254.24.0/30"
 }
 
 variable "tags" {

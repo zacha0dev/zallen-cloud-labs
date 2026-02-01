@@ -128,7 +128,7 @@ resource "aws_vpn_connection" "vpn_1" {
   })
 }
 
-# Optional: Customer Gateway 2 for second Azure IP (if available)
+# Customer Gateway 2 for Azure VPN Gateway Instance 1 (second IP)
 resource "aws_customer_gateway" "azure_2" {
   count = var.azure_vpn_gateway_ip_2 != "" ? 1 : 0
 
@@ -138,5 +138,30 @@ resource "aws_customer_gateway" "azure_2" {
 
   tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-cgw-azure-2"
+  })
+}
+
+# VPN Connection 2 (to Azure VPN Gateway Instance 1 via CGW 2)
+# Provides Tunnel 3 and Tunnel 4 for full redundancy
+resource "aws_vpn_connection" "vpn_2" {
+  count = var.azure_vpn_gateway_ip_2 != "" && var.psk_vpn2_tunnel1 != "" ? 1 : 0
+
+  vpn_gateway_id      = aws_vpn_gateway.main.id
+  customer_gateway_id = aws_customer_gateway.azure_2[0].id
+  type                = "ipsec.1"
+  static_routes_only  = false
+
+  # Tunnel 3 options (first tunnel of VPN Connection 2)
+  tunnel1_inside_cidr   = var.tunnel3_inside_cidr
+  tunnel1_preshared_key = var.psk_vpn2_tunnel1
+  tunnel1_ike_versions  = ["ikev2"]
+
+  # Tunnel 4 options (second tunnel of VPN Connection 2)
+  tunnel2_inside_cidr   = var.tunnel4_inside_cidr
+  tunnel2_preshared_key = var.psk_vpn2_tunnel2
+  tunnel2_ike_versions  = ["ikev2"]
+
+  tags = merge(local.all_tags, {
+    Name = "${var.lab_prefix}-vpn-2"
   })
 }

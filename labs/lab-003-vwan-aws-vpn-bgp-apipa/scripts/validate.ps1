@@ -85,15 +85,15 @@ $vpnSiteExists = $null -ne $vpnSite
 if (Write-TestResult "VPN Site exists" $vpnSiteExists $vpnSiteName) { $passCount++ } else { $failCount++ }
 $validationReport.checks["vpnSiteExists"] = $vpnSiteExists
 
-# Check VPN Site Links
+# Check VPN Site Links (should be 4 for full redundancy)
 $vpnSiteLinksCount = 0
 $vpnSiteLinks = @()
 if ($vpnSite -and $vpnSite.vpnSiteLinks) {
   $vpnSiteLinksCount = $vpnSite.vpnSiteLinks.Count
   $vpnSiteLinks = $vpnSite.vpnSiteLinks
 }
-$hasLinks = $vpnSiteLinksCount -ge 2
-if (Write-TestResult "VPN Site Links count >= 2" $hasLinks "$vpnSiteLinksCount link(s)") { $passCount++ } else { $failCount++ }
+$hasLinks = $vpnSiteLinksCount -ge 4
+if (Write-TestResult "VPN Site Links count >= 4" $hasLinks "$vpnSiteLinksCount link(s)") { $passCount++ } else { $failCount++ }
 $validationReport.checks["vpnSiteLinksCount"] = $vpnSiteLinksCount
 $validationReport.checks["vpnSiteLinksPresent"] = $hasLinks
 
@@ -190,39 +190,59 @@ $validationReport.checks["bgpPeersConnectedCount"] = $bgpEstablished
 $validationReport.extracts["bgpPeers"] = $bgpPeerDetails
 
 # ============================================
-# AWS Checks
+# AWS Checks (both VPN Connections)
 # ============================================
 Write-Host ""
 Write-Host "AWS Checks:" -ForegroundColor Yellow
 
-# Check VPN connection state
-$vpnConn = aws ec2 describe-vpn-connections --profile $awsProfile --region $awsRegion --vpn-connection-ids $vpnConnId --output json 2>$null | ConvertFrom-Json
-$vpnState = if ($vpnConn -and $vpnConn.VpnConnections) { $vpnConn.VpnConnections[0].State } else { "unknown" }
-$vpnAvailable = $vpnState -eq "available"
-if (Write-TestResult "VPN Connection state" $vpnAvailable $vpnState) { $passCount++ } else { $failCount++ }
-$validationReport.checks["awsVpnConnectionAvailable"] = $vpnAvailable
+# Get both VPN connections for the lab
+$allVpnConns = aws ec2 describe-vpn-connections --profile $awsProfile --region $awsRegion `
+  --filters "Name=tag:lab,Values=lab-003" --output json 2>$null | ConvertFrom-Json
 
-# Check tunnel status
-Write-Host ""
-Write-Host "AWS Tunnel Status:" -ForegroundColor Yellow
-$tunnelsUp = 0
-$tunnelDetails = @()
-if ($vpnConn -and $vpnConn.VpnConnections) {
-  foreach ($tunnel in $vpnConn.VpnConnections[0].VgwTelemetry) {
-    $status = $tunnel.Status
-    $outsideIp = $tunnel.OutsideIpAddress
-    $isUp = $status -eq "UP"
-    if ($isUp) { $tunnelsUp++ }
-    Write-Host "  $outsideIp : $status" -ForegroundColor $(if ($isUp) { "Green" } else { "Yellow" })
-    $tunnelDetails += @{
-      outsideIpAddress = $outsideIp
-      status = $status
-      statusMessage = $tunnel.StatusMessage
+$vpnConnsAvailable = 0
+$vpnConnDetails = @()
+if ($allVpnConns -and $allVpnConns.VpnConnections) {
+  foreach ($conn in $allVpnConns.VpnConnections) {
+    $state = $conn.State
+    $connId = $conn.VpnConnectionId
+    $isAvailable = $state -eq "available"
+    if ($isAvailable) { $vpnConnsAvailable++ }
+    Write-Host "  VPN $connId : $state" -ForegroundColor $(if ($isAvailable) { "Green" } else { "Yellow" })
+    $vpnConnDetails += @{
+      vpnConnectionId = $connId
+      state = $state
     }
   }
 }
-$hasTunnelsUp = $tunnelsUp -ge 1
-if (Write-TestResult "At least one tunnel UP" $hasTunnelsUp "$tunnelsUp tunnel(s) up") { $passCount++ } else { $failCount++ }
+$hasVpnConns = $vpnConnsAvailable -ge 2
+if (Write-TestResult "AWS VPN Connections (need 2)" $hasVpnConns "$vpnConnsAvailable connection(s) available") { $passCount++ } else { $failCount++ }
+$validationReport.checks["awsVpnConnectionsAvailable"] = $vpnConnsAvailable
+$validationReport.extracts["awsVpnConnections"] = $vpnConnDetails
+
+# Check tunnel status across all VPN connections (should be 4 tunnels total)
+Write-Host ""
+Write-Host "AWS Tunnel Status (4 tunnels expected):" -ForegroundColor Yellow
+$tunnelsUp = 0
+$tunnelDetails = @()
+if ($allVpnConns -and $allVpnConns.VpnConnections) {
+  foreach ($conn in $allVpnConns.VpnConnections) {
+    foreach ($tunnel in $conn.VgwTelemetry) {
+      $status = $tunnel.Status
+      $outsideIp = $tunnel.OutsideIpAddress
+      $isUp = $status -eq "UP"
+      if ($isUp) { $tunnelsUp++ }
+      Write-Host "  $outsideIp : $status" -ForegroundColor $(if ($isUp) { "Green" } else { "Yellow" })
+      $tunnelDetails += @{
+        vpnConnectionId = $conn.VpnConnectionId
+        outsideIpAddress = $outsideIp
+        status = $status
+        statusMessage = $tunnel.StatusMessage
+      }
+    }
+  }
+}
+$hasTunnelsUp = $tunnelsUp -ge 2
+if (Write-TestResult "AWS tunnels UP (need >= 2 of 4)" $hasTunnelsUp "$tunnelsUp tunnel(s) up") { $passCount++ } else { $failCount++ }
 $validationReport.checks["awsTunnelsUp"] = $hasTunnelsUp
 $validationReport.checks["awsTunnelsUpCount"] = $tunnelsUp
 $validationReport.extracts["awsTunnels"] = $tunnelDetails
@@ -255,9 +275,12 @@ Write-Host "  Azure RG: $resourceGroup" -ForegroundColor Gray
 Write-Host "  Azure VPN GW: $vpnGwName" -ForegroundColor Gray
 Write-Host "  Azure VPN Site: $vpnSiteName" -ForegroundColor Gray
 Write-Host "  Azure VPN IPs: $($outputs.azure.vpnGatewayIps -join ', ')" -ForegroundColor Gray
-Write-Host "  AWS VPN Conn: $vpnConnId" -ForegroundColor Gray
+Write-Host "  AWS VPN Conn 1: $($outputs.aws.vpnConnectionId)" -ForegroundColor Gray
+Write-Host "  AWS VPN Conn 2: $($outputs.aws.vpnConnection2Id)" -ForegroundColor Gray
 Write-Host "  AWS Tunnel 1: $($outputs.aws.tunnel1OutsideIp) (APIPA: $($outputs.aws.tunnel1BgpIp))" -ForegroundColor Gray
 Write-Host "  AWS Tunnel 2: $($outputs.aws.tunnel2OutsideIp) (APIPA: $($outputs.aws.tunnel2BgpIp))" -ForegroundColor Gray
+Write-Host "  AWS Tunnel 3: $($outputs.aws.tunnel3OutsideIp) (APIPA: $($outputs.aws.tunnel3BgpIp))" -ForegroundColor Gray
+Write-Host "  AWS Tunnel 4: $($outputs.aws.tunnel4OutsideIp) (APIPA: $($outputs.aws.tunnel4BgpIp))" -ForegroundColor Gray
 Write-Host ""
 
 if ($failCount -gt 0) {
