@@ -5,6 +5,7 @@
 param(
   [string]$SubscriptionKey,
   [string]$Location = "eastus2",
+  [string]$AdminPassword,
   [switch]$Force
 )
 
@@ -19,10 +20,9 @@ $ParametersPath = Join-Path $LabRoot "infra\main.parameters.json"
 # Load shared helpers
 . (Join-Path $RepoRoot "scripts\labs-common.ps1")
 
-# Lab defaults - hardcoded for speed (lab environment only)
+# Lab defaults
 $ResourceGroup = "rg-lab-004-vwan-route-prop"
 $AdminUsername = "azureuser"
-$AdminPassword = "Lab004Pass#2026!"
 
 function Require-Command($name) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -31,6 +31,8 @@ function Require-Command($name) {
 }
 
 Require-Command az
+
+if (-not $AdminPassword) { throw "Provide -AdminPassword (temp lab password for VM)." }
 
 # Get subscription from repo config
 Show-ConfigPreflight -RepoRoot $RepoRoot

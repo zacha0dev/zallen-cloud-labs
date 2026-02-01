@@ -15,13 +15,28 @@ output "subnet_id" {
   value       = aws_subnet.public.id
 }
 
+output "igw_id" {
+  description = "Internet Gateway ID"
+  value       = aws_internet_gateway.main.id
+}
+
+output "route_table_id" {
+  description = "Route Table ID"
+  value       = aws_route_table.public.id
+}
+
 output "vgw_id" {
   description = "Virtual Private Gateway ID"
   value       = aws_vpn_gateway.main.id
 }
 
-output "cgw_id_1" {
+output "cgw_id" {
   description = "Customer Gateway ID for Azure IP 1"
+  value       = aws_customer_gateway.azure_1.id
+}
+
+output "cgw_id_1" {
+  description = "Customer Gateway ID for Azure IP 1 (alias)"
   value       = aws_customer_gateway.azure_1.id
 }
 

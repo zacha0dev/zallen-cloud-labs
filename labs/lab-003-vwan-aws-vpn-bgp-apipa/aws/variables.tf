@@ -75,10 +75,28 @@ variable "tunnel2_inside_cidr" {
 }
 
 variable "tags" {
-  description = "Tags for all resources"
+  description = "Tags for all resources (lowercase keys required)"
   type        = map(string)
   default = {
-    Project = "azure-labs"
-    Lab     = "lab-003"
+    project = "azure-labs"
+    lab     = "lab-003"
+    env     = "lab"
   }
+}
+
+variable "owner" {
+  description = "Owner tag for resource tracking (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "allowed_regions" {
+  description = "Allowlist of AWS regions where this lab can be deployed"
+  type        = list(string)
+  default     = ["us-east-1", "us-east-2", "us-west-2", "eu-west-1"]
+}
+
+locals {
+  # Merge owner into tags if provided
+  all_tags = var.owner != "" ? merge(var.tags, { owner = var.owner }) : var.tags
 }
