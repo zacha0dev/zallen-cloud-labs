@@ -59,8 +59,9 @@ From the repo root:
 # 2. Navigate to lab
 cd labs/lab-003-vwan-aws-vpn-bgp-apipa
 
-# 3. Deploy (takes 25-35 min)
-.\scripts\deploy.ps1 -AdminPassword (Read-Host -AsSecureString "VM Password")
+# 3. Deploy (takes 25-35 min) - AdminPassword is REQUIRED
+$pwd = Read-Host -AsSecureString "Enter VM admin password"
+.\scripts\deploy.ps1 -AdminPassword $pwd
 
 # 4. Validate connectivity (wait 5-10 min after deploy)
 .\scripts\validate.ps1
@@ -69,6 +70,8 @@ cd labs/lab-003-vwan-aws-vpn-bgp-apipa
 .\scripts\destroy.ps1 -WhatIf   # Preview what will be deleted
 .\scripts\destroy.ps1           # Actually delete resources
 ```
+
+> **Note**: The `-AdminPassword` parameter is required. Running `deploy.ps1` without it will show an error.
 
 ### Using Different Subscriptions
 
