@@ -7,6 +7,7 @@ param(
   [string]$AwsProfile = "aws-labs",
   [string]$AwsRegion = "us-east-2",
   [string]$Location = "eastus2",
+  [string]$AdminPassword,
   [switch]$Force
 )
 
@@ -25,7 +26,6 @@ $AwsDir = Join-Path $LabRoot "aws"
 
 # Lab defaults
 $ResourceGroup = "rg-lab-003-vwan-aws"
-$AdminPassword = "Lab003Pass#2026!"
 $AzureBgpAsn = 65515
 $AwsBgpAsn = 65001
 
@@ -45,6 +45,8 @@ function Ensure-Directory([string]$Path) {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
   }
 }
+
+if (-not $AdminPassword) { throw "Provide -AdminPassword (temp lab password for VM)." }
 
 Write-Host ""
 Write-Host "Lab 003: Azure vWAN <-> AWS VPN with BGP over APIPA" -ForegroundColor Cyan
