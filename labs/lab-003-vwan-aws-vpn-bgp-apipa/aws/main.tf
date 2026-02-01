@@ -8,11 +8,24 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "aws" {
   region = var.aws_region
+}
+
+# Region validation - fail fast if region not in allowlist
+resource "null_resource" "region_check" {
+  count = contains(var.allowed_regions, var.aws_region) ? 0 : 1
+
+  provisioner "local-exec" {
+    command = "echo 'ERROR: Region ${var.aws_region} is not in the allowed regions: ${join(", ", var.allowed_regions)}' && exit 1"
+  }
 }
 
 # VPC
@@ -21,7 +34,7 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
   enable_dns_hostnames = true
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-vpc"
   })
 }
@@ -33,7 +46,7 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
   availability_zone       = "${var.aws_region}a"
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-subnet-public"
   })
 }
@@ -42,7 +55,7 @@ resource "aws_subnet" "public" {
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-igw"
   })
 }
@@ -56,7 +69,7 @@ resource "aws_route_table" "public" {
     gateway_id = aws_internet_gateway.main.id
   }
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-rt-public"
   })
 }
@@ -71,7 +84,7 @@ resource "aws_vpn_gateway" "main" {
   vpc_id          = aws_vpc.main.id
   amazon_side_asn = var.aws_bgp_asn
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-vgw"
   })
 }
@@ -88,7 +101,7 @@ resource "aws_customer_gateway" "azure_1" {
   ip_address = var.azure_vpn_gateway_ip_1
   type       = "ipsec.1"
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-cgw-azure-1"
   })
 }
@@ -110,7 +123,7 @@ resource "aws_vpn_connection" "vpn_1" {
   tunnel2_preshared_key = var.psk_vpn1_tunnel2
   tunnel2_ike_versions  = ["ikev2"]
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-vpn-1"
   })
 }
@@ -123,7 +136,7 @@ resource "aws_customer_gateway" "azure_2" {
   ip_address = var.azure_vpn_gateway_ip_2
   type       = "ipsec.1"
 
-  tags = merge(var.tags, {
+  tags = merge(local.all_tags, {
     Name = "${var.lab_prefix}-cgw-azure-2"
   })
 }

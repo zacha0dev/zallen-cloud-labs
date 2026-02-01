@@ -26,6 +26,20 @@ param adminPassword string
 @description('Lab prefix for resource naming')
 param labPrefix string = 'lab-003'
 
+@description('Owner tag for resource tracking (optional)')
+param owner string = ''
+
+@description('Allowed Azure regions for this lab')
+param allowedLocations array = ['eastus', 'eastus2', 'westus2', 'northeurope', 'westeurope']
+
+// Tags - consistent with AWS side (lowercase keys)
+var baseTags = {
+  project: 'azure-labs'
+  lab: 'lab-003'
+  env: 'lab'
+}
+var tags = owner != '' ? union(baseTags, { owner: owner }) : baseTags
+
 // Resource naming
 var vwanName = 'vwan-${labPrefix}'
 var vhubName = 'vhub-${labPrefix}'
@@ -38,6 +52,7 @@ var nicName = 'nic-${vmName}'
 resource vwan 'Microsoft.Network/virtualWans@2023-09-01' = {
   name: vwanName
   location: location
+  tags: tags
   properties: {
     type: 'Standard'
     allowBranchToBranchTraffic: true
@@ -49,6 +64,7 @@ resource vwan 'Microsoft.Network/virtualWans@2023-09-01' = {
 resource vhub 'Microsoft.Network/virtualHubs@2023-09-01' = {
   name: vhubName
   location: location
+  tags: tags
   properties: {
     virtualWan: {
       id: vwan.id
@@ -62,6 +78,7 @@ resource vhub 'Microsoft.Network/virtualHubs@2023-09-01' = {
 resource vpnGateway 'Microsoft.Network/vpnGateways@2023-09-01' = {
   name: vpnGatewayName
   location: location
+  tags: tags
   properties: {
     virtualHub: {
       id: vhub.id
@@ -77,6 +94,7 @@ resource vpnGateway 'Microsoft.Network/vpnGateways@2023-09-01' = {
 resource spokeVnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: spokeVnetName
   location: location
+  tags: tags
   properties: {
     addressSpace: {
       addressPrefixes: [spokeAddressPrefix]
@@ -111,6 +129,7 @@ resource hubConnection 'Microsoft.Network/virtualHubs/hubVirtualNetworkConnectio
 resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
   name: nicName
   location: location
+  tags: tags
   properties: {
     ipConfigurations: [
       {
@@ -130,6 +149,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
 resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   name: vmName
   location: location
+  tags: tags
   properties: {
     hardwareProfile: {
       vmSize: 'Standard_B1s'
