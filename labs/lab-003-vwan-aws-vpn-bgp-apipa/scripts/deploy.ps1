@@ -263,13 +263,36 @@ $spokeVmIp = az vm list-ip-addresses -g $ResourceGroup -n "vm-spoke-lab-003" --q
 Write-Host ""
 Write-Host "==> Phase 2: AWS deployment (Terraform)" -ForegroundColor Cyan
 
-# Generate PSKs locally (4 total - 2 per VPN connection)
-$psk1 = New-RandomPsk  # VPN1 Tunnel 1 (to Azure Instance 0)
-$psk2 = New-RandomPsk  # VPN1 Tunnel 2 (to Azure Instance 0)
-$psk3 = New-RandomPsk  # VPN2 Tunnel 1 (to Azure Instance 1)
-$psk4 = New-RandomPsk  # VPN2 Tunnel 2 (to Azure Instance 1)
+# PSK persistence - reuse existing PSKs to avoid unnecessary VPN connection updates
+$pskPath = Join-Path $RepoRoot ".data\lab-003\psk-secrets.json"
+$psks = $null
+if (Test-Path $pskPath) {
+  try {
+    $psks = Get-Content $pskPath -Raw | ConvertFrom-Json
+    Write-Host "Reusing existing pre-shared keys (faster redeploy)" -ForegroundColor Gray
+  } catch {
+    $psks = $null
+  }
+}
 
-Write-Host "Generated pre-shared keys for 4 VPN tunnels" -ForegroundColor Gray
+if (-not $psks -or -not $psks.psk1) {
+  # Generate new PSKs (first deploy or secrets file missing)
+  $psk1 = New-RandomPsk  # VPN1 Tunnel 1 (to Azure Instance 0)
+  $psk2 = New-RandomPsk  # VPN1 Tunnel 2 (to Azure Instance 0)
+  $psk3 = New-RandomPsk  # VPN2 Tunnel 1 (to Azure Instance 1)
+  $psk4 = New-RandomPsk  # VPN2 Tunnel 2 (to Azure Instance 1)
+
+  # Save PSKs for future deploys
+  $psks = @{ psk1 = $psk1; psk2 = $psk2; psk3 = $psk3; psk4 = $psk4 }
+  Ensure-Directory (Split-Path -Parent $pskPath)
+  $psks | ConvertTo-Json | Set-Content -Path $pskPath -Encoding UTF8
+  Write-Host "Generated and saved new pre-shared keys for 4 VPN tunnels" -ForegroundColor Gray
+} else {
+  $psk1 = $psks.psk1
+  $psk2 = $psks.psk2
+  $psk3 = $psks.psk3
+  $psk4 = $psks.psk4
+}
 
 # Create tfvars file (gitignored)
 $tfvarsPath = Join-Path $AwsDir "terraform.tfvars"
@@ -367,6 +390,7 @@ if (-not $hasValidLinks) {
   Write-Host "Creating VPN Site with 4 links using ARM API..." -ForegroundColor Gray
 
   # Build the full VPN Site resource with 4 links using ARM REST API
+  # IMPORTANT: First link MUST have same name as VPN Site (Azure requirement)
   # Links 1-2: Connect to Azure VPN Gateway Instance 0
   # Links 3-4: Connect to Azure VPN Gateway Instance 1
   $vpnSiteBody = @{
@@ -389,7 +413,7 @@ if (-not $hasValidLinks) {
       }
       vpnSiteLinks = @(
         @{
-          name = "link-tunnel1"
+          name = $vpnSiteName  # First link MUST have same name as site
           properties = @{
             ipAddress = $awsTunnel1Ip
             linkProperties = @{
@@ -454,10 +478,10 @@ if (-not $hasValidLinks) {
   if ($LASTEXITCODE -ne 0) { throw "VPN Site creation failed." }
 
   Write-Host "  VPN Site created with 4 links" -ForegroundColor Green
-  Write-Host "    Link 1: $awsTunnel1Ip (BGP: $awsTunnel1BgpIp) -> Instance 0" -ForegroundColor DarkGray
-  Write-Host "    Link 2: $awsTunnel2Ip (BGP: $awsTunnel2BgpIp) -> Instance 0" -ForegroundColor DarkGray
-  Write-Host "    Link 3: $awsTunnel3Ip (BGP: $awsTunnel3BgpIp) -> Instance 1" -ForegroundColor DarkGray
-  Write-Host "    Link 4: $awsTunnel4Ip (BGP: $awsTunnel4BgpIp) -> Instance 1" -ForegroundColor DarkGray
+  Write-Host "    $vpnSiteName : $awsTunnel1Ip (BGP: $awsTunnel1BgpIp) -> Instance 0" -ForegroundColor DarkGray
+  Write-Host "    link-tunnel2: $awsTunnel2Ip (BGP: $awsTunnel2BgpIp) -> Instance 0" -ForegroundColor DarkGray
+  Write-Host "    link-tunnel3: $awsTunnel3Ip (BGP: $awsTunnel3BgpIp) -> Instance 1" -ForegroundColor DarkGray
+  Write-Host "    link-tunnel4: $awsTunnel4Ip (BGP: $awsTunnel4BgpIp) -> Instance 1" -ForegroundColor DarkGray
 
   # Wait for provisioning
   Start-Sleep -Seconds 10
@@ -480,7 +504,8 @@ if (-not $existingConn) {
   Write-Host "Creating VPN Gateway connection with 4 link connections..." -ForegroundColor Gray
 
   # Get site link IDs for all 4 tunnels
-  $siteLink1Id = "$vpnSiteId/vpnSiteLinks/link-tunnel1"
+  # First link has same name as site (Azure requirement)
+  $siteLink1Id = "$vpnSiteId/vpnSiteLinks/$vpnSiteName"
   $siteLink2Id = "$vpnSiteId/vpnSiteLinks/link-tunnel2"
   $siteLink3Id = "$vpnSiteId/vpnSiteLinks/link-tunnel3"
   $siteLink4Id = "$vpnSiteId/vpnSiteLinks/link-tunnel4"
@@ -624,7 +649,7 @@ $outputs = [pscustomobject]@{
     vpnConnectionName = $vpnConnName
     vpnSiteLinks = @(
       @{
-        name = "link-tunnel1"
+        name = $vpnSiteName  # First link has same name as site
         ipAddress = $awsTunnel1Ip
         bgpPeeringAddress = $awsTunnel1BgpIp
         asn = $AwsBgpAsn
