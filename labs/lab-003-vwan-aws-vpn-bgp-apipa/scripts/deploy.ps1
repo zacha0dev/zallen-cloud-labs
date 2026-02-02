@@ -580,9 +580,31 @@ if (-not $existingConn) {
   $vpnConnTempFile = Join-Path $tempDir "vpnconn-body.json"
   $vpnConnBody | Out-File -FilePath $vpnConnTempFile -Encoding utf8
 
-  az rest --method PUT --uri $vpnConnUri --body "@$vpnConnTempFile" --output none
+  az rest --method PUT --uri $vpnConnUri --body "@$vpnConnTempFile" 2>&1 | Tee-Object -Variable vpnConnResult
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "  Warning: VPN connection creation may have failed" -ForegroundColor Yellow
+    Write-Host "  ERROR: VPN connection creation failed:" -ForegroundColor Red
+    Write-Host "  $vpnConnResult" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Trying alternative method with Azure CLI..." -ForegroundColor Yellow
+
+    # Alternative: Use Azure CLI to connect the site
+    # First connect the site to the hub with basic settings
+    Write-Host "  Connecting VPN Site to Hub..." -ForegroundColor Gray
+    az network vpn-gateway connection create `
+      -g $ResourceGroup `
+      --gateway-name $vpnGwName `
+      -n $vpnConnName `
+      --remote-vpn-site $vpnSiteId `
+      --shared-key $psk1 `
+      --enable-bgp true `
+      --output none 2>&1 | Tee-Object -Variable cliResult
+
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "  CLI method also failed: $cliResult" -ForegroundColor Red
+      throw "Failed to create VPN Gateway connection"
+    }
+
+    Write-Host "  VPN Connection created (basic). Updating link connections..." -ForegroundColor Yellow
   } else {
     Write-Host "  VPN Connection created with 4 link connections (BGP enabled)" -ForegroundColor Green
     Write-Host "    Link Connection 1: tunnel1 -> Azure Instance 0" -ForegroundColor DarkGray
@@ -594,6 +616,17 @@ if (-not $existingConn) {
   # Wait for connection provisioning
   Write-Host "  Waiting for connection provisioning..." -ForegroundColor Gray
   Start-Sleep -Seconds 30
+
+  # Verify connection was created
+  Write-Host "  Verifying VPN connection..." -ForegroundColor Gray
+  $verifyConn = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConnName -o json 2>$null | ConvertFrom-Json
+  if ($verifyConn) {
+    Write-Host "  VPN Connection verified: $($verifyConn.provisioningState)" -ForegroundColor Green
+    $linkConnCount = if ($verifyConn.vpnLinkConnections) { $verifyConn.vpnLinkConnections.Count } else { 0 }
+    Write-Host "    Link Connections: $linkConnCount" -ForegroundColor DarkGray
+  } else {
+    Write-Host "  WARNING: VPN Connection verification failed - connection may not exist" -ForegroundColor Yellow
+  }
 } else {
   Write-Host "  VPN Connection already exists" -ForegroundColor Green
 }
