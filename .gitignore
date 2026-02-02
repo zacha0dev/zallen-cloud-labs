@@ -102,3 +102,9 @@ logs/*.log
 logs/*.txt
 
 labs/**/lab.config.json
+
+# --- Lab output dumps (may contain IPs, resource IDs) ---
+labs/**/*-vpn-dump/
+labs/**/*-dump/
+labs/**/*-evidence*.json
+labs/**/*-output*.json

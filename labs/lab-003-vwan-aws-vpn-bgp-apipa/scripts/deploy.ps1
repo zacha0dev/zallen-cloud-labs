@@ -197,15 +197,47 @@ $deploymentName = "lab-003-azure-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 Write-Host "Deploying Bicep template (this takes 20-30 min for VPN Gateway)..." -ForegroundColor Gray
 
 $ownerParam = if ($Owner) { "owner=$Owner" } else { "" }
-az deployment group create `
-  --resource-group $ResourceGroup `
-  --name $deploymentName `
-  --template-file "$AzureDir\main.bicep" `
-  --parameters "$AzureDir\main.parameters.json" `
-  --parameters location=$Location adminPassword=$AdminPassword azureBgpAsn=$AzureBgpAsn $ownerParam `
-  --output none
 
-if ($LASTEXITCODE -ne 0) { throw "Azure deployment failed." }
+# Check if VPN Gateway already exists and is healthy (skip Azure deployment)
+$existingGw = az network vpn-gateway show -g $ResourceGroup -n "vpngw-lab-003" -o json 2>$null | ConvertFrom-Json
+if ($existingGw -and $existingGw.provisioningState -eq "Succeeded") {
+  Write-Host "VPN Gateway already exists and is healthy - skipping Azure deployment" -ForegroundColor Green
+} else {
+  # Retry logic for intermittent Azure failures
+  $maxRetries = 2
+  $retryCount = 0
+  $deploySuccess = $false
+
+  while (-not $deploySuccess -and $retryCount -le $maxRetries) {
+    if ($retryCount -gt 0) {
+      Write-Host "Retrying deployment (attempt $($retryCount + 1) of $($maxRetries + 1))..." -ForegroundColor Yellow
+      Start-Sleep -Seconds 30
+    }
+
+    az deployment group create `
+      --resource-group $ResourceGroup `
+      --name "$deploymentName-$retryCount" `
+      --template-file "$AzureDir\main.bicep" `
+      --parameters "$AzureDir\main.parameters.json" `
+      --parameters location=$Location adminPassword=$AdminPassword azureBgpAsn=$AzureBgpAsn $ownerParam `
+      --output none 2>&1 | Tee-Object -Variable deployOutput
+
+    if ($LASTEXITCODE -eq 0) {
+      $deploySuccess = $true
+    } else {
+      $retryCount++
+      if ($retryCount -le $maxRetries) {
+        Write-Host "Deployment failed (intermittent error). Will retry..." -ForegroundColor Yellow
+      }
+    }
+  }
+
+  if (-not $deploySuccess) {
+    Write-Host "Azure deployment failed after $($maxRetries + 1) attempts." -ForegroundColor Red
+    Write-Host "You can retry by running the script again - it will skip completed resources." -ForegroundColor Yellow
+    throw "Azure deployment failed."
+  }
+}
 
 # Get VPN Gateway details
 $vpnGwName = "vpngw-lab-003"
