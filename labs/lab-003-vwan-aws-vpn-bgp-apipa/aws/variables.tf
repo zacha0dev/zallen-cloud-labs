@@ -76,28 +76,31 @@ variable "psk_vpn2_tunnel2" {
 }
 
 # APIPA inside tunnel IPs for BGP
+# Per MS doc: https://learn.microsoft.com/en-us/azure/vpn-gateway/vpn-gateway-howto-aws-bgp
+# VPN Site 1 (Azure Instance 0): 169.254.21.x and 169.254.22.x
+# VPN Site 2 (Azure Instance 1): 169.254.21.4+ and 169.254.22.4+
 variable "tunnel1_inside_cidr" {
-  description = "Inside CIDR for VPN1 Tunnel 1 (AWS side APIPA)"
+  description = "Inside CIDR for VPN1 Tunnel 1 (to Azure Instance 0)"
   type        = string
   default     = "169.254.21.0/30"
 }
 
 variable "tunnel2_inside_cidr" {
-  description = "Inside CIDR for VPN1 Tunnel 2 (AWS side APIPA)"
+  description = "Inside CIDR for VPN1 Tunnel 2 (to Azure Instance 0)"
   type        = string
   default     = "169.254.22.0/30"
 }
 
 variable "tunnel3_inside_cidr" {
-  description = "Inside CIDR for VPN2 Tunnel 1 (AWS side APIPA) - connects to Azure Instance 1"
+  description = "Inside CIDR for VPN2 Tunnel 1 (to Azure Instance 1)"
   type        = string
-  default     = "169.254.23.0/30"
+  default     = "169.254.21.4/30"
 }
 
 variable "tunnel4_inside_cidr" {
-  description = "Inside CIDR for VPN2 Tunnel 2 (AWS side APIPA) - connects to Azure Instance 1"
+  description = "Inside CIDR for VPN2 Tunnel 2 (to Azure Instance 1)"
   type        = string
-  default     = "169.254.24.0/30"
+  default     = "169.254.22.4/30"
 }
 
 variable "tags" {
