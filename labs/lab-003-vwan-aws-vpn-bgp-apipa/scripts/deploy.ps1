@@ -351,14 +351,18 @@ Write-Host "    Tunnel 3: $awsTunnel3Ip (BGP: $awsTunnel3BgpIp)" -ForegroundColo
 Write-Host "    Tunnel 4: $awsTunnel4Ip (BGP: $awsTunnel4BgpIp)" -ForegroundColor DarkGray
 
 # ============================================
-# PHASE 3: Configure Azure VPN Site with Links (ARM REST API)
+# PHASE 3: Configure Azure VPN Sites with Links (ARM REST API)
+# Per MS doc: 2 VPN Sites, each with 2 links (4 tunnels total)
+# https://learn.microsoft.com/en-us/azure/vpn-gateway/vpn-gateway-howto-aws-bgp
 # ============================================
 Write-Host ""
-Write-Host "==> Phase 3: Azure VPN Site configuration" -ForegroundColor Cyan
+Write-Host "==> Phase 3: Azure VPN Sites configuration (2 sites, 4 tunnels)" -ForegroundColor Cyan
 
-$vpnSiteName = "lab-003-aws-site"
+$vpnSite1Name = "aws-site-instance0"
+$vpnSite2Name = "aws-site-instance1"
 $vwanName = "vwan-lab-003"
-$vpnConnName = "conn-$vpnSiteName"
+$vpnConn1Name = "conn-aws-instance0"
+$vpnConn2Name = "conn-aws-instance1"
 
 # Get vWAN ID for reference
 $vwanId = az network vwan show -g $ResourceGroup -n $vwanName --query id -o tsv
@@ -367,33 +371,20 @@ $vwanId = az network vwan show -g $ResourceGroup -n $vwanName --query id -o tsv
 $tempDir = Join-Path $RepoRoot ".data\lab-003"
 if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
 
-# Check if site exists and has all 4 links
-$existingSite = az network vpn-site show -g $ResourceGroup -n $vpnSiteName -o json 2>$null | ConvertFrom-Json
-$hasValidLinks = $false
-if ($existingSite -and $existingSite.vpnSiteLinks -and $existingSite.vpnSiteLinks.Count -ge 4) {
-  # Check if links have BGP properties with APIPA
-  $link1Bgp = $existingSite.vpnSiteLinks[0].bgpProperties.bgpPeeringAddress
-  if ($link1Bgp -match "^169\.254\.") {
-    $hasValidLinks = $true
-    Write-Host "  VPN Site already has 4 valid links with APIPA BGP" -ForegroundColor Green
-  }
-}
+# Helper function to create VPN Site with 2 links
+function New-VpnSiteWithLinks {
+  param(
+    [string]$SiteName,
+    [string]$Tunnel1Ip,
+    [string]$Tunnel1BgpIp,
+    [string]$Tunnel2Ip,
+    [string]$Tunnel2BgpIp,
+    [string]$LinkSuffix
+  )
 
-if (-not $hasValidLinks) {
-  # Delete existing incomplete site if it exists
-  if ($existingSite) {
-    Write-Host "  Removing incomplete VPN Site..." -ForegroundColor Yellow
-    az network vpn-site delete -g $ResourceGroup -n $vpnSiteName --yes 2>$null
-    Start-Sleep -Seconds 5
-  }
+  Write-Host "  Creating VPN Site: $SiteName" -ForegroundColor Gray
 
-  Write-Host "Creating VPN Site with 4 links using ARM API..." -ForegroundColor Gray
-
-  # Build the full VPN Site resource with 4 links using ARM REST API
-  # IMPORTANT: First link MUST have same name as VPN Site (Azure requirement)
-  # Links 1-2: Connect to Azure VPN Gateway Instance 0
-  # Links 3-4: Connect to Azure VPN Gateway Instance 1
-  $vpnSiteBody = @{
+  $siteBody = @{
     location = $Location
     tags = @{
       project = "azure-labs"
@@ -401,235 +392,197 @@ if (-not $hasValidLinks) {
       env = "lab"
     }
     properties = @{
-      virtualWan = @{
-        id = $vwanId
-      }
-      addressSpace = @{
-        addressPrefixes = @("10.20.0.0/16")
-      }
-      deviceProperties = @{
-        deviceVendor = "AWS"
-        deviceModel = "VGW"
-      }
+      virtualWan = @{ id = $vwanId }
+      addressSpace = @{ addressPrefixes = @("10.20.0.0/16") }
+      deviceProperties = @{ deviceVendor = "AWS"; deviceModel = "VGW" }
       vpnSiteLinks = @(
         @{
-          name = $vpnSiteName  # First link MUST have same name as site
+          name = $SiteName  # First link MUST have same name as site
           properties = @{
-            ipAddress = $awsTunnel1Ip
-            linkProperties = @{
-              linkSpeedInMbps = 100
-            }
-            bgpProperties = @{
-              asn = $AwsBgpAsn
-              bgpPeeringAddress = $awsTunnel1BgpIp
-            }
+            ipAddress = $Tunnel1Ip
+            linkProperties = @{ linkSpeedInMbps = 100 }
+            bgpProperties = @{ asn = $AwsBgpAsn; bgpPeeringAddress = $Tunnel1BgpIp }
           }
         },
         @{
-          name = "link-tunnel2"
+          name = "link-$LinkSuffix-2"
           properties = @{
-            ipAddress = $awsTunnel2Ip
-            linkProperties = @{
-              linkSpeedInMbps = 100
-            }
-            bgpProperties = @{
-              asn = $AwsBgpAsn
-              bgpPeeringAddress = $awsTunnel2BgpIp
-            }
-          }
-        },
-        @{
-          name = "link-tunnel3"
-          properties = @{
-            ipAddress = $awsTunnel3Ip
-            linkProperties = @{
-              linkSpeedInMbps = 100
-            }
-            bgpProperties = @{
-              asn = $AwsBgpAsn
-              bgpPeeringAddress = $awsTunnel3BgpIp
-            }
-          }
-        },
-        @{
-          name = "link-tunnel4"
-          properties = @{
-            ipAddress = $awsTunnel4Ip
-            linkProperties = @{
-              linkSpeedInMbps = 100
-            }
-            bgpProperties = @{
-              asn = $AwsBgpAsn
-              bgpPeeringAddress = $awsTunnel4BgpIp
-            }
+            ipAddress = $Tunnel2Ip
+            linkProperties = @{ linkSpeedInMbps = 100 }
+            bgpProperties = @{ asn = $AwsBgpAsn; bgpPeeringAddress = $Tunnel2BgpIp }
           }
         }
       )
     }
   } | ConvertTo-Json -Depth 10
 
-  $vpnSiteUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/vpnSites/$vpnSiteName`?api-version=2023-09-01"
+  $siteUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/vpnSites/$SiteName`?api-version=2023-09-01"
+  $tempFile = Join-Path $tempDir "$SiteName-body.json"
+  $siteBody | Out-File -FilePath $tempFile -Encoding utf8
 
-  # Write body to temp file (az rest on Windows needs file input for JSON)
-  $vpnSiteTempFile = Join-Path $tempDir "vpnsite-body.json"
-  $vpnSiteBody | Out-File -FilePath $vpnSiteTempFile -Encoding utf8
-
-  az rest --method PUT --uri $vpnSiteUri --body "@$vpnSiteTempFile" --output none
-  if ($LASTEXITCODE -ne 0) { throw "VPN Site creation failed." }
-
-  Write-Host "  VPN Site created with 4 links" -ForegroundColor Green
-  Write-Host "    $vpnSiteName : $awsTunnel1Ip (BGP: $awsTunnel1BgpIp) -> Instance 0" -ForegroundColor DarkGray
-  Write-Host "    link-tunnel2: $awsTunnel2Ip (BGP: $awsTunnel2BgpIp) -> Instance 0" -ForegroundColor DarkGray
-  Write-Host "    link-tunnel3: $awsTunnel3Ip (BGP: $awsTunnel3BgpIp) -> Instance 1" -ForegroundColor DarkGray
-  Write-Host "    link-tunnel4: $awsTunnel4Ip (BGP: $awsTunnel4BgpIp) -> Instance 1" -ForegroundColor DarkGray
-
-  # Wait for provisioning
-  Start-Sleep -Seconds 10
+  az rest --method PUT --uri $siteUri --body "@$tempFile" --output none 2>&1 | Tee-Object -Variable result
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "    ERROR: $result" -ForegroundColor Red
+    return $false
+  }
+  Write-Host "    Created with links: $SiteName, link-$LinkSuffix-2" -ForegroundColor DarkGray
+  return $true
 }
 
+# Delete old single-site if it exists (migration to 2-site architecture)
+$oldSite = az network vpn-site show -g $ResourceGroup -n "lab-003-aws-site" -o json 2>$null | ConvertFrom-Json
+if ($oldSite) {
+  Write-Host "  Removing old VPN Site (migrating to 2-site architecture)..." -ForegroundColor Yellow
+  az network vpn-site delete -g $ResourceGroup -n "lab-003-aws-site" --yes 2>$null
+  Start-Sleep -Seconds 5
+}
+
+# Check/create VPN Site 1 (Azure Instance 0)
+$existingSite1 = az network vpn-site show -g $ResourceGroup -n $vpnSite1Name -o json 2>$null | ConvertFrom-Json
+if (-not $existingSite1 -or $existingSite1.vpnSiteLinks.Count -lt 2) {
+  if ($existingSite1) {
+    az network vpn-site delete -g $ResourceGroup -n $vpnSite1Name --yes 2>$null
+    Start-Sleep -Seconds 3
+  }
+  $site1Created = New-VpnSiteWithLinks -SiteName $vpnSite1Name `
+    -Tunnel1Ip $awsTunnel1Ip -Tunnel1BgpIp $awsTunnel1BgpIp `
+    -Tunnel2Ip $awsTunnel2Ip -Tunnel2BgpIp $awsTunnel2BgpIp `
+    -LinkSuffix "t1"
+  if (-not $site1Created) { throw "Failed to create VPN Site 1" }
+} else {
+  Write-Host "  VPN Site 1 already exists with valid links" -ForegroundColor Green
+}
+
+# Check/create VPN Site 2 (Azure Instance 1)
+$existingSite2 = az network vpn-site show -g $ResourceGroup -n $vpnSite2Name -o json 2>$null | ConvertFrom-Json
+if (-not $existingSite2 -or $existingSite2.vpnSiteLinks.Count -lt 2) {
+  if ($existingSite2) {
+    az network vpn-site delete -g $ResourceGroup -n $vpnSite2Name --yes 2>$null
+    Start-Sleep -Seconds 3
+  }
+  $site2Created = New-VpnSiteWithLinks -SiteName $vpnSite2Name `
+    -Tunnel1Ip $awsTunnel3Ip -Tunnel1BgpIp $awsTunnel3BgpIp `
+    -Tunnel2Ip $awsTunnel4Ip -Tunnel2BgpIp $awsTunnel4BgpIp `
+    -LinkSuffix "t2"
+  if (-not $site2Created) { throw "Failed to create VPN Site 2" }
+} else {
+  Write-Host "  VPN Site 2 already exists with valid links" -ForegroundColor Green
+}
+
+Write-Host "  VPN Sites created:" -ForegroundColor Green
+Write-Host "    Site 1 ($vpnSite1Name): Tunnels 1-2 -> Azure Instance 0" -ForegroundColor DarkGray
+Write-Host "      Link 1: $awsTunnel1Ip (BGP: $awsTunnel1BgpIp)" -ForegroundColor DarkGray
+Write-Host "      Link 2: $awsTunnel2Ip (BGP: $awsTunnel2BgpIp)" -ForegroundColor DarkGray
+Write-Host "    Site 2 ($vpnSite2Name): Tunnels 3-4 -> Azure Instance 1" -ForegroundColor DarkGray
+Write-Host "      Link 3: $awsTunnel3Ip (BGP: $awsTunnel3BgpIp)" -ForegroundColor DarkGray
+Write-Host "      Link 4: $awsTunnel4Ip (BGP: $awsTunnel4BgpIp)" -ForegroundColor DarkGray
+
+Start-Sleep -Seconds 10
+
 # ============================================
-# PHASE 4: Create VPN Gateway Connection
+# PHASE 4: Create VPN Gateway Connections (2 connections, one per site)
 # ============================================
 Write-Host ""
-Write-Host "==> Phase 4: VPN Gateway connection" -ForegroundColor Cyan
+Write-Host "==> Phase 4: VPN Gateway connections" -ForegroundColor Cyan
 
-# Get the VPN Site with links
-$vpnSite = az network vpn-site show -g $ResourceGroup -n $vpnSiteName -o json | ConvertFrom-Json
-$vpnSiteId = $vpnSite.id
+# Helper function to create VPN Gateway connection with 2 link connections
+function New-VpnGatewayConnection {
+  param(
+    [string]$ConnName,
+    [string]$SiteName,
+    [string]$Psk1,
+    [string]$Psk2,
+    [string]$Link2Suffix
+  )
 
-# Check if connection exists
-$existingConn = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConnName -o json 2>$null | ConvertFrom-Json
+  $siteObj = az network vpn-site show -g $ResourceGroup -n $SiteName -o json | ConvertFrom-Json
+  $siteId = $siteObj.id
 
-if (-not $existingConn) {
-  Write-Host "Creating VPN Gateway connection with 4 link connections..." -ForegroundColor Gray
+  # Check if connection already exists
+  $existing = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $ConnName -o json 2>$null | ConvertFrom-Json
+  if ($existing) {
+    Write-Host "  Connection $ConnName already exists" -ForegroundColor Green
+    return $true
+  }
 
-  # Get site link IDs for all 4 tunnels
-  # First link has same name as site (Azure requirement)
-  $siteLink1Id = "$vpnSiteId/vpnSiteLinks/$vpnSiteName"
-  $siteLink2Id = "$vpnSiteId/vpnSiteLinks/link-tunnel2"
-  $siteLink3Id = "$vpnSiteId/vpnSiteLinks/link-tunnel3"
-  $siteLink4Id = "$vpnSiteId/vpnSiteLinks/link-tunnel4"
+  Write-Host "  Creating connection: $ConnName" -ForegroundColor Gray
 
-  # Build connection with all 4 link connections using ARM REST API
-  $vpnConnBody = @{
+  $connBody = @{
     properties = @{
-      remoteVpnSite = @{
-        id = $vpnSiteId
-      }
+      remoteVpnSite = @{ id = $siteId }
       enableBgp = $true
       vpnLinkConnections = @(
         @{
-          name = "link-conn-tunnel1"
+          name = "$ConnName-link1"
           properties = @{
-            vpnSiteLink = @{
-              id = $siteLink1Id
-            }
-            sharedKey = $psk1
+            vpnSiteLink = @{ id = "$siteId/vpnSiteLinks/$SiteName" }
+            sharedKey = $Psk1
             enableBgp = $true
             vpnConnectionProtocolType = "IKEv2"
             connectionBandwidth = 100
-            usePolicyBasedTrafficSelectors = $false
           }
         },
         @{
-          name = "link-conn-tunnel2"
+          name = "$ConnName-link2"
           properties = @{
-            vpnSiteLink = @{
-              id = $siteLink2Id
-            }
-            sharedKey = $psk2
+            vpnSiteLink = @{ id = "$siteId/vpnSiteLinks/link-$Link2Suffix-2" }
+            sharedKey = $Psk2
             enableBgp = $true
             vpnConnectionProtocolType = "IKEv2"
             connectionBandwidth = 100
-            usePolicyBasedTrafficSelectors = $false
-          }
-        },
-        @{
-          name = "link-conn-tunnel3"
-          properties = @{
-            vpnSiteLink = @{
-              id = $siteLink3Id
-            }
-            sharedKey = $psk3
-            enableBgp = $true
-            vpnConnectionProtocolType = "IKEv2"
-            connectionBandwidth = 100
-            usePolicyBasedTrafficSelectors = $false
-          }
-        },
-        @{
-          name = "link-conn-tunnel4"
-          properties = @{
-            vpnSiteLink = @{
-              id = $siteLink4Id
-            }
-            sharedKey = $psk4
-            enableBgp = $true
-            vpnConnectionProtocolType = "IKEv2"
-            connectionBandwidth = 100
-            usePolicyBasedTrafficSelectors = $false
           }
         }
       )
     }
   } | ConvertTo-Json -Depth 10
 
-  $vpnConnUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/vpnGateways/$vpnGwName/vpnConnections/$vpnConnName`?api-version=2023-09-01"
+  $connUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/vpnGateways/$vpnGwName/vpnConnections/$ConnName`?api-version=2023-09-01"
+  $tempFile = Join-Path $tempDir "$ConnName-body.json"
+  $connBody | Out-File -FilePath $tempFile -Encoding utf8
 
-  # Write body to temp file (az rest on Windows needs file input for JSON)
-  $vpnConnTempFile = Join-Path $tempDir "vpnconn-body.json"
-  $vpnConnBody | Out-File -FilePath $vpnConnTempFile -Encoding utf8
-
-  az rest --method PUT --uri $vpnConnUri --body "@$vpnConnTempFile" 2>&1 | Tee-Object -Variable vpnConnResult
+  az rest --method PUT --uri $connUri --body "@$tempFile" 2>&1 | Tee-Object -Variable result
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ERROR: VPN connection creation failed:" -ForegroundColor Red
-    Write-Host "  $vpnConnResult" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Trying alternative method with Azure CLI..." -ForegroundColor Yellow
-
-    # Alternative: Use Azure CLI to connect the site
-    # First connect the site to the hub with basic settings
-    Write-Host "  Connecting VPN Site to Hub..." -ForegroundColor Gray
-    az network vpn-gateway connection create `
-      -g $ResourceGroup `
-      --gateway-name $vpnGwName `
-      -n $vpnConnName `
-      --remote-vpn-site $vpnSiteId `
-      --shared-key $psk1 `
-      --enable-bgp true `
-      --output none 2>&1 | Tee-Object -Variable cliResult
-
+    Write-Host "    ARM API failed, trying Azure CLI..." -ForegroundColor Yellow
+    az network vpn-gateway connection create -g $ResourceGroup --gateway-name $vpnGwName -n $ConnName `
+      --remote-vpn-site $siteId --shared-key $Psk1 --enable-bgp true --output none 2>&1 | Tee-Object -Variable cliResult
     if ($LASTEXITCODE -ne 0) {
-      Write-Host "  CLI method also failed: $cliResult" -ForegroundColor Red
-      throw "Failed to create VPN Gateway connection"
+      Write-Host "    CLI also failed: $cliResult" -ForegroundColor Red
+      return $false
     }
-
-    Write-Host "  VPN Connection created (basic). Updating link connections..." -ForegroundColor Yellow
-  } else {
-    Write-Host "  VPN Connection created with 4 link connections (BGP enabled)" -ForegroundColor Green
-    Write-Host "    Link Connection 1: tunnel1 -> Azure Instance 0" -ForegroundColor DarkGray
-    Write-Host "    Link Connection 2: tunnel2 -> Azure Instance 0" -ForegroundColor DarkGray
-    Write-Host "    Link Connection 3: tunnel3 -> Azure Instance 1" -ForegroundColor DarkGray
-    Write-Host "    Link Connection 4: tunnel4 -> Azure Instance 1" -ForegroundColor DarkGray
   }
-
-  # Wait for connection provisioning
-  Write-Host "  Waiting for connection provisioning..." -ForegroundColor Gray
-  Start-Sleep -Seconds 30
-
-  # Verify connection was created
-  Write-Host "  Verifying VPN connection..." -ForegroundColor Gray
-  $verifyConn = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConnName -o json 2>$null | ConvertFrom-Json
-  if ($verifyConn) {
-    Write-Host "  VPN Connection verified: $($verifyConn.provisioningState)" -ForegroundColor Green
-    $linkConnCount = if ($verifyConn.vpnLinkConnections) { $verifyConn.vpnLinkConnections.Count } else { 0 }
-    Write-Host "    Link Connections: $linkConnCount" -ForegroundColor DarkGray
-  } else {
-    Write-Host "  WARNING: VPN Connection verification failed - connection may not exist" -ForegroundColor Yellow
-  }
-} else {
-  Write-Host "  VPN Connection already exists" -ForegroundColor Green
+  return $true
 }
+
+# Create Connection 1 (Site 1 -> Azure Instance 0)
+Write-Host "  Connecting Site 1 to VPN Gateway (Azure Instance 0)..." -ForegroundColor Gray
+$conn1 = New-VpnGatewayConnection -ConnName $vpnConn1Name -SiteName $vpnSite1Name -Psk1 $psk1 -Psk2 $psk2 -Link2Suffix "t1"
+if (-not $conn1) { Write-Host "  WARNING: Connection 1 may have failed" -ForegroundColor Yellow }
+
+# Create Connection 2 (Site 2 -> Azure Instance 1)
+Write-Host "  Connecting Site 2 to VPN Gateway (Azure Instance 1)..." -ForegroundColor Gray
+$conn2 = New-VpnGatewayConnection -ConnName $vpnConn2Name -SiteName $vpnSite2Name -Psk1 $psk3 -Psk2 $psk4 -Link2Suffix "t2"
+if (-not $conn2) { Write-Host "  WARNING: Connection 2 may have failed" -ForegroundColor Yellow }
+
+# Wait for provisioning
+Write-Host "  Waiting for connections to provision..." -ForegroundColor Gray
+Start-Sleep -Seconds 30
+
+# Verify connections
+Write-Host "  Verifying connections..." -ForegroundColor Gray
+$verifyConn1 = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConn1Name -o json 2>$null | ConvertFrom-Json
+$verifyConn2 = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConn2Name -o json 2>$null | ConvertFrom-Json
+
+if ($verifyConn1) {
+  Write-Host "  Connection 1: $($verifyConn1.provisioningState)" -ForegroundColor Green
+} else {
+  Write-Host "  Connection 1: NOT FOUND" -ForegroundColor Red
+}
+if ($verifyConn2) {
+  Write-Host "  Connection 2: $($verifyConn2.provisioningState)" -ForegroundColor Green
+} else {
+  Write-Host "  Connection 2: NOT FOUND" -ForegroundColor Red
+}
+
 
 # ============================================
 # PHASE 5: Save outputs + Inventory Report
@@ -646,10 +599,12 @@ $vpnGwId = az network vpn-gateway show -g $ResourceGroup -n $vpnGwName --query i
 $spokeVnetId = az network vnet show -g $ResourceGroup -n "vnet-spoke-lab-003" --query id -o tsv 2>$null
 $vmId = az vm show -g $ResourceGroup -n "vm-spoke-lab-003" --query id -o tsv 2>$null
 $nicId = az network nic show -g $ResourceGroup -n "nic-vm-spoke-lab-003" --query id -o tsv 2>$null
-$vpnSiteIdFull = az network vpn-site show -g $ResourceGroup -n $vpnSiteName --query id -o tsv 2>$null
+$vpnSite1IdFull = az network vpn-site show -g $ResourceGroup -n $vpnSite1Name --query id -o tsv 2>$null
+$vpnSite2IdFull = az network vpn-site show -g $ResourceGroup -n $vpnSite2Name --query id -o tsv 2>$null
 
-# Get VPN connection ID
-$vpnConnId = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConnName --query id -o tsv 2>$null
+# Get VPN connection IDs
+$vpnConn1Id = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConn1Name --query id -o tsv 2>$null
+$vpnConn2Id = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $vpnGwName -n $vpnConn2Name --query id -o tsv 2>$null
 
 $outputs = [pscustomobject]@{
   metadata = [pscustomobject]@{
@@ -673,41 +628,56 @@ $outputs = [pscustomobject]@{
       spokeVnet = $spokeVnetId
       vm = $vmId
       nic = $nicId
-      vpnSite = $vpnSiteIdFull
-      vpnConnection = $vpnConnId
+      vpnSite1 = $vpnSite1IdFull
+      vpnSite2 = $vpnSite2IdFull
+      vpnConnection1 = $vpnConn1Id
+      vpnConnection2 = $vpnConn2Id
     }
     vpnGatewayName = $vpnGwName
     vpnGatewayIps = $azureVpnIps
-    vpnSiteName = $vpnSiteName
-    vpnConnectionName = $vpnConnName
-    vpnSiteLinks = @(
+    # VPN Site 1: Azure Instance 0 (Tunnels 1-2)
+    vpnSiteName = $vpnSite1Name
+    vpnSite2Name = $vpnSite2Name
+    vpnConnectionName = $vpnConn1Name
+    vpnConnection2Name = $vpnConn2Name
+    vpnSites = @(
       @{
-        name = $vpnSiteName  # First link has same name as site
-        ipAddress = $awsTunnel1Ip
-        bgpPeeringAddress = $awsTunnel1BgpIp
-        asn = $AwsBgpAsn
+        siteName = $vpnSite1Name
+        connectionName = $vpnConn1Name
         azureInstance = 0
+        links = @(
+          @{
+            name = $vpnSite1Name
+            ipAddress = $awsTunnel1Ip
+            bgpPeeringAddress = $awsTunnel1BgpIp
+            apipaCidr = "169.254.21.0/30"
+          },
+          @{
+            name = "link-t1-2"
+            ipAddress = $awsTunnel2Ip
+            bgpPeeringAddress = $awsTunnel2BgpIp
+            apipaCidr = "169.254.22.0/30"
+          }
+        )
       },
       @{
-        name = "link-tunnel2"
-        ipAddress = $awsTunnel2Ip
-        bgpPeeringAddress = $awsTunnel2BgpIp
-        asn = $AwsBgpAsn
-        azureInstance = 0
-      },
-      @{
-        name = "link-tunnel3"
-        ipAddress = $awsTunnel3Ip
-        bgpPeeringAddress = $awsTunnel3BgpIp
-        asn = $AwsBgpAsn
+        siteName = $vpnSite2Name
+        connectionName = $vpnConn2Name
         azureInstance = 1
-      },
-      @{
-        name = "link-tunnel4"
-        ipAddress = $awsTunnel4Ip
-        bgpPeeringAddress = $awsTunnel4BgpIp
-        asn = $AwsBgpAsn
-        azureInstance = 1
+        links = @(
+          @{
+            name = $vpnSite2Name
+            ipAddress = $awsTunnel3Ip
+            bgpPeeringAddress = $awsTunnel3BgpIp
+            apipaCidr = "169.254.21.4/30"
+          },
+          @{
+            name = "link-t2-2"
+            ipAddress = $awsTunnel4Ip
+            bgpPeeringAddress = $awsTunnel4BgpIp
+            apipaCidr = "169.254.22.4/30"
+          }
+        )
       }
     )
     spokeVmPrivateIp = $spokeVmIp
@@ -760,16 +730,18 @@ Write-Host "  Resource Group:  $ResourceGroup" -ForegroundColor Gray
 Write-Host "  Virtual WAN:     vwan-lab-003" -ForegroundColor Gray
 Write-Host "  Virtual Hub:     vhub-lab-003" -ForegroundColor Gray
 Write-Host "  VPN Gateway:     $vpnGwName" -ForegroundColor Gray
-Write-Host "  VPN Site:        $vpnSiteName" -ForegroundColor Gray
-Write-Host "  VPN Connection:  $vpnConnName" -ForegroundColor Gray
 Write-Host "  Spoke VNet:      vnet-spoke-lab-003" -ForegroundColor Gray
 Write-Host "  Test VM:         vm-spoke-lab-003" -ForegroundColor Gray
 Write-Host ""
-Write-Host "VPN Site Links (APIPA BGP):" -ForegroundColor White
-Write-Host "  Link 1: $awsTunnel1Ip -> BGP: $awsTunnel1BgpIp (-> Azure Instance 0)" -ForegroundColor Cyan
-Write-Host "  Link 2: $awsTunnel2Ip -> BGP: $awsTunnel2BgpIp (-> Azure Instance 0)" -ForegroundColor Cyan
-Write-Host "  Link 3: $awsTunnel3Ip -> BGP: $awsTunnel3BgpIp (-> Azure Instance 1)" -ForegroundColor Cyan
-Write-Host "  Link 4: $awsTunnel4Ip -> BGP: $awsTunnel4BgpIp (-> Azure Instance 1)" -ForegroundColor Cyan
+Write-Host "VPN Sites (2-site architecture per MS doc):" -ForegroundColor White
+Write-Host "  Site 1: $vpnSite1Name (Azure Instance 0)" -ForegroundColor Cyan
+Write-Host "    Connection: $vpnConn1Name" -ForegroundColor Gray
+Write-Host "    Tunnel 1: $awsTunnel1Ip (BGP: $awsTunnel1BgpIp, APIPA: 169.254.21.0/30)" -ForegroundColor Gray
+Write-Host "    Tunnel 2: $awsTunnel2Ip (BGP: $awsTunnel2BgpIp, APIPA: 169.254.22.0/30)" -ForegroundColor Gray
+Write-Host "  Site 2: $vpnSite2Name (Azure Instance 1)" -ForegroundColor Cyan
+Write-Host "    Connection: $vpnConn2Name" -ForegroundColor Gray
+Write-Host "    Tunnel 3: $awsTunnel3Ip (BGP: $awsTunnel3BgpIp, APIPA: 169.254.21.4/30)" -ForegroundColor Gray
+Write-Host "    Tunnel 4: $awsTunnel4Ip (BGP: $awsTunnel4BgpIp, APIPA: 169.254.22.4/30)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "AWS Resources (region: $AwsRegion):" -ForegroundColor White
 Write-Host "  VPC:              $($tfOutput.vpc_id.value)" -ForegroundColor Gray
@@ -786,5 +758,12 @@ Write-Host "  1. Wait 5-10 min for BGP to establish" -ForegroundColor Gray
 Write-Host "  2. Run: .\scripts\validate.ps1" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Azure <-> AWS Tunnel Mapping:" -ForegroundColor White
-Write-Host "  AWS Tunnel 1: $awsTunnel1Ip <-> Azure: $azureVpnIp1" -ForegroundColor Gray
-Write-Host "  AWS Tunnel 2: $awsTunnel2Ip <-> Azure: $azureVpnIp1" -ForegroundColor Gray
+Write-Host "  Site 1 (Instance 0):" -ForegroundColor Yellow
+Write-Host "    Tunnel 1: $awsTunnel1Ip <-> Azure: $azureVpnIp1" -ForegroundColor Gray
+Write-Host "    Tunnel 2: $awsTunnel2Ip <-> Azure: $azureVpnIp1" -ForegroundColor Gray
+if ($azureVpnIp2) {
+  Write-Host "  Site 2 (Instance 1):" -ForegroundColor Yellow
+  Write-Host "    Tunnel 3: $awsTunnel3Ip <-> Azure: $azureVpnIp2" -ForegroundColor Gray
+  Write-Host "    Tunnel 4: $awsTunnel4Ip <-> Azure: $azureVpnIp2" -ForegroundColor Gray
+}
+Write-Host ""

@@ -26,9 +26,9 @@ This lab deploys a fully functional Site-to-Site VPN between Azure Virtual WAN a
 └───────────────────────┼───────────┼─────────────────────────────────────┘
                         │           │
           ┌─────────────┘           └─────────────┐
-          │  Tunnels 1-2                Tunnels 3-4│
-          │  169.254.21.0/30            169.254.23.0/30
-          │  169.254.22.0/30            169.254.24.0/30
+          │  Site 1 (Tunnels 1-2)      Site 2 (Tunnels 3-4)│
+          │  169.254.21.0/30            169.254.21.4/30
+          │  169.254.22.0/30            169.254.22.4/30
           ▼                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  AWS (10.20.0.0/16)                                                     │
@@ -124,12 +124,14 @@ Use `-Owner "yourname"` when deploying to add owner tracking.
 
 ## APIPA Tunnel Addressing
 
-| Tunnel | AWS VPN Conn | Azure Instance | AWS (VGW) Side | Azure Side |
-|--------|--------------|----------------|----------------|------------|
-| Tunnel 1 | VPN Conn 1 | Instance 0 | 169.254.21.1/30 | 169.254.21.2/30 |
-| Tunnel 2 | VPN Conn 1 | Instance 0 | 169.254.22.1/30 | 169.254.22.2/30 |
-| Tunnel 3 | VPN Conn 2 | Instance 1 | 169.254.23.1/30 | 169.254.23.2/30 |
-| Tunnel 4 | VPN Conn 2 | Instance 1 | 169.254.24.1/30 | 169.254.24.2/30 |
+Per [Microsoft documentation](https://learn.microsoft.com/en-us/azure/vpn-gateway/vpn-gateway-howto-aws-bgp), the APIPA addressing uses 169.254.21.x and 169.254.22.x ranges:
+
+| Tunnel | VPN Site | Azure Instance | Inside CIDR | AWS (VGW) IP | Azure IP |
+|--------|----------|----------------|-------------|--------------|----------|
+| Tunnel 1 | Site 1 | Instance 0 | 169.254.21.0/30 | 169.254.21.1 | 169.254.21.2 |
+| Tunnel 2 | Site 1 | Instance 0 | 169.254.22.0/30 | 169.254.22.1 | 169.254.22.2 |
+| Tunnel 3 | Site 2 | Instance 1 | 169.254.21.4/30 | 169.254.21.5 | 169.254.21.6 |
+| Tunnel 4 | Site 2 | Instance 1 | 169.254.22.4/30 | 169.254.22.5 | 169.254.22.6 |
 
 ## Validation Output
 
@@ -137,21 +139,22 @@ Use `-Owner "yourname"` when deploying to add owner tracking.
 Lab 003: VPN Validation
 ========================
 
-Azure VPN Site Checks:
-[PASS] VPN Site exists - lab-003-aws-site
-[PASS] VPN Site Links count >= 4 - 4 link(s)
-[PASS] APIPA (169.254.x.x) in BGP properties - 169.254.21.2, 169.254.22.2, 169.254.23.2, 169.254.24.2
+Azure VPN Site Checks (2-site architecture):
+[PASS] VPN Site 1 exists - aws-site-instance0
+[PASS] VPN Site 2 exists - aws-site-instance1
+[PASS] VPN Site Links total >= 4 - 4 link(s) (Site 1: 2, Site 2: 2)
+[PASS] APIPA (169.254.x.x) in BGP properties - 169.254.21.1, 169.254.22.1, 169.254.21.5, 169.254.22.5
 
 Azure VPN Gateway Checks:
 [PASS] VPN Gateway exists - vpngw-lab-003
-[PASS] VPN Gateway connections - 1 connection(s)
+[PASS] VPN Gateway connections (need 2) - 2 connection(s)
 [PASS] BGP enabled on VPN connection
 
 Azure BGP Peer Status:
   Peer 169.254.21.1 : Connected
   Peer 169.254.22.1 : Connected
-  Peer 169.254.23.1 : Connected
-  Peer 169.254.24.1 : Connected
+  Peer 169.254.21.5 : Connected
+  Peer 169.254.22.5 : Connected
 [PASS] BGP sessions established - 4 peer(s) connected
 
 AWS Checks:
@@ -167,7 +170,7 @@ AWS Tunnel Status (4 tunnels expected):
 [PASS] AWS tunnels UP (need >= 2 of 4) - 4 tunnel(s) up
 
 ========================
-Summary: 10 passed, 0 failed
+Summary: 11 passed, 0 failed
 ========================
 ```
 
