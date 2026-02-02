@@ -194,7 +194,15 @@ Write-Host "==> Phase 1: Azure deployment" -ForegroundColor Cyan
 az group create --name $ResourceGroup --location $Location --output none
 
 $deploymentName = "lab-003-azure-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-Write-Host "Deploying Bicep template (this takes 20-30 min for VPN Gateway)..." -ForegroundColor Gray
+
+# Show portal link for monitoring
+$portalUrl = "https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/deployments"
+Write-Host ""
+Write-Host "Monitor deployment progress in Azure Portal:" -ForegroundColor Yellow
+Write-Host "  $portalUrl" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Deploying Bicep template (typically 20-30 min for VPN Gateway)..." -ForegroundColor Gray
+$startTime = Get-Date
 
 $ownerParam = if ($Owner) { "owner=$Owner" } else { "" }
 
@@ -224,6 +232,8 @@ if ($existingGw -and $existingGw.provisioningState -eq "Succeeded") {
 
     if ($LASTEXITCODE -eq 0) {
       $deploySuccess = $true
+      $elapsed = (Get-Date) - $startTime
+      Write-Host "Azure deployment completed in $([math]::Round($elapsed.TotalMinutes, 1)) minutes" -ForegroundColor Green
     } else {
       $retryCount++
       if ($retryCount -le $maxRetries) {
