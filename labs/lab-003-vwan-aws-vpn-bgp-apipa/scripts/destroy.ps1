@@ -316,11 +316,10 @@ if (-not $AwsRegion) { $AwsRegion = "us-east-2" }
 
 Write-Host "==> Authentication" -ForegroundColor Yellow
 
-# Auth checks
+# Auth checks (prompts to login if needed)
 Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
-az account get-access-token 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated." }
+Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 Write-Host "  Azure: $SubscriptionId" -ForegroundColor Gray
 

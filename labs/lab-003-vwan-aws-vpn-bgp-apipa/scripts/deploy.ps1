@@ -163,9 +163,8 @@ Write-Host "  Azure Location: $Location (allowed)" -ForegroundColor Green
 Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 
-# Azure auth check
-az account get-access-token 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated. Run: az login" }
+# Azure auth check (prompts to login if needed)
+Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 Write-Host "  Azure: $SubscriptionKey ($SubscriptionId)" -ForegroundColor Gray
 

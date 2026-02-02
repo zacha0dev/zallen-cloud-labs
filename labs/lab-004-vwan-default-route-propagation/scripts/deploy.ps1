@@ -38,9 +38,8 @@ if (-not $AdminPassword) { throw "Provide -AdminPassword (temp lab password for 
 Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 
-# Validate Azure auth
-az account get-access-token 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated. Run: az login" }
+# Validate Azure auth (prompts to login if needed)
+Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 
 Write-Host ""

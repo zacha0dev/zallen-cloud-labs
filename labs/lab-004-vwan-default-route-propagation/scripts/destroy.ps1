@@ -18,11 +18,10 @@ $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..")
 
 $ResourceGroup = "rg-lab-004-vwan-route-prop"
 
-# Setup
+# Setup (prompts to login if needed)
 Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
-az account get-access-token 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated. Run: az login" }
+Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 
 # Check if exists

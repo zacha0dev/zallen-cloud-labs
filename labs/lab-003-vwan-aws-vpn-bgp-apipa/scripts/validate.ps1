@@ -49,11 +49,10 @@ $awsProfile = $outputs.aws.profile
 $awsRegion = $outputs.aws.region
 $vpnConnId = $outputs.aws.vpnConnectionId
 
-# Auth
+# Auth (prompts to login if needed)
 Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
-az account get-access-token 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated." }
+Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 
 Ensure-AwsAuth -Profile $awsProfile

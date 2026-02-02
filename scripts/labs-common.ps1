@@ -217,3 +217,119 @@ function Show-ConfigPreflight {
     throw
   }
 }
+
+function Test-AzureTokenFresh {
+  <#
+  .SYNOPSIS
+    Tests if Azure CLI has a fresh, valid token (not just cached metadata).
+  #>
+  az account get-access-token --query "expiresOn" -o tsv 1>$null 2>$null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Clear-AzureCredentialCache {
+  <#
+  .SYNOPSIS
+    Clears local Azure CLI token caches so a fresh login is required.
+  #>
+  $home_ = $env:USERPROFILE
+  if (-not $home_) { $home_ = $env:HOME }
+  $azDir = Join-Path $home_ ".azure"
+
+  foreach ($pattern in @("msal_token_cache*", "accessTokens.json", "TokenCache.dat")) {
+    $files = Get-ChildItem -Path $azDir -Filter $pattern -ErrorAction SilentlyContinue
+    foreach ($f in $files) {
+      Remove-Item -Path $f.FullName -Force -ErrorAction SilentlyContinue
+      Write-Host "  Cleared stale cache: $($f.Name)" -ForegroundColor DarkGray
+    }
+  }
+}
+
+function Ensure-AzureAuth {
+  <#
+  .SYNOPSIS
+    Validates Azure CLI authentication with interactive prompts.
+  .DESCRIPTION
+    Checks if Azure CLI is authenticated with a valid token.
+    If not, prompts the user to login interactively.
+    Provides clear next-step instructions on failure.
+  .PARAMETER DoLogin
+    If set, automatically prompts to run az login when not authenticated.
+  #>
+  param(
+    [switch]$DoLogin
+  )
+
+  # Check if az CLI is installed
+  if (-not (Get-Command "az" -ErrorAction SilentlyContinue)) {
+    Write-Host ""
+    Write-Host "Azure CLI (az) is not installed." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Next step:" -ForegroundColor White
+    Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Or install manually: https://aka.ms/installazurecli" -ForegroundColor DarkGray
+    throw "Azure CLI not installed. Run: .\scripts\setup.ps1"
+  }
+
+  # Fast path: already authenticated with fresh token
+  if (Test-AzureTokenFresh) {
+    return
+  }
+
+  # Check if we have cached session metadata (but expired token)
+  az account show 1>$null 2>$null
+  $hasSession = ($LASTEXITCODE -eq 0)
+
+  if ($hasSession) {
+    # Token expired but session exists
+    Write-Host ""
+    Write-Host "Azure CLI session expired. Token needs refresh." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Next step:" -ForegroundColor White
+    Write-Host "  az login" -ForegroundColor Cyan
+    Write-Host ""
+
+    if ($DoLogin) {
+      Write-Host "Clearing stale credential caches..." -ForegroundColor DarkGray
+      Clear-AzureCredentialCache
+      Write-Host ""
+      $ans = Read-Host "Login now in browser? (y/n)"
+      if ($ans.Trim().ToLower() -eq "y") {
+        Write-Host "Running: az login" -ForegroundColor Yellow
+        az login | Out-Null
+        if (Test-AzureTokenFresh) {
+          $sub = az account show --query "name" -o tsv
+          Write-Host "Azure CLI authenticated: $sub" -ForegroundColor Green
+          return
+        }
+      }
+    }
+    throw "Azure CLI token expired. Run: az login"
+  }
+
+  # No session at all
+  Write-Host ""
+  Write-Host "Azure CLI is not authenticated." -ForegroundColor Yellow
+  Write-Host ""
+  Write-Host "Next step:" -ForegroundColor White
+  Write-Host "  az login" -ForegroundColor Cyan
+  Write-Host ""
+  Write-Host "Or run full setup:" -ForegroundColor Gray
+  Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
+  Write-Host ""
+
+  if ($DoLogin) {
+    $ans = Read-Host "Login now in browser? (y/n)"
+    if ($ans.Trim().ToLower() -eq "y") {
+      Write-Host "Running: az login" -ForegroundColor Yellow
+      az login | Out-Null
+      if (Test-AzureTokenFresh) {
+        $sub = az account show --query "name" -o tsv
+        Write-Host "Azure CLI authenticated: $sub" -ForegroundColor Green
+        return
+      }
+    }
+  }
+  throw "Azure CLI not authenticated. Run: az login"
+}

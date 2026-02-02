@@ -31,11 +31,10 @@ function Get-EffectiveRoutes([string]$NicName) {
   return ($json | ConvertFrom-Json).value
 }
 
-# Setup
+# Setup (prompts to login if needed)
 Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
-az account get-access-token 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Azure CLI not authenticated. Run: az login" }
+Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 
 Write-Host ""
