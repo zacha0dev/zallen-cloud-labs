@@ -201,56 +201,56 @@ Write-Host ""
 Write-Host "Monitor deployment progress in Azure Portal:" -ForegroundColor Yellow
 Write-Host "  $portalUrl" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Deploying Bicep template (typically 20-30 min for VPN Gateway)..." -ForegroundColor Gray
-$startTime = Get-Date
 
 $ownerParam = if ($Owner) { "owner=$Owner" } else { "" }
+$vpnGwName = "vpngw-lab-003"
 
-# Check if VPN Gateway already exists and is healthy (skip Azure deployment)
-$existingGw = az network vpn-gateway show -g $ResourceGroup -n "vpngw-lab-003" -o json 2>$null | ConvertFrom-Json
-if ($existingGw -and $existingGw.provisioningState -eq "Succeeded") {
-  Write-Host "VPN Gateway already exists and is healthy - skipping Azure deployment" -ForegroundColor Green
-} else {
-  # Retry logic for intermittent Azure failures
-  $maxRetries = 2
-  $retryCount = 0
-  $deploySuccess = $false
-
-  while (-not $deploySuccess -and $retryCount -le $maxRetries) {
-    if ($retryCount -gt 0) {
-      Write-Host "Retrying deployment (attempt $($retryCount + 1) of $($maxRetries + 1))..." -ForegroundColor Yellow
-      Start-Sleep -Seconds 30
-    }
-
-    az deployment group create `
-      --resource-group $ResourceGroup `
-      --name "$deploymentName-$retryCount" `
-      --template-file "$AzureDir\main.bicep" `
-      --parameters "$AzureDir\main.parameters.json" `
-      --parameters location=$Location adminPassword=$AdminPassword azureBgpAsn=$AzureBgpAsn $ownerParam `
-      --output none 2>&1 | Tee-Object -Variable deployOutput
-
-    if ($LASTEXITCODE -eq 0) {
-      $deploySuccess = $true
-      $elapsed = (Get-Date) - $startTime
-      Write-Host "Azure deployment completed in $([math]::Round($elapsed.TotalMinutes, 1)) minutes" -ForegroundColor Green
-    } else {
-      $retryCount++
-      if ($retryCount -le $maxRetries) {
-        Write-Host "Deployment failed (intermittent error). Will retry..." -ForegroundColor Yellow
-      }
-    }
-  }
-
-  if (-not $deploySuccess) {
-    Write-Host "Azure deployment failed after $($maxRetries + 1) attempts." -ForegroundColor Red
-    Write-Host "You can retry by running the script again - it will skip completed resources." -ForegroundColor Yellow
-    throw "Azure deployment failed."
+# Check VPN Gateway state
+$existingGw = az network vpn-gateway show -g $ResourceGroup -n $vpnGwName -o json 2>$null | ConvertFrom-Json
+if ($existingGw) {
+  if ($existingGw.provisioningState -eq "Succeeded") {
+    Write-Host "VPN Gateway already exists and is healthy - skipping Azure deployment" -ForegroundColor Green
+  } elseif ($existingGw.provisioningState -eq "Failed") {
+    Write-Host "VPN Gateway exists in FAILED state - deleting before retry..." -ForegroundColor Yellow
+    az network vpn-gateway delete -g $ResourceGroup -n $vpnGwName --yes --no-wait 2>$null
+    Write-Host "Waiting for VPN Gateway deletion..." -ForegroundColor Gray
+    Start-Sleep -Seconds 60
+    $existingGw = $null
+  } else {
+    Write-Host "VPN Gateway is in '$($existingGw.provisioningState)' state - waiting..." -ForegroundColor Yellow
   }
 }
 
+if (-not $existingGw -or $existingGw.provisioningState -ne "Succeeded") {
+  Write-Host "Deploying Bicep template (typically 20-30 min for VPN Gateway)..." -ForegroundColor Gray
+  $startTime = Get-Date
+
+  # Single deployment attempt with clear error handling
+  az deployment group create `
+    --resource-group $ResourceGroup `
+    --name $deploymentName `
+    --template-file "$AzureDir\main.bicep" `
+    --parameters "$AzureDir\main.parameters.json" `
+    --parameters location=$Location adminPassword=$AdminPassword azureBgpAsn=$AzureBgpAsn $ownerParam `
+    --output none 2>&1 | Tee-Object -Variable deployOutput
+
+  if ($LASTEXITCODE -ne 0) {
+    $elapsed = (Get-Date) - $startTime
+    Write-Host ""
+    Write-Host "Azure deployment failed after $([math]::Round($elapsed.TotalMinutes, 1)) minutes." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Common fixes:" -ForegroundColor Yellow
+    Write-Host "  1. Delete failed VPN Gateway: az network vpn-gateway delete -g $ResourceGroup -n $vpnGwName --yes" -ForegroundColor Gray
+    Write-Host "  2. Wait 2-3 min, then re-run this script" -ForegroundColor Gray
+    Write-Host "  3. Check portal for detailed error: $portalUrl" -ForegroundColor Gray
+    throw "Azure deployment failed."
+  }
+
+  $elapsed = (Get-Date) - $startTime
+  Write-Host "Azure deployment completed in $([math]::Round($elapsed.TotalMinutes, 1)) minutes" -ForegroundColor Green
+}
+
 # Get VPN Gateway details
-$vpnGwName = "vpngw-lab-003"
 Write-Host "Waiting for VPN Gateway IPs..." -ForegroundColor Gray
 
 # Poll for VPN gateway to be ready with IPs
