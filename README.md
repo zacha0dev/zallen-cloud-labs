@@ -12,21 +12,21 @@ A hands-on collection of Azure networking labs with Infrastructure-as-Code (Bice
 ## Quick Start
 
 ```powershell
-# 1. Environment setup (installs tooling, prompts for logins)
+# 1. Setup (one-time)
 .\setup.ps1
 
-# 2. Check status anytime
-.\setup.ps1 -Status
+# 2. Deploy a simple lab to test your setup
+cd labs/lab-000_resource-group
+.\deploy.ps1
 
-# 3. Deploy a lab
-.\labs\lab-003-vwan-aws-vpn-bgp-apipa\scripts\deploy.ps1 -AdminPassword "YourPassword123!"
+# 3. Verify it worked
+az group list --query "[?starts_with(name,'rg-lab-000')]" -o table
 
-# 4. Validate
-.\labs\lab-003-vwan-aws-vpn-bgp-apipa\scripts\validate.ps1
-
-# 5. Cleanup
-.\labs\lab-003-vwan-aws-vpn-bgp-apipa\scripts\destroy.ps1
+# 4. Clean up
+.\destroy.ps1
 ```
+
+**Ready for more?** Try [lab-005](labs/lab-005-vwan-s2s-bgp-apipa/) for a full vWAN S2S VPN deployment (Azure-only, ~30 min).
 
 **Setup options:**
 ```powershell
@@ -70,13 +70,14 @@ AWS is only required for cross-cloud labs like `lab-003`. Run `.\setup.ps1 -Aws`
 
 ## Labs
 
-| Lab | Description |
-|-----|-------------|
-| [lab-000](labs/lab-000_resource-group/) | Resource Group basics |
-| [lab-001](labs/lab-001-virtual-wan-hub-routing/) | Virtual WAN hub routing |
-| [lab-002](labs/lab-002-l7-fastapi-appgw-frontdoor/) | L7 load balancing with App Gateway + Front Door |
-| [lab-003](labs/lab-003-vwan-aws-vpn-bgp-apipa/) | **Azure vWAN ↔ AWS VPN** with BGP over APIPA |
-| [lab-004](labs/lab-004-vwan-default-route-propagation/) | vWAN default route propagation |
+| Lab | Description | Cloud |
+|-----|-------------|-------|
+| [lab-000](labs/lab-000_resource-group/) | Resource Group basics | Azure |
+| [lab-001](labs/lab-001-virtual-wan-hub-routing/) | Virtual WAN hub routing | Azure |
+| [lab-002](labs/lab-002-l7-fastapi-appgw-frontdoor/) | L7 load balancing with App Gateway + Front Door | Azure |
+| [lab-003](labs/lab-003-vwan-aws-vpn-bgp-apipa/) | Azure vWAN ↔ AWS VPN with BGP over APIPA | Azure + AWS |
+| [lab-004](labs/lab-004-vwan-default-route-propagation/) | vWAN default route propagation | Azure |
+| [lab-005](labs/lab-005-vwan-s2s-bgp-apipa/) | **vWAN S2S BGP over APIPA** - dual instance reference lab | Azure |
 
 Each lab includes:
 - `scripts/deploy.ps1` - Deploy infrastructure
