@@ -1461,6 +1461,28 @@ foreach ($site in $VpnSites) {
     Write-Host "    $($link.Name) -> Instance $($site.Instance): Azure BGP = $($apipa.Azure)" -ForegroundColor DarkGray
   }
 
+  # Wait for this connection to provision before creating the next one
+  # (Azure doesn't allow concurrent VPN gateway operations)
+  Write-Host "  Waiting for connection to provision..." -ForegroundColor DarkGray
+  $maxWaitAttempts = 30
+  $waitAttempt = 0
+  while ($waitAttempt -lt $maxWaitAttempts) {
+    $waitAttempt++
+    Start-Sleep -Seconds 10
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $connCheck = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $VpnGwName -n $connName -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldErrPref
+
+    if ($connCheck.provisioningState -eq "Succeeded") {
+      Write-Host "  Connection provisioned successfully" -ForegroundColor Green
+      break
+    } elseif ($connCheck.provisioningState -eq "Failed") {
+      Write-Host "  Connection provisioning failed!" -ForegroundColor Red
+      break
+    }
+    Write-Host "    [$waitAttempt/$maxWaitAttempts] State: $($connCheck.provisioningState)..." -ForegroundColor DarkGray
+  }
+
   Write-Log "Connection created: $connName"
 }
 
