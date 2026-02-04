@@ -1354,13 +1354,17 @@ foreach ($site in $VpnSites) {
 
   Write-Host "Creating connection: $connName" -ForegroundColor Gray
 
-  # Check if connection exists
+  # Check if connection exists - we'll update/replace it (idempotent deploy)
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $existingConn = az network vpn-gateway connection show -g $ResourceGroup --gateway-name $VpnGwName -n $connName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldErrPref
-  if ($existingConn -and $existingConn.provisioningState -eq "Succeeded") {
-    Write-Host "  Connection already exists, skipping..." -ForegroundColor DarkGray
-    continue
+
+  if ($existingConn) {
+    if ($existingConn.provisioningState -eq "Updating") {
+      Write-Host "  Connection is currently updating, waiting..." -ForegroundColor Yellow
+      Start-Sleep -Seconds 30
+    }
+    Write-Host "  Updating existing connection..." -ForegroundColor DarkGray
   }
 
   # Get site details
@@ -1374,25 +1378,47 @@ foreach ($site in $VpnSites) {
 
   # Build link connections with APIPA custom BGP addresses
   $linkConnections = @()
+  $linkIndex = 0
   foreach ($link in $site.Links) {
     $apipa = Get-ApipaAddress -Cidr $link.Apipa
     $pskKey = "$siteName-$($link.Name)"
     $psk = $psks[$pskKey]
 
-    # Build custom BGP address for THIS link's target instance ONLY
-    # Each link targets a specific instance - don't set APIPA for the other instance
+    # Azure requires customBgpAddresses for ALL gateway instances
+    # For target instance: use THIS link's specific APIPA
+    # For other instance: use a valid APIPA from that instance's configured addresses
     $customBgpAddresses = @()
     $targetInstance = $site.Instance
+
+    # Get configured APIPA addresses for each instance
+    $instance0Apipas = @()
+    $instance1Apipas = @()
+    foreach ($peerAddr in $gw.bgpSettings.bgpPeeringAddresses) {
+      if ($peerAddr.ipconfigurationId -match "Instance0") {
+        $instance0Apipas = $peerAddr.customBgpIpAddresses
+      } else {
+        $instance1Apipas = $peerAddr.customBgpIpAddresses
+      }
+    }
 
     foreach ($peerAddr in $gw.bgpSettings.bgpPeeringAddresses) {
       $isInstance0 = $peerAddr.ipconfigurationId -match "Instance0"
       $peerInstance = if ($isInstance0) { 0 } else { 1 }
 
-      # Only set custom BGP address for the instance this site targets
       if ($peerInstance -eq $targetInstance) {
+        # Target instance: use THIS link's specific APIPA
         $customBgpAddresses += @{
           ipConfigurationId = $peerAddr.ipconfigurationId
-          customBgpIpAddress = $apipa.Azure  # Use THIS link's specific APIPA
+          customBgpIpAddress = $apipa.Azure
+        }
+      } else {
+        # Other instance: use corresponding APIPA from that instance
+        # Use linkIndex to pick first or second APIPA (keeps alignment across links)
+        $otherApipas = if ($peerInstance -eq 0) { $instance0Apipas } else { $instance1Apipas }
+        $apipaIndex = [Math]::Min($linkIndex, $otherApipas.Count - 1)
+        $customBgpAddresses += @{
+          ipConfigurationId = $peerAddr.ipconfigurationId
+          customBgpIpAddress = $otherApipas[$apipaIndex]
         }
       }
     }
@@ -1408,6 +1434,7 @@ foreach ($site in $VpnSites) {
         vpnGatewayCustomBgpAddresses = $customBgpAddresses
       }
     }
+    $linkIndex++
   }
 
   # Create connection via ARM REST API
