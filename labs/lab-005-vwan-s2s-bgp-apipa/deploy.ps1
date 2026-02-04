@@ -440,6 +440,90 @@ if ($gw.bgpSettings -and $gw.bgpSettings.bgpPeeringAddresses) {
   }
 }
 
+# Configure custom BGP addresses on the gateway (required before using them in connections)
+Write-Host ""
+Write-Host "Configuring custom APIPA addresses on gateway..." -ForegroundColor Gray
+
+# Collect all APIPA addresses for each instance from our VPN Sites config
+$instance0Apipas = @()
+$instance1Apipas = @()
+foreach ($site in $VpnSites) {
+  foreach ($link in $site.Links) {
+    $apipa = Get-ApipaAddress -Cidr $link.Apipa
+    if ($link.Instance -eq 0) {
+      $instance0Apipas += $apipa.Azure
+    } else {
+      $instance1Apipas += $apipa.Azure
+    }
+  }
+}
+
+# Check if custom addresses are already configured
+$existingCustom0 = @($gw.bgpSettings.bgpPeeringAddresses | Where-Object { $_.ipconfigurationId -match "Instance0" } | ForEach-Object { $_.customBgpIpAddresses } | Where-Object { $_ })
+$existingCustom1 = @($gw.bgpSettings.bgpPeeringAddresses | Where-Object { $_.ipconfigurationId -match "Instance1" } | ForEach-Object { $_.customBgpIpAddresses } | Where-Object { $_ })
+
+$needsUpdate = ($existingCustom0.Count -lt $instance0Apipas.Count) -or ($existingCustom1.Count -lt $instance1Apipas.Count)
+
+if ($needsUpdate) {
+  Write-Host "  Updating gateway BGP settings with custom APIPA addresses..." -ForegroundColor Gray
+  Write-Host "    Instance 0: $($instance0Apipas -join ', ')" -ForegroundColor DarkGray
+  Write-Host "    Instance 1: $($instance1Apipas -join ', ')" -ForegroundColor DarkGray
+
+  # Build updated BGP peering addresses
+  $updatedBgpPeeringAddresses = @()
+  foreach ($peerAddr in $gw.bgpSettings.bgpPeeringAddresses) {
+    $newPeerAddr = @{
+      ipconfigurationId = $peerAddr.ipconfigurationId
+      customBgpIpAddresses = if ($peerAddr.ipconfigurationId -match "Instance0") { $instance0Apipas } else { $instance1Apipas }
+    }
+    $updatedBgpPeeringAddresses += $newPeerAddr
+  }
+
+  # Update gateway via ARM REST API
+  $gwUpdateBody = @{
+    location = $Location
+    properties = @{
+      virtualHub = @{ id = $gw.virtualHub.id }
+      bgpSettings = @{
+        asn = $AzureBgpAsn
+        bgpPeeringAddresses = $updatedBgpPeeringAddresses
+      }
+    }
+  } | ConvertTo-Json -Depth 10
+
+  $gwUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/vpnGateways/$VpnGwName`?api-version=2023-09-01"
+  $tempGwFile = Join-Path $RepoRoot ".data\lab-005\gw-update-body.json"
+  Ensure-Directory (Split-Path -Parent $tempGwFile)
+  $gwUpdateBody | Out-File -FilePath $tempGwFile -Encoding utf8
+
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  az rest --method PUT --uri $gwUri --body "@$tempGwFile" --output none 2>&1 | Out-Null
+  $ErrorActionPreference = $oldErrPref
+
+  # Wait for gateway update to complete
+  Write-Host "  Waiting for gateway update to complete..." -ForegroundColor Gray
+  $maxAttempts = 60
+  $attempt = 0
+  while ($attempt -lt $maxAttempts) {
+    $attempt++
+    Start-Sleep -Seconds 10
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $gw = az network vpn-gateway show -g $ResourceGroup -n $VpnGwName -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldErrPref
+
+    if ($gw.provisioningState -eq "Succeeded") {
+      Write-Host "  Gateway BGP settings updated successfully" -ForegroundColor Green
+      break
+    } elseif ($gw.provisioningState -eq "Failed") {
+      Write-Host "  WARNING: Gateway update may have failed, continuing..." -ForegroundColor Yellow
+      break
+    }
+    Write-Host "    Gateway state: $($gw.provisioningState) (attempt $attempt/$maxAttempts)" -ForegroundColor DarkGray
+  }
+} else {
+  Write-Host "  Custom APIPA addresses already configured on gateway" -ForegroundColor Green
+}
+
 $phase2Elapsed = Get-ElapsedTime -StartTime $phase2Start
 Write-Host ""
 Write-Host "Phase 2 Validation:" -ForegroundColor Yellow
