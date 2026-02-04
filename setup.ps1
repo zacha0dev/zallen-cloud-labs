@@ -87,10 +87,17 @@ function Test-AzureAuth {
 
 function Test-Bicep {
   if (-not (HasCmd "az")) { return @{ ok = $false; version = $null } }
-  az bicep version 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { return @{ ok = $false; version = $null } }
-  $ver = (az bicep version 2>$null)
-  return @{ ok = $true; version = $ver }
+  try {
+    # Suppress warnings (like "new version available") by capturing all output
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    $ver = az bicep version 2>$null
+    $ErrorActionPreference = $oldPreference
+    if ($LASTEXITCODE -ne 0 -or -not $ver) { return @{ ok = $false; version = $null } }
+    return @{ ok = $true; version = $ver }
+  } catch {
+    return @{ ok = $false; version = $null }
+  }
 }
 
 function Test-Terraform {
