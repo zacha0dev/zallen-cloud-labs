@@ -570,8 +570,10 @@ Write-Phase -Number 4 -Title "VPN Connections (Instance 0/1 Split)"
 
 $phase4Start = Get-Date
 
-# Load PSKs
-$psks = Get-Content $pskPath -Raw | ConvertFrom-Json
+# Load PSKs (convert to hashtable for easier access with hyphenated keys)
+$psksJson = Get-Content $pskPath -Raw | ConvertFrom-Json
+$psks = @{}
+$psksJson.PSObject.Properties | ForEach-Object { $psks[$_.Name] = $_.Value }
 
 foreach ($site in $VpnSites) {
   $siteName = $site.Name
@@ -600,7 +602,7 @@ foreach ($site in $VpnSites) {
   foreach ($link in $site.Links) {
     $apipa = Get-ApipaAddress -Cidr $link.Apipa
     $pskKey = "$siteName-$($link.Name)"
-    $psk = $psks.$pskKey
+    $psk = $psks[$pskKey]
 
     $linkConnections += @{
       name = "$connName-$($link.Name)"
