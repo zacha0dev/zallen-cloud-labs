@@ -1379,34 +1379,20 @@ foreach ($site in $VpnSites) {
     $pskKey = "$siteName-$($link.Name)"
     $psk = $psks[$pskKey]
 
-    # Build custom BGP addresses for BOTH instances
+    # Build custom BGP address for THIS link's target instance ONLY
+    # Each link targets a specific instance - don't set APIPA for the other instance
     $customBgpAddresses = @()
+    $targetInstance = $site.Instance
+
     foreach ($peerAddr in $gw.bgpSettings.bgpPeeringAddresses) {
-      if ($peerAddr.ipconfigurationId -match "Instance0") {
-        # For Instance 0 links
-        $inst0Apipas = @()
-        foreach ($s in $VpnSites | Where-Object { $_.Instance -eq 0 }) {
-          foreach ($l in $s.Links) {
-            $a = Get-ApipaAddress -Cidr $l.Apipa
-            $inst0Apipas += $a.Azure
-          }
-        }
+      $isInstance0 = $peerAddr.ipconfigurationId -match "Instance0"
+      $peerInstance = if ($isInstance0) { 0 } else { 1 }
+
+      # Only set custom BGP address for the instance this site targets
+      if ($peerInstance -eq $targetInstance) {
         $customBgpAddresses += @{
           ipConfigurationId = $peerAddr.ipconfigurationId
-          customBgpIpAddress = $inst0Apipas[0]
-        }
-      } else {
-        # For Instance 1 links
-        $inst1Apipas = @()
-        foreach ($s in $VpnSites | Where-Object { $_.Instance -eq 1 }) {
-          foreach ($l in $s.Links) {
-            $a = Get-ApipaAddress -Cidr $l.Apipa
-            $inst1Apipas += $a.Azure
-          }
-        }
-        $customBgpAddresses += @{
-          ipConfigurationId = $peerAddr.ipconfigurationId
-          customBgpIpAddress = $inst1Apipas[0]
+          customBgpIpAddress = $apipa.Azure  # Use THIS link's specific APIPA
         }
       }
     }
