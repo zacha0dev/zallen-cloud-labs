@@ -819,9 +819,11 @@ if (-not $existingVpc -or -not $existingVpc.VpcId) {
   $vpcId = $vpcResult.Trim()
   Assert-AwsResourceId -ResourceId $vpcId -ResourceType "VPC"
 
-  # Enable DNS support
-  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-support "{`"Value`":true}" 2>$null
-  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-hostnames "{`"Value`":true}" 2>$null
+  # Enable DNS support (use single quotes for JSON to avoid PowerShell escaping issues)
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-support
+  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-hostnames
+  $ErrorActionPreference = $oldErrPref
 
   Write-Log "AWS VPC created: $vpcId"
 } else {
