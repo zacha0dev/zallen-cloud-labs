@@ -681,12 +681,39 @@ foreach ($site in $VpnSites) {
   $siteId = $siteObj.id
 
   # Build link connections with APIPA custom BGP addresses
+  # Azure requires custom BGP addresses for ALL gateway instances in each link connection
   $linkConnections = @()
   $linkIndex = 0
   foreach ($link in $site.Links) {
     $apipa = Get-ApipaAddress -Cidr $link.Apipa
     $pskKey = "$siteName-$($link.Name)"
     $psk = $psks[$pskKey]
+
+    # Get the "other" link's APIPA for the other instance
+    $otherLink = $site.Links | Where-Object { $_.Instance -ne $link.Instance } | Select-Object -First 1
+    $otherApipa = Get-ApipaAddress -Cidr $otherLink.Apipa
+
+    # Build custom BGP addresses for BOTH instances
+    $customBgpAddresses = @()
+    foreach ($peerAddr in $gw.bgpSettings.bgpPeeringAddresses) {
+      if ($peerAddr.ipconfigurationId -match "Instance0") {
+        # Instance 0 gets the Instance 0 link's APIPA
+        $inst0Link = $site.Links | Where-Object { $_.Instance -eq 0 } | Select-Object -First 1
+        $inst0Apipa = Get-ApipaAddress -Cidr $inst0Link.Apipa
+        $customBgpAddresses += @{
+          ipConfigurationId = $peerAddr.ipconfigurationId
+          customBgpIpAddress = $inst0Apipa.Azure
+        }
+      } else {
+        # Instance 1 gets the Instance 1 link's APIPA
+        $inst1Link = $site.Links | Where-Object { $_.Instance -eq 1 } | Select-Object -First 1
+        $inst1Apipa = Get-ApipaAddress -Cidr $inst1Link.Apipa
+        $customBgpAddresses += @{
+          ipConfigurationId = $peerAddr.ipconfigurationId
+          customBgpIpAddress = $inst1Apipa.Azure
+        }
+      }
+    }
 
     $linkConnections += @{
       name = "$connName-$($link.Name)"
@@ -696,12 +723,7 @@ foreach ($site in $VpnSites) {
         enableBgp = $true
         vpnConnectionProtocolType = "IKEv2"
         connectionBandwidth = 100
-        vpnGatewayCustomBgpAddresses = @(
-          @{
-            ipConfigurationId = $gw.bgpSettings.bgpPeeringAddresses[$link.Instance].ipconfigurationId
-            customBgpIpAddress = $apipa.Azure
-          }
-        )
+        vpnGatewayCustomBgpAddresses = $customBgpAddresses
       }
     }
     $linkIndex++
