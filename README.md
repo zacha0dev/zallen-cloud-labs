@@ -84,5 +84,20 @@ Each lab includes:
 - `scripts/validate.ps1` - Verify connectivity and configuration
 - `scripts/destroy.ps1` - Clean up resources (supports `-WhatIf`)
 
+## Tools
+
+Utility scripts for managing lab resources. See [tools/README.md](tools/README.md) for details.
+
+```powershell
+# Audit Azure + AWS for billable lab resources
+./tools/cost-check.ps1
+
+# Check specific lab with AWS
+./tools/cost-check.ps1 -Lab lab-003 -AwsProfile aws-labs
+
+# Full subscription audit
+./tools/cost-check.ps1 -Scope All -AwsProfile aws-labs
+```
+
 ---
 Zachary Allen - 2026
