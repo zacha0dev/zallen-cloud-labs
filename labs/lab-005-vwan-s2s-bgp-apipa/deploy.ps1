@@ -262,9 +262,13 @@ Write-Phase -Number 1 -Title "Core Fabric (vWAN + vHub)"
 
 $phase1Start = Get-Date
 
+# Build tags string (handle empty Owner)
+$baseTags = "project=azure-labs lab=lab-005 env=lab"
+if ($Owner) { $baseTags += " owner=$Owner" }
+
 # Create Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
-az group create --name $ResourceGroup --location $Location --output none
+az group create --name $ResourceGroup --location $Location --tags $baseTags --output none
 Write-Log "Resource group created: $ResourceGroup"
 
 # Create vWAN
@@ -278,7 +282,7 @@ if (-not $existingVwan) {
     --resource-group $ResourceGroup `
     --location $Location `
     --type Standard `
-    --tags project=azure-labs lab=lab-005 env=lab owner=$Owner `
+    --tags $baseTags `
     --output none
   Write-Log "vWAN created: $VwanName"
 } else {
@@ -297,7 +301,7 @@ if (-not $existingVhub) {
     --vwan $VwanName `
     --location $Location `
     --address-prefix $VhubPrefix `
-    --tags project=azure-labs lab=lab-005 env=lab owner=$Owner `
+    --tags $baseTags `
     --output none
   Write-Log "vHub created: $VhubName"
 } else {
@@ -312,7 +316,9 @@ $vhubReady = $false
 
 while ($attempt -lt $maxAttempts) {
   $attempt++
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $vhub = az network vhub show -g $ResourceGroup -n $VhubName -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldErrPref
 
   if ($vhub.provisioningState -eq "Succeeded") {
     $vhubReady = $true
@@ -372,7 +378,7 @@ if (-not $existingGw -or $existingGw.provisioningState -ne "Succeeded") {
     --vhub $VhubName `
     --location $Location `
     --scale-unit 1 `
-    --tags project=azure-labs lab=lab-005 env=lab owner=$Owner `
+    --tags $baseTags `
     --no-wait `
     --output none
 
@@ -385,7 +391,9 @@ if (-not $existingGw -or $existingGw.provisioningState -ne "Succeeded") {
 
   while ($attempt -lt $maxAttempts) {
     $attempt++
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $gw = az network vpn-gateway show -g $ResourceGroup -n $VpnGwName -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldErrPref
 
     if ($gw.provisioningState -eq "Succeeded") {
       $gwReady = $true
@@ -581,7 +589,9 @@ foreach ($site in $VpnSites) {
   }
 
   # Get site details
-  $siteObj = az network vpn-site show -g $ResourceGroup -n $siteName -o json | ConvertFrom-Json
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $siteObj = az network vpn-site show -g $ResourceGroup -n $siteName -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldErrPref
   $siteId = $siteObj.id
 
   # Build link connections with APIPA custom BGP addresses
