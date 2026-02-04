@@ -148,6 +148,27 @@ Error: You cannot call a method on a null-valued expression
 1. Re-run deploy.ps1 - it will resume and detect existing resources
 2. If the error persists, check the VPN connection in AWS Console
 
+#### Issue: Invalid PreSharedKey error
+
+```
+Error: An error occurred (InvalidParameterValue) when calling the CreateVpnConnection operation: Value for parameter PreSharedKey is invalid.
+```
+
+**Cause:** AWS VPN Pre-Shared Keys have strict requirements:
+- Must be 8-64 characters
+- Can only contain alphanumeric characters, periods, and underscores
+- **Cannot start with zero**
+
+If the randomly generated PSK started with '0', AWS will reject it.
+
+**Solution:** The deploy.ps1 script now validates PSKs and regenerates any that start with '0':
+1. Simply re-run deploy.ps1 - it will detect and regenerate invalid PSKs automatically
+2. Or manually delete the PSK file to force regeneration:
+```powershell
+Remove-Item .\.data\lab-003\psk-secrets.json
+./deploy.ps1 -AwsProfile aws-labs
+```
+
 #### Issue: VPN Connection creation failed
 
 ```

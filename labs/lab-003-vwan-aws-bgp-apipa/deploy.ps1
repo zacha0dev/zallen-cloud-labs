@@ -89,7 +89,11 @@ function Ensure-Directory([string]$Path) {
 }
 
 function New-RandomPsk {
-  -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
+  # AWS VPN PSK requirements: 8-64 chars, alphanumeric only, cannot start with zero
+  # First char must be a letter to avoid starting with zero
+  $firstChar = (65..90) + (97..122) | Get-Random | ForEach-Object { [char]$_ }
+  $restChars = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 31 | ForEach-Object { [char]$_ })
+  return "$firstChar$restChars"
 }
 
 function Get-ApipaAddress {
@@ -744,11 +748,15 @@ Write-Host "VPN Sites will be created after AWS deployment provides tunnel IPs" 
 Write-Host "  Site 1: aws-site-1 (2 links -> Instance 0)" -ForegroundColor DarkGray
 Write-Host "  Site 2: aws-site-2 (2 links -> Instance 1)" -ForegroundColor DarkGray
 
-# Generate PSKs if not already existing
+# Generate PSKs if not already existing, or regenerate invalid ones (starting with 0)
 foreach ($site in $VpnSites) {
   foreach ($link in $site.Links) {
     $pskKey = "$($site.Name)-$($link.Name)"
-    if (-not $psks[$pskKey]) {
+    $existingPsk = $psks[$pskKey]
+    if (-not $existingPsk -or $existingPsk.StartsWith("0")) {
+      if ($existingPsk -and $existingPsk.StartsWith("0")) {
+        Write-Host "  Regenerating invalid PSK for $pskKey (cannot start with 0)" -ForegroundColor Yellow
+      }
       $psks[$pskKey] = New-RandomPsk
     }
   }
