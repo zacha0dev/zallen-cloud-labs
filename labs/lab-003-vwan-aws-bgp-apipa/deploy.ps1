@@ -157,6 +157,150 @@ function Get-ElapsedTime {
 }
 
 # ============================================
+# AWS HELPER FUNCTIONS (Windows-safe)
+# ============================================
+
+<#
+.SYNOPSIS
+  Invokes AWS CLI and throws on error with detailed output.
+.DESCRIPTION
+  Captures both stdout and stderr, checks exit code, and throws
+  with full error details if the command fails.
+#>
+function Invoke-AwsCli {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments,
+    [string]$ErrorMessage = "AWS CLI command failed"
+  )
+
+  $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+  $pinfo.FileName = "aws"
+  $pinfo.RedirectStandardOutput = $true
+  $pinfo.RedirectStandardError = $true
+  $pinfo.UseShellExecute = $false
+  $pinfo.CreateNoWindow = $true
+  $pinfo.Arguments = $Arguments -join " "
+
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $pinfo
+  $process.Start() | Out-Null
+
+  $stdout = $process.StandardOutput.ReadToEnd()
+  $stderr = $process.StandardError.ReadToEnd()
+  $process.WaitForExit()
+
+  if ($process.ExitCode -ne 0) {
+    $fullError = "$ErrorMessage`nCommand: aws $($Arguments -join ' ')`nStderr: $stderr`nStdout: $stdout"
+    Write-Log $fullError "ERROR"
+    throw $fullError
+  }
+
+  return $stdout.Trim()
+}
+
+<#
+.SYNOPSIS
+  Returns AWS EC2 TagSpecifications argument for create-* commands.
+.DESCRIPTION
+  Builds the --tag-specifications argument string for EC2 create commands.
+  Format: ResourceType=xxx,Tags=[{Key=k1,Value=v1},{Key=k2,Value=v2}]
+#>
+function Get-AwsTagSpecification {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ResourceType,
+    [string]$Name = "",
+    [string]$OwnerTag = ""
+  )
+
+  $tags = @(
+    "{Key=project,Value=azure-labs}"
+    "{Key=lab,Value=lab-003}"
+    "{Key=env,Value=lab}"
+  )
+
+  if ($Name) {
+    $tags += "{Key=Name,Value=$Name}"
+  }
+
+  if ($OwnerTag) {
+    $tags += "{Key=owner,Value=$OwnerTag}"
+  }
+
+  $tagsStr = $tags -join ","
+  return "ResourceType=$ResourceType,Tags=[$tagsStr]"
+}
+
+<#
+.SYNOPSIS
+  Returns AWS tags array for create-tags command.
+.DESCRIPTION
+  Returns an array of tag arguments for use with aws ec2 create-tags.
+#>
+function Get-AwsTagsArray {
+  param(
+    [string]$Name = "",
+    [string]$OwnerTag = ""
+  )
+
+  $tags = @(
+    "Key=project,Value=azure-labs"
+    "Key=lab,Value=lab-003"
+    "Key=env,Value=lab"
+  )
+
+  if ($Name) {
+    $tags += "Key=Name,Value=$Name"
+  }
+
+  if ($OwnerTag) {
+    $tags += "Key=owner,Value=$OwnerTag"
+  }
+
+  return $tags
+}
+
+<#
+.SYNOPSIS
+  Writes JSON to file without BOM (Windows-safe).
+.DESCRIPTION
+  Uses .NET methods to write JSON without Byte Order Mark,
+  which causes AWS CLI parsing errors on Windows.
+#>
+function Write-JsonWithoutBom {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Content
+  )
+
+  # Use UTF8 encoding without BOM
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
+<#
+.SYNOPSIS
+  Validates that a resource ID is not null or empty.
+#>
+function Assert-AwsResourceId {
+  param(
+    [string]$ResourceId,
+    [string]$ResourceType,
+    [string]$Context = ""
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ResourceId) -or $ResourceId -eq "None") {
+    $msg = "Failed to create or retrieve $ResourceType"
+    if ($Context) { $msg += ": $Context" }
+    Write-Log $msg "ERROR"
+    throw $msg
+  }
+}
+
+# ============================================
 # MAIN DEPLOYMENT
 # ============================================
 
@@ -527,7 +671,7 @@ if ($needsUpdate) {
   $tempDir = Join-Path $RepoRoot ".data\lab-003"
   Ensure-Directory $tempDir
   $tempGwFile = Join-Path $tempDir "gw-update-body.json"
-  $gwUpdateBody | Out-File -FilePath $tempGwFile -Encoding utf8
+  Write-JsonWithoutBom -Path $tempGwFile -Content $gwUpdateBody
 
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az rest --method PUT --uri $gwUri --body "@$tempGwFile" --output none 2>&1 | Out-Null
@@ -610,8 +754,9 @@ foreach ($site in $VpnSites) {
   }
 }
 
-# Save PSKs
-$psks | ConvertTo-Json | Set-Content -Path $pskPath -Encoding UTF8
+# Save PSKs (without BOM)
+$pskJson = $psks | ConvertTo-Json
+Write-JsonWithoutBom -Path $pskPath -Content $pskJson
 Write-Host "Pre-shared keys generated and saved" -ForegroundColor Gray
 
 $phase3Elapsed = Get-ElapsedTime -StartTime $phase3Start
@@ -643,27 +788,41 @@ $phase5Start = Get-Date
 $env:AWS_PROFILE = $AwsProfile
 $env:AWS_DEFAULT_REGION = $AwsRegion
 
-# AWS Tags
-$awsTags = "Key=project,Value=azure-labs Key=lab,Value=lab-003 Key=env,Value=lab"
-if ($Owner) { $awsTags += " Key=owner,Value=$Owner" }
-
 # Check for existing VPC
 Write-Host "Checking for existing AWS resources..." -ForegroundColor Gray
 $existingVpc = $null
-$vpcs = aws ec2 describe-vpcs --filters "Name=tag:lab,Values=lab-003" --query "Vpcs[0]" --output json 2>$null | ConvertFrom-Json
-if ($vpcs -and $vpcs.VpcId) {
-  $existingVpc = $vpcs
-  Write-Host "  Found existing VPC: $($existingVpc.VpcId)" -ForegroundColor Yellow
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$vpcJson = aws ec2 describe-vpcs --filters "Name=tag:lab,Values=lab-003" --query "Vpcs[0]" --output json 2>$null
+$ErrorActionPreference = $oldErrPref
+if ($vpcJson -and $vpcJson -ne "null") {
+  $existingVpc = $vpcJson | ConvertFrom-Json
+  if ($existingVpc -and $existingVpc.VpcId) {
+    Write-Host "  Found existing VPC: $($existingVpc.VpcId)" -ForegroundColor Yellow
+  }
 }
 
 # Create or reuse VPC
-if (-not $existingVpc) {
+if (-not $existingVpc -or -not $existingVpc.VpcId) {
   Write-Host "Creating AWS VPC: $AwsVpcCidr" -ForegroundColor Gray
-  $vpcResult = aws ec2 create-vpc --cidr-block $AwsVpcCidr --query "Vpc.VpcId" --output text
+
+  # Build tag specification for VPC
+  $vpcTagSpec = Get-AwsTagSpecification -ResourceType "vpc" -Name "lab-003-vpc" -OwnerTag $Owner
+
+  $vpcResult = Invoke-AwsCli -Arguments @(
+    "ec2", "create-vpc",
+    "--cidr-block", $AwsVpcCidr,
+    "--tag-specifications", $vpcTagSpec,
+    "--query", "Vpc.VpcId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create VPC"
+
   $vpcId = $vpcResult.Trim()
-  aws ec2 create-tags --resources $vpcId --tags $awsTags Key=Name,Value=lab-003-vpc
-  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-support
-  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-hostnames
+  Assert-AwsResourceId -ResourceId $vpcId -ResourceType "VPC"
+
+  # Enable DNS support
+  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-support "{`"Value`":true}" 2>$null
+  aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-hostnames "{`"Value`":true}" 2>$null
+
   Write-Log "AWS VPC created: $vpcId"
 } else {
   $vpcId = $existingVpc.VpcId
@@ -671,35 +830,83 @@ if (-not $existingVpc) {
 }
 
 # Create or reuse Subnet
-$existingSubnet = aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpcId" "Name=tag:lab,Values=lab-003" --query "Subnets[0].SubnetId" --output text 2>$null
-if (-not $existingSubnet -or $existingSubnet -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingSubnet = (aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpcId" "Name=tag:lab,Values=lab-003" --query "Subnets[0].SubnetId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingSubnet -or $existingSubnet -eq "None" -or [string]::IsNullOrWhiteSpace($existingSubnet)) {
   Write-Host "Creating subnet: $AwsSubnetCidr" -ForegroundColor Gray
-  $subnetId = (aws ec2 create-subnet --vpc-id $vpcId --cidr-block $AwsSubnetCidr --availability-zone "${AwsRegion}a" --query "Subnet.SubnetId" --output text).Trim()
-  aws ec2 create-tags --resources $subnetId --tags $awsTags Key=Name,Value=lab-003-subnet
+
+  $subnetTagSpec = Get-AwsTagSpecification -ResourceType "subnet" -Name "lab-003-subnet" -OwnerTag $Owner
+
+  $subnetResult = Invoke-AwsCli -Arguments @(
+    "ec2", "create-subnet",
+    "--vpc-id", $vpcId,
+    "--cidr-block", $AwsSubnetCidr,
+    "--availability-zone", "${AwsRegion}a",
+    "--tag-specifications", $subnetTagSpec,
+    "--query", "Subnet.SubnetId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create subnet"
+
+  $subnetId = $subnetResult.Trim()
+  Assert-AwsResourceId -ResourceId $subnetId -ResourceType "Subnet"
 } else {
   $subnetId = $existingSubnet.Trim()
   Write-Host "  Using existing subnet: $subnetId" -ForegroundColor DarkGray
 }
 
 # Create or reuse Internet Gateway
-$existingIgw = aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpcId" --query "InternetGateways[0].InternetGatewayId" --output text 2>$null
-if (-not $existingIgw -or $existingIgw -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingIgw = (aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpcId" --query "InternetGateways[0].InternetGatewayId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingIgw -or $existingIgw -eq "None" -or [string]::IsNullOrWhiteSpace($existingIgw)) {
   Write-Host "Creating Internet Gateway..." -ForegroundColor Gray
-  $igwId = (aws ec2 create-internet-gateway --query "InternetGateway.InternetGatewayId" --output text).Trim()
-  aws ec2 create-tags --resources $igwId --tags $awsTags Key=Name,Value=lab-003-igw
-  aws ec2 attach-internet-gateway --vpc-id $vpcId --internet-gateway-id $igwId
+
+  $igwTagSpec = Get-AwsTagSpecification -ResourceType "internet-gateway" -Name "lab-003-igw" -OwnerTag $Owner
+
+  $igwResult = Invoke-AwsCli -Arguments @(
+    "ec2", "create-internet-gateway",
+    "--tag-specifications", $igwTagSpec,
+    "--query", "InternetGateway.InternetGatewayId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create Internet Gateway"
+
+  $igwId = $igwResult.Trim()
+  Assert-AwsResourceId -ResourceId $igwId -ResourceType "Internet Gateway"
+
+  # Attach to VPC
+  aws ec2 attach-internet-gateway --vpc-id $vpcId --internet-gateway-id $igwId 2>$null
 } else {
   $igwId = $existingIgw.Trim()
   Write-Host "  Using existing IGW: $igwId" -ForegroundColor DarkGray
 }
 
 # Create or reuse Route Table
-$existingRt = aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpcId" "Name=tag:lab,Values=lab-003" --query "RouteTables[0].RouteTableId" --output text 2>$null
-if (-not $existingRt -or $existingRt -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingRt = (aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpcId" "Name=tag:lab,Values=lab-003" --query "RouteTables[0].RouteTableId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingRt -or $existingRt -eq "None" -or [string]::IsNullOrWhiteSpace($existingRt)) {
   Write-Host "Creating Route Table..." -ForegroundColor Gray
-  $rtId = (aws ec2 create-route-table --vpc-id $vpcId --query "RouteTable.RouteTableId" --output text).Trim()
-  aws ec2 create-tags --resources $rtId --tags $awsTags Key=Name,Value=lab-003-rt
+
+  $rtTagSpec = Get-AwsTagSpecification -ResourceType "route-table" -Name "lab-003-rt" -OwnerTag $Owner
+
+  $rtResult = Invoke-AwsCli -Arguments @(
+    "ec2", "create-route-table",
+    "--vpc-id", $vpcId,
+    "--tag-specifications", $rtTagSpec,
+    "--query", "RouteTable.RouteTableId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create Route Table"
+
+  $rtId = $rtResult.Trim()
+  Assert-AwsResourceId -ResourceId $rtId -ResourceType "Route Table"
+
+  # Add default route
   aws ec2 create-route --route-table-id $rtId --destination-cidr-block "0.0.0.0/0" --gateway-id $igwId 2>$null
+  # Associate with subnet
   aws ec2 associate-route-table --route-table-id $rtId --subnet-id $subnetId 2>$null
 } else {
   $rtId = $existingRt.Trim()
@@ -707,12 +914,31 @@ if (-not $existingRt -or $existingRt -eq "None") {
 }
 
 # Create or reuse Virtual Private Gateway
-$existingVgw = aws ec2 describe-vpn-gateways --filters "Name=tag:lab,Values=lab-003" "Name=state,Values=available" --query "VpnGateways[0].VpnGatewayId" --output text 2>$null
-if (-not $existingVgw -or $existingVgw -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingVgw = (aws ec2 describe-vpn-gateways --filters "Name=tag:lab,Values=lab-003" "Name=state,Values=available" --query "VpnGateways[0].VpnGatewayId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingVgw -or $existingVgw -eq "None" -or [string]::IsNullOrWhiteSpace($existingVgw)) {
   Write-Host "Creating Virtual Private Gateway (ASN: $AwsBgpAsn)..." -ForegroundColor Gray
-  $vgwId = (aws ec2 create-vpn-gateway --type ipsec.1 --amazon-side-asn $AwsBgpAsn --query "VpnGateway.VpnGatewayId" --output text).Trim()
-  aws ec2 create-tags --resources $vgwId --tags $awsTags Key=Name,Value=lab-003-vgw
-  aws ec2 attach-vpn-gateway --vpn-gateway-id $vgwId --vpc-id $vpcId
+
+  # VGW doesn't support tag-specifications, use create-tags after
+  $vgwResult = Invoke-AwsCli -Arguments @(
+    "ec2", "create-vpn-gateway",
+    "--type", "ipsec.1",
+    "--amazon-side-asn", $AwsBgpAsn.ToString(),
+    "--query", "VpnGateway.VpnGatewayId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create VPN Gateway"
+
+  $vgwId = $vgwResult.Trim()
+  Assert-AwsResourceId -ResourceId $vgwId -ResourceType "VPN Gateway"
+
+  # Tag the VGW
+  $vgwTags = Get-AwsTagsArray -Name "lab-003-vgw" -OwnerTag $Owner
+  aws ec2 create-tags --resources $vgwId --tags $vgwTags 2>$null
+
+  # Attach to VPC
+  aws ec2 attach-vpn-gateway --vpn-gateway-id $vgwId --vpc-id $vpcId 2>$null
 
   # Wait for VGW to be available
   Write-Host "  Waiting for VGW to attach..." -ForegroundColor DarkGray
@@ -720,7 +946,9 @@ if (-not $existingVgw -or $existingVgw -eq "None") {
   $attempt = 0
   while ($attempt -lt $maxAttempts) {
     $attempt++
-    $vgwState = aws ec2 describe-vpn-gateways --vpn-gateway-ids $vgwId --query "VpnGateways[0].VpcAttachments[0].State" --output text 2>$null
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $vgwState = (aws ec2 describe-vpn-gateways --vpn-gateway-ids $vgwId --query "VpnGateways[0].VpcAttachments[0].State" --output text 2>$null)
+    $ErrorActionPreference = $oldErrPref
     if ($vgwState -eq "attached") { break }
     Start-Sleep -Seconds 10
   }
@@ -736,22 +964,57 @@ Write-Host ""
 Write-Host "Creating Customer Gateways for Azure VPN Gateway IPs..." -ForegroundColor Gray
 
 # Customer Gateway 1 (for Azure Instance 0)
-$existingCgw1 = aws ec2 describe-customer-gateways --filters "Name=ip-address,Values=$($azureVpnIps[0])" "Name=state,Values=available" --query "CustomerGateways[0].CustomerGatewayId" --output text 2>$null
-if (-not $existingCgw1 -or $existingCgw1 -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingCgw1 = (aws ec2 describe-customer-gateways --filters "Name=ip-address,Values=$($azureVpnIps[0])" "Name=state,Values=available" --query "CustomerGateways[0].CustomerGatewayId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingCgw1 -or $existingCgw1 -eq "None" -or [string]::IsNullOrWhiteSpace($existingCgw1)) {
   Write-Host "  Creating CGW 1 for Azure Instance 0: $($azureVpnIps[0])" -ForegroundColor Gray
-  $cgw1Id = (aws ec2 create-customer-gateway --type ipsec.1 --bgp-asn $AzureBgpAsn --ip-address $($azureVpnIps[0]) --query "CustomerGateway.CustomerGatewayId" --output text).Trim()
-  aws ec2 create-tags --resources $cgw1Id --tags $awsTags Key=Name,Value=lab-003-cgw-azure-inst0
+
+  # CGW doesn't support tag-specifications in all regions, use create-tags after
+  $cgw1Result = Invoke-AwsCli -Arguments @(
+    "ec2", "create-customer-gateway",
+    "--type", "ipsec.1",
+    "--bgp-asn", $AzureBgpAsn.ToString(),
+    "--ip-address", $azureVpnIps[0],
+    "--query", "CustomerGateway.CustomerGatewayId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create Customer Gateway 1"
+
+  $cgw1Id = $cgw1Result.Trim()
+  Assert-AwsResourceId -ResourceId $cgw1Id -ResourceType "Customer Gateway 1"
+
+  # Tag the CGW
+  $cgw1Tags = Get-AwsTagsArray -Name "lab-003-cgw-azure-inst0" -OwnerTag $Owner
+  aws ec2 create-tags --resources $cgw1Id --tags $cgw1Tags 2>$null
 } else {
   $cgw1Id = $existingCgw1.Trim()
   Write-Host "  Using existing CGW 1: $cgw1Id" -ForegroundColor DarkGray
 }
 
 # Customer Gateway 2 (for Azure Instance 1)
-$existingCgw2 = aws ec2 describe-customer-gateways --filters "Name=ip-address,Values=$($azureVpnIps[1])" "Name=state,Values=available" --query "CustomerGateways[0].CustomerGatewayId" --output text 2>$null
-if (-not $existingCgw2 -or $existingCgw2 -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingCgw2 = (aws ec2 describe-customer-gateways --filters "Name=ip-address,Values=$($azureVpnIps[1])" "Name=state,Values=available" --query "CustomerGateways[0].CustomerGatewayId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingCgw2 -or $existingCgw2 -eq "None" -or [string]::IsNullOrWhiteSpace($existingCgw2)) {
   Write-Host "  Creating CGW 2 for Azure Instance 1: $($azureVpnIps[1])" -ForegroundColor Gray
-  $cgw2Id = (aws ec2 create-customer-gateway --type ipsec.1 --bgp-asn $AzureBgpAsn --ip-address $($azureVpnIps[1]) --query "CustomerGateway.CustomerGatewayId" --output text).Trim()
-  aws ec2 create-tags --resources $cgw2Id --tags $awsTags Key=Name,Value=lab-003-cgw-azure-inst1
+
+  $cgw2Result = Invoke-AwsCli -Arguments @(
+    "ec2", "create-customer-gateway",
+    "--type", "ipsec.1",
+    "--bgp-asn", $AzureBgpAsn.ToString(),
+    "--ip-address", $azureVpnIps[1],
+    "--query", "CustomerGateway.CustomerGatewayId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create Customer Gateway 2"
+
+  $cgw2Id = $cgw2Result.Trim()
+  Assert-AwsResourceId -ResourceId $cgw2Id -ResourceType "Customer Gateway 2"
+
+  # Tag the CGW
+  $cgw2Tags = Get-AwsTagsArray -Name "lab-003-cgw-azure-inst1" -OwnerTag $Owner
+  aws ec2 create-tags --resources $cgw2Id --tags $cgw2Tags 2>$null
 } else {
   $cgw2Id = $existingCgw2.Trim()
   Write-Host "  Using existing CGW 2: $cgw2Id" -ForegroundColor DarkGray
@@ -768,11 +1031,15 @@ $psk4 = $psks["aws-site-2-link-4"]
 
 # VPN Connection 1 (to Azure Instance 0 via CGW 1)
 # Tunnel 1: 169.254.21.0/30, Tunnel 2: 169.254.21.4/30
-$existingVpn1 = aws ec2 describe-vpn-connections --filters "Name=customer-gateway-id,Values=$cgw1Id" "Name=state,Values=available,pending" --query "VpnConnections[0].VpnConnectionId" --output text 2>$null
-if (-not $existingVpn1 -or $existingVpn1 -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingVpn1 = (aws ec2 describe-vpn-connections --filters "Name=customer-gateway-id,Values=$cgw1Id" "Name=state,Values=available,pending" --query "VpnConnections[0].VpnConnectionId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingVpn1 -or $existingVpn1 -eq "None" -or [string]::IsNullOrWhiteSpace($existingVpn1)) {
   Write-Host "  Creating VPN Connection 1 (Azure Instance 0)..." -ForegroundColor Gray
 
-  $vpn1OptionsJson = @{
+  # Build options JSON as PowerShell object, then serialize without BOM
+  $vpn1Options = @{
     TunnelOptions = @(
       @{
         TunnelInsideCidr = "169.254.21.0/30"
@@ -785,13 +1052,28 @@ if (-not $existingVpn1 -or $existingVpn1 -eq "None") {
         IKEVersions = @(@{Value = "ikev2"})
       }
     )
-  } | ConvertTo-Json -Depth 5 -Compress
+  }
 
+  $vpn1OptionsJson = $vpn1Options | ConvertTo-Json -Depth 10 -Compress
   $vpn1TempFile = Join-Path $tempDir "vpn1-options.json"
-  $vpn1OptionsJson | Out-File -FilePath $vpn1TempFile -Encoding utf8
+  Write-JsonWithoutBom -Path $vpn1TempFile -Content $vpn1OptionsJson
 
-  $vpn1Id = (aws ec2 create-vpn-connection --type ipsec.1 --customer-gateway-id $cgw1Id --vpn-gateway-id $vgwId --options "file://$vpn1TempFile" --query "VpnConnection.VpnConnectionId" --output text).Trim()
-  aws ec2 create-tags --resources $vpn1Id --tags $awsTags Key=Name,Value=lab-003-vpn-1
+  $vpn1Result = Invoke-AwsCli -Arguments @(
+    "ec2", "create-vpn-connection",
+    "--type", "ipsec.1",
+    "--customer-gateway-id", $cgw1Id,
+    "--vpn-gateway-id", $vgwId,
+    "--options", "file://$vpn1TempFile",
+    "--query", "VpnConnection.VpnConnectionId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create VPN Connection 1"
+
+  $vpn1Id = $vpn1Result.Trim()
+  Assert-AwsResourceId -ResourceId $vpn1Id -ResourceType "VPN Connection 1"
+
+  # Tag the VPN connection
+  $vpn1Tags = Get-AwsTagsArray -Name "lab-003-vpn-1" -OwnerTag $Owner
+  aws ec2 create-tags --resources $vpn1Id --tags $vpn1Tags 2>$null
 } else {
   $vpn1Id = $existingVpn1.Trim()
   Write-Host "  Using existing VPN Connection 1: $vpn1Id" -ForegroundColor DarkGray
@@ -799,11 +1081,14 @@ if (-not $existingVpn1 -or $existingVpn1 -eq "None") {
 
 # VPN Connection 2 (to Azure Instance 1 via CGW 2)
 # Tunnel 3: 169.254.22.0/30, Tunnel 4: 169.254.22.4/30
-$existingVpn2 = aws ec2 describe-vpn-connections --filters "Name=customer-gateway-id,Values=$cgw2Id" "Name=state,Values=available,pending" --query "VpnConnections[0].VpnConnectionId" --output text 2>$null
-if (-not $existingVpn2 -or $existingVpn2 -eq "None") {
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingVpn2 = (aws ec2 describe-vpn-connections --filters "Name=customer-gateway-id,Values=$cgw2Id" "Name=state,Values=available,pending" --query "VpnConnections[0].VpnConnectionId" --output text 2>$null)
+$ErrorActionPreference = $oldErrPref
+
+if (-not $existingVpn2 -or $existingVpn2 -eq "None" -or [string]::IsNullOrWhiteSpace($existingVpn2)) {
   Write-Host "  Creating VPN Connection 2 (Azure Instance 1)..." -ForegroundColor Gray
 
-  $vpn2OptionsJson = @{
+  $vpn2Options = @{
     TunnelOptions = @(
       @{
         TunnelInsideCidr = "169.254.22.0/30"
@@ -816,13 +1101,28 @@ if (-not $existingVpn2 -or $existingVpn2 -eq "None") {
         IKEVersions = @(@{Value = "ikev2"})
       }
     )
-  } | ConvertTo-Json -Depth 5 -Compress
+  }
 
+  $vpn2OptionsJson = $vpn2Options | ConvertTo-Json -Depth 10 -Compress
   $vpn2TempFile = Join-Path $tempDir "vpn2-options.json"
-  $vpn2OptionsJson | Out-File -FilePath $vpn2TempFile -Encoding utf8
+  Write-JsonWithoutBom -Path $vpn2TempFile -Content $vpn2OptionsJson
 
-  $vpn2Id = (aws ec2 create-vpn-connection --type ipsec.1 --customer-gateway-id $cgw2Id --vpn-gateway-id $vgwId --options "file://$vpn2TempFile" --query "VpnConnection.VpnConnectionId" --output text).Trim()
-  aws ec2 create-tags --resources $vpn2Id --tags $awsTags Key=Name,Value=lab-003-vpn-2
+  $vpn2Result = Invoke-AwsCli -Arguments @(
+    "ec2", "create-vpn-connection",
+    "--type", "ipsec.1",
+    "--customer-gateway-id", $cgw2Id,
+    "--vpn-gateway-id", $vgwId,
+    "--options", "file://$vpn2TempFile",
+    "--query", "VpnConnection.VpnConnectionId",
+    "--output", "text"
+  ) -ErrorMessage "Failed to create VPN Connection 2"
+
+  $vpn2Id = $vpn2Result.Trim()
+  Assert-AwsResourceId -ResourceId $vpn2Id -ResourceType "VPN Connection 2"
+
+  # Tag the VPN connection
+  $vpn2Tags = Get-AwsTagsArray -Name "lab-003-vpn-2" -OwnerTag $Owner
+  aws ec2 create-tags --resources $vpn2Id --tags $vpn2Tags 2>$null
 } else {
   $vpn2Id = $existingVpn2.Trim()
   Write-Host "  Using existing VPN Connection 2: $vpn2Id" -ForegroundColor DarkGray
@@ -832,10 +1132,15 @@ if (-not $existingVpn2 -or $existingVpn2 -eq "None") {
 Write-Host "  Waiting for VPN connections to be available..." -ForegroundColor Gray
 $maxAttempts = 30
 $attempt = 0
+$vpn1State = "pending"
+$vpn2State = "pending"
+
 while ($attempt -lt $maxAttempts) {
   $attempt++
-  $vpn1State = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn1Id --query "VpnConnections[0].State" --output text 2>$null
-  $vpn2State = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn2Id --query "VpnConnections[0].State" --output text 2>$null
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $vpn1State = (aws ec2 describe-vpn-connections --vpn-connection-ids $vpn1Id --query "VpnConnections[0].State" --output text 2>$null)
+  $vpn2State = (aws ec2 describe-vpn-connections --vpn-connection-ids $vpn2Id --query "VpnConnections[0].State" --output text 2>$null)
+  $ErrorActionPreference = $oldErrPref
 
   if ($vpn1State -eq "available" -and $vpn2State -eq "available") { break }
 
@@ -848,19 +1153,45 @@ while ($attempt -lt $maxAttempts) {
 Write-Host ""
 Write-Host "Retrieving AWS VPN tunnel details..." -ForegroundColor Gray
 
-$vpn1Details = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn1Id --output json | ConvertFrom-Json
-$vpn2Details = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn2Id --output json | ConvertFrom-Json
+$vpn1DetailsJson = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn1Id --output json
+$vpn2DetailsJson = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn2Id --output json
 
-# Extract tunnel IPs
-$tunnel1OutsideIp = $vpn1Details.VpnConnections[0].VgwTelemetry[0].OutsideIpAddress
-$tunnel1InsideIp = $vpn1Details.VpnConnections[0].Options.TunnelOptions[0].TunnelInsideCidr -replace "/30", ""
-$tunnel2OutsideIp = $vpn1Details.VpnConnections[0].VgwTelemetry[1].OutsideIpAddress
-$tunnel2InsideIp = $vpn1Details.VpnConnections[0].Options.TunnelOptions[1].TunnelInsideCidr -replace "/30", ""
+if (-not $vpn1DetailsJson -or -not $vpn2DetailsJson) {
+  throw "Failed to retrieve VPN connection details. VPN1: $vpn1Id, VPN2: $vpn2Id"
+}
 
-$tunnel3OutsideIp = $vpn2Details.VpnConnections[0].VgwTelemetry[0].OutsideIpAddress
-$tunnel3InsideIp = $vpn2Details.VpnConnections[0].Options.TunnelOptions[0].TunnelInsideCidr -replace "/30", ""
-$tunnel4OutsideIp = $vpn2Details.VpnConnections[0].VgwTelemetry[1].OutsideIpAddress
-$tunnel4InsideIp = $vpn2Details.VpnConnections[0].Options.TunnelOptions[1].TunnelInsideCidr -replace "/30", ""
+$vpn1Details = $vpn1DetailsJson | ConvertFrom-Json
+$vpn2Details = $vpn2DetailsJson | ConvertFrom-Json
+
+# Validate VPN connection data
+if (-not $vpn1Details.VpnConnections -or $vpn1Details.VpnConnections.Count -eq 0) {
+  throw "VPN Connection 1 not found or has no data: $vpn1Id"
+}
+if (-not $vpn2Details.VpnConnections -or $vpn2Details.VpnConnections.Count -eq 0) {
+  throw "VPN Connection 2 not found or has no data: $vpn2Id"
+}
+
+$vpn1Conn = $vpn1Details.VpnConnections[0]
+$vpn2Conn = $vpn2Details.VpnConnections[0]
+
+# Validate telemetry data exists
+if (-not $vpn1Conn.VgwTelemetry -or $vpn1Conn.VgwTelemetry.Count -lt 2) {
+  Write-Host "  WARNING: VPN1 telemetry not fully available yet, continuing..." -ForegroundColor Yellow
+}
+if (-not $vpn2Conn.VgwTelemetry -or $vpn2Conn.VgwTelemetry.Count -lt 2) {
+  Write-Host "  WARNING: VPN2 telemetry not fully available yet, continuing..." -ForegroundColor Yellow
+}
+
+# Extract tunnel IPs with null checks
+$tunnel1OutsideIp = if ($vpn1Conn.VgwTelemetry -and $vpn1Conn.VgwTelemetry.Count -ge 1) { $vpn1Conn.VgwTelemetry[0].OutsideIpAddress } else { "pending" }
+$tunnel1InsideIp = if ($vpn1Conn.Options.TunnelOptions -and $vpn1Conn.Options.TunnelOptions.Count -ge 1) { $vpn1Conn.Options.TunnelOptions[0].TunnelInsideCidr -replace "/30", "" } else { "169.254.21.0" }
+$tunnel2OutsideIp = if ($vpn1Conn.VgwTelemetry -and $vpn1Conn.VgwTelemetry.Count -ge 2) { $vpn1Conn.VgwTelemetry[1].OutsideIpAddress } else { "pending" }
+$tunnel2InsideIp = if ($vpn1Conn.Options.TunnelOptions -and $vpn1Conn.Options.TunnelOptions.Count -ge 2) { $vpn1Conn.Options.TunnelOptions[1].TunnelInsideCidr -replace "/30", "" } else { "169.254.21.4" }
+
+$tunnel3OutsideIp = if ($vpn2Conn.VgwTelemetry -and $vpn2Conn.VgwTelemetry.Count -ge 1) { $vpn2Conn.VgwTelemetry[0].OutsideIpAddress } else { "pending" }
+$tunnel3InsideIp = if ($vpn2Conn.Options.TunnelOptions -and $vpn2Conn.Options.TunnelOptions.Count -ge 1) { $vpn2Conn.Options.TunnelOptions[0].TunnelInsideCidr -replace "/30", "" } else { "169.254.22.0" }
+$tunnel4OutsideIp = if ($vpn2Conn.VgwTelemetry -and $vpn2Conn.VgwTelemetry.Count -ge 2) { $vpn2Conn.VgwTelemetry[1].OutsideIpAddress } else { "pending" }
+$tunnel4InsideIp = if ($vpn2Conn.Options.TunnelOptions -and $vpn2Conn.Options.TunnelOptions.Count -ge 2) { $vpn2Conn.Options.TunnelOptions[1].TunnelInsideCidr -replace "/30", "" } else { "169.254.22.4" }
 
 # Calculate BGP peer IPs (AWS uses .1 in each /30)
 $tunnel1BgpIp = (Get-ApipaAddress -Cidr "169.254.21.0/30").Remote
@@ -880,10 +1211,10 @@ Write-Host "    Tunnel 4: $tunnel4OutsideIp (BGP: $tunnel4BgpIp, APIPA: 169.254.
 $phase5Elapsed = Get-ElapsedTime -StartTime $phase5Start
 Write-Host ""
 Write-Host "Phase 5 Validation:" -ForegroundColor Yellow
-Write-Validation -Check "VPC created" -Passed ($vpcId -ne $null) -Details $vpcId
-Write-Validation -Check "VGW created" -Passed ($vgwId -ne $null) -Details $vgwId
-Write-Validation -Check "CGW 1 created (Azure Inst 0)" -Passed ($cgw1Id -ne $null) -Details $cgw1Id
-Write-Validation -Check "CGW 2 created (Azure Inst 1)" -Passed ($cgw2Id -ne $null) -Details $cgw2Id
+Write-Validation -Check "VPC created" -Passed (-not [string]::IsNullOrWhiteSpace($vpcId)) -Details $vpcId
+Write-Validation -Check "VGW created" -Passed (-not [string]::IsNullOrWhiteSpace($vgwId)) -Details $vgwId
+Write-Validation -Check "CGW 1 created (Azure Inst 0)" -Passed (-not [string]::IsNullOrWhiteSpace($cgw1Id)) -Details $cgw1Id
+Write-Validation -Check "CGW 2 created (Azure Inst 1)" -Passed (-not [string]::IsNullOrWhiteSpace($cgw2Id)) -Details $cgw2Id
 Write-Validation -Check "VPN Connection 1 available" -Passed ($vpn1State -eq "available") -Details $vpn1Id
 Write-Validation -Check "VPN Connection 2 available" -Passed ($vpn2State -eq "available") -Details $vpn2Id
 Write-Log "Phase 5 completed in $phase5Elapsed" "SUCCESS"
@@ -898,6 +1229,26 @@ Write-Host ("=" * 60) -ForegroundColor Cyan
 Write-Host ""
 
 $phase5bStart = Get-Date
+
+# Validate we have tunnel IPs before proceeding
+if ($tunnel1OutsideIp -eq "pending" -or $tunnel2OutsideIp -eq "pending" -or
+    $tunnel3OutsideIp -eq "pending" -or $tunnel4OutsideIp -eq "pending") {
+  Write-Host "Waiting for AWS tunnel IPs to be available..." -ForegroundColor Yellow
+  Start-Sleep -Seconds 30
+
+  # Refresh VPN details
+  $vpn1DetailsJson = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn1Id --output json
+  $vpn2DetailsJson = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn2Id --output json
+  $vpn1Details = $vpn1DetailsJson | ConvertFrom-Json
+  $vpn2Details = $vpn2DetailsJson | ConvertFrom-Json
+  $vpn1Conn = $vpn1Details.VpnConnections[0]
+  $vpn2Conn = $vpn2Details.VpnConnections[0]
+
+  $tunnel1OutsideIp = $vpn1Conn.VgwTelemetry[0].OutsideIpAddress
+  $tunnel2OutsideIp = $vpn1Conn.VgwTelemetry[1].OutsideIpAddress
+  $tunnel3OutsideIp = $vpn2Conn.VgwTelemetry[0].OutsideIpAddress
+  $tunnel4OutsideIp = $vpn2Conn.VgwTelemetry[1].OutsideIpAddress
+}
 
 # Now create VPN Sites with real AWS tunnel IPs
 foreach ($site in $VpnSites) {
@@ -968,7 +1319,7 @@ foreach ($site in $VpnSites) {
 
   $siteUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/vpnSites/$siteName`?api-version=2023-09-01"
   $tempFile = Join-Path $tempDir "$siteName-body.json"
-  $siteBody | Out-File -FilePath $tempFile -Encoding utf8
+  Write-JsonWithoutBom -Path $tempFile -Content $siteBody
 
   az rest --method PUT --uri $siteUri --body "@$tempFile" --output none 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) {
@@ -1073,7 +1424,7 @@ foreach ($site in $VpnSites) {
 
   $connUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/vpnGateways/$VpnGwName/vpnConnections/$connName`?api-version=2023-09-01"
   $tempFile = Join-Path $tempDir "$connName-body.json"
-  $connBody | Out-File -FilePath $tempFile -Encoding utf8
+  Write-JsonWithoutBom -Path $tempFile -Content $connBody
 
   az rest --method PUT --uri $connUri --body "@$tempFile" --output none 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) {
@@ -1157,8 +1508,13 @@ foreach ($site in $VpnSites | Where-Object { $_.Instance -eq 1 }) {
 # AWS tunnel status
 Write-Host ""
 Write-Host "AWS VPN Tunnel Status:" -ForegroundColor Yellow
-$vpn1Status = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn1Id --query "VpnConnections[0].VgwTelemetry[*].{IP:OutsideIpAddress,Status:Status}" --output json | ConvertFrom-Json
-$vpn2Status = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn2Id --query "VpnConnections[0].VgwTelemetry[*].{IP:OutsideIpAddress,Status:Status}" --output json | ConvertFrom-Json
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$vpn1StatusJson = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn1Id --query "VpnConnections[0].VgwTelemetry[*].{IP:OutsideIpAddress,Status:Status}" --output json 2>$null
+$vpn2StatusJson = aws ec2 describe-vpn-connections --vpn-connection-ids $vpn2Id --query "VpnConnections[0].VgwTelemetry[*].{IP:OutsideIpAddress,Status:Status}" --output json 2>$null
+$ErrorActionPreference = $oldErrPref
+
+$vpn1Status = if ($vpn1StatusJson) { $vpn1StatusJson | ConvertFrom-Json } else { @() }
+$vpn2Status = if ($vpn2StatusJson) { $vpn2StatusJson | ConvertFrom-Json } else { @() }
 
 Write-Host "  VPN Connection 1 (Azure Instance 0):" -ForegroundColor Gray
 foreach ($t in $vpn1Status) {
@@ -1273,7 +1629,8 @@ $outputs = [pscustomobject]@{
   }
 }
 
-$outputs | ConvertTo-Json -Depth 10 | Set-Content -Path $OutputsPath -Encoding UTF8
+$outputsJson = $outputs | ConvertTo-Json -Depth 10
+Write-JsonWithoutBom -Path $OutputsPath -Content $outputsJson
 
 Write-Host ""
 Write-Host "Outputs saved to: $OutputsPath" -ForegroundColor Gray

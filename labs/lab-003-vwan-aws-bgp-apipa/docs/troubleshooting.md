@@ -95,6 +95,59 @@ az network vpn-gateway delete -g rg-lab-003-vwan-aws -n vpngw-lab-003 --yes
 
 ### Phase 5: AWS Deployment
 
+#### Issue: AWS CLI tag parsing error
+
+```
+Error: Second instance of key 'Value' found at: ...
+```
+
+**Cause:** The AWS CLI tag format is incorrect. On Windows PowerShell, passing multiple
+`Key=...,Value=...` pairs as separate arguments can cause parsing errors.
+
+**Solution:** The deploy.ps1 script now uses `--tag-specifications` for EC2 create commands
+with the format:
+```
+--tag-specifications "ResourceType=vpc,Tags=[{Key=project,Value=azure-labs},{Key=lab,Value=lab-003}]"
+```
+
+For resources that don't support `--tag-specifications` at creation time (VGW, CGW),
+the script uses `aws ec2 create-tags` after creation.
+
+#### Issue: VPN options JSON BOM error
+
+```
+Error: Expected '=', received: 'ï' ... ï»¿{...}
+```
+
+**Cause:** Windows PowerShell's `Out-File -Encoding utf8` adds a BOM (Byte Order Mark)
+to the file. The AWS CLI doesn't expect BOM and fails to parse the JSON.
+
+**Solution:** The deploy.ps1 script now uses `Write-JsonWithoutBom` function that writes
+files using UTF-8 encoding without BOM:
+```powershell
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+```
+
+If you encounter this error manually, you can convert a file:
+```powershell
+$content = Get-Content -Path "file.json" -Raw
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText("file.json", $content, $utf8NoBom)
+```
+
+#### Issue: Null-valued expression after VPN connection create
+
+```
+Error: You cannot call a method on a null-valued expression
+```
+
+**Cause:** The VPN connection was created but the telemetry data isn't yet available.
+
+**Solution:** The deploy.ps1 script now includes null checks and will wait for telemetry:
+1. Re-run deploy.ps1 - it will resume and detect existing resources
+2. If the error persists, check the VPN connection in AWS Console
+
 #### Issue: VPN Connection creation failed
 
 ```
