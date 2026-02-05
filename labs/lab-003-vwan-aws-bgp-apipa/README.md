@@ -63,7 +63,38 @@ cd labs/lab-003-vwan-aws-bgp-apipa
 | `-Location` | `centralus` | Azure region for resources |
 | `-AwsBgpAsn` | `65001` | BGP ASN for AWS side |
 | `-Owner` | (empty) | Owner tag for resource tracking |
+| `-AlternateApipa` | (switch) | Use alternate APIPA configuration (see below) |
 | `-Force` | (switch) | Skip confirmation prompts |
+
+### Alternate APIPA Configuration
+
+By default, the lab uses **standard APIPA assignment** where each VPN gateway instance owns a dedicated APIPA range:
+
+**Standard Mode (default):**
+```
+Instance 0: 169.254.21.2, 169.254.21.6  (both from .21 range)
+Instance 1: 169.254.22.2, 169.254.22.6  (both from .22 range)
+```
+
+With `-AlternateApipa`, the lab uses **cross-range assignment** where each instance has one IP from each range:
+
+**Alternate Mode (-AlternateApipa):**
+```
+Instance 0: 169.254.21.2, 169.254.22.2  (first IP from each range)
+Instance 1: 169.254.21.6, 169.254.22.6  (second IP from each range)
+```
+
+Use `-AlternateApipa` to test behavior differences between these configurations:
+
+```powershell
+# Standard configuration (default)
+./deploy.ps1 -AwsProfile aws-labs
+
+# Alternate configuration
+./deploy.ps1 -AwsProfile aws-labs -AlternateApipa
+```
+
+**Note:** You must run `./destroy.ps1` before switching between configurations.
 
 ## Deployment Phases
 
