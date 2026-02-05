@@ -55,10 +55,16 @@ if (-not $AwsOnly) {
   Ensure-AzureAuth -DoLogin
   az account set --subscription $SubscriptionId | Out-Null
 
-  # Check if resource group exists
-  $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
-  if (-not $existingRg) {
-    Write-Host "Azure resource group '$ResourceGroup' does not exist. Nothing to delete." -ForegroundColor Yellow
+  # Check if resource group exists (use 'exists' to avoid error on missing RG)
+  $rgExists = $false
+  try {
+    $rgExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
+  } catch {
+    $rgExists = $false
+  }
+
+  if (-not $rgExists) {
+    Write-Host "Azure resource group '$ResourceGroup' does not exist. Skipping Azure cleanup." -ForegroundColor Yellow
   } else {
     # Show what will be deleted
     Write-Host "Azure resources to delete:" -ForegroundColor Yellow
