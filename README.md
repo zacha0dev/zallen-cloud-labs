@@ -159,21 +159,55 @@ Azure subscriptions are configured in `.data/subs.json` (gitignored):
 }
 ```
 
-AWS uses the `aws-labs` profile. Configure with:
+AWS uses a CLI profile you create. The default name is `aws-labs`, but you can use any name:
+
 ```powershell
-aws configure sso --profile aws-labs   # SSO (recommended)
-aws configure --profile aws-labs        # IAM keys
+# Create SSO profile (opens browser for login)
+aws configure sso --profile aws-labs
+
+# When prompted:
+#   SSO session name: aws-labs-session (or any name)
+#   SSO start URL: https://d-XXXXXXXXXX.awsapps.com/start (from your AWS Identity Center)
+#   SSO region: us-east-1 (where Identity Center is enabled)
+#   CLI default region: us-east-2 (where labs deploy)
+#   CLI default output: json
+#   Profile name: aws-labs (must match --profile above)
+```
+
+After setup, authenticate anytime with:
+```powershell
+# Browser login (opens automatically)
+aws sso login --profile aws-labs
+
+# Verify it worked
+aws sts get-caller-identity --profile aws-labs
 ```
 
 ## AWS Setup (for hybrid labs)
 
-AWS is only required for cross-cloud labs like `lab-003`. Run `.\setup.ps1 -Aws` or see:
+AWS is only required for cross-cloud labs like `lab-003`.
+
+### Quick Start (SSO)
+
+1. **Set up Identity Center** in AWS Console (one-time)
+2. **Create a CLI profile:**
+   ```powershell
+   aws configure sso --profile aws-labs
+   ```
+3. **Login via browser:**
+   ```powershell
+   aws sso login --profile aws-labs
+   ```
+
+SSO tokens expire (1-12 hours). Re-run `aws sso login --profile aws-labs` when needed.
+
+### Detailed Guides
 
 | Guide | Description |
 |-------|-------------|
 | [AWS Account Setup](docs/aws-account-setup.md) | Create account, billing guardrails |
 | [AWS Identity Center (SSO)](docs/aws-identity-center-sso.md) | Set up browser-based login |
-| [AWS CLI Profile Setup](docs/aws-cli-profile-setup.md) | Configure `aws-labs` profile |
+| [AWS CLI Profile Setup](docs/aws-cli-profile-setup.md) | Configure CLI profile step-by-step |
 | [AWS Troubleshooting](docs/aws-troubleshooting.md) | Common errors and fixes |
 
 ## Labs
