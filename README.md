@@ -1,17 +1,8 @@
 # Zallen Cloud Labs
 
-Hands-on cloud networking, hybrid connectivity, and observability labs.
+Personal lab collection for cloud networking and hybrid connectivity. Mostly Azure vWAN, some AWS.
 
-## About This Project
-
-A personal collection of labs focused on how real cloud systems behave in production. These aren't deployment tutorials—they're designed to build architecture intuition, practice troubleshooting, and understand what happens when things break.
-
-Each lab emphasizes:
-- **Observability first** - Health gates, validation commands, what to check and what to ignore
-- **Production patterns** - Real routing behaviors, BGP mechanics, gateway failover
-- **Safe experimentation** - Repeatable deploy/destroy cycles with cost awareness
-
-> **Disclaimer:** This is an independent, personal project. Not affiliated with Microsoft, Amazon, or any cloud provider.
+> Independent project. Not affiliated with Microsoft or Amazon.
 
 ## Quick Start
 
