@@ -146,18 +146,53 @@ az group list --query "[?starts_with(name,'rg-lab-000')]" -o table
 
 For detailed setup instructions, see **[docs/setup-overview.md](docs/setup-overview.md)**.
 
-## Configuration
+## Configuration Templates
 
-Azure subscriptions are configured in `.data/subs.json` (gitignored):
+Your local configuration files are **gitignored** - they never leave your machine. Copy from templates:
+
+### Azure Subscription Config
+
+```powershell
+# Copy template to create your config
+cp .data/subs.example.json .data/subs.json
+```
+
+Then edit `.data/subs.json` with your subscription ID:
 
 ```json
 {
-  "default": "sub01",
+  "default": "lab",
   "subscriptions": {
-    "sub01": { "id": "00000000-0000-0000-0000-000000000000", "name": "My Sub" }
+    "lab": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "My Lab Subscription",
+      "tenantId": "00000000-0000-0000-0000-000000000000"
+    }
   }
 }
 ```
+
+### AWS Account Config (for lab-003)
+
+```powershell
+# Copy template
+cp .data/accounts.aws.template.json .data/accounts.aws.json
+```
+
+Edit `.data/accounts.aws.json`:
+
+```json
+{
+  "default": {
+    "profile": "aws-labs",
+    "region": "us-east-2",
+    "accountId": "123456789012",
+    "notes": "My AWS lab account"
+  }
+}
+```
+
+### AWS CLI Profile
 
 AWS uses a CLI profile you create. The default name is `aws-labs`, but you can use any name:
 
@@ -253,6 +288,25 @@ Utility scripts for managing lab resources. See [tools/README.md](tools/README.m
 # Full subscription audit
 ./tools/cost-check.ps1 -Scope All -AwsProfile aws-labs
 ```
+
+## Security - Public Repository
+
+This is a **public repository**. No secrets, credentials, or sensitive data are committed.
+
+**What's safe to commit:**
+- Templates with placeholder values (`00000000-0000-0000-0000-000000000000`)
+- Scripts and documentation
+- APIPA addresses (`169.254.x.x`) - these are link-local only
+
+**What's gitignored (never committed):**
+- `.data/subs.json` - Your Azure subscription IDs
+- `.data/accounts.aws.json` - Your AWS account IDs
+- `.data/lab-*/config.json` - Lab-specific configs
+- `~/.aws/` - AWS credentials and SSO cache
+- `logs/` - Runtime logs (may contain IPs)
+- Any file matching `*secret*`, `*credential*`, `*.pem`, `*.key`
+
+**Before committing:** Run `git status` and verify no sensitive files are staged.
 
 ---
 Zachary Allen - 2026
