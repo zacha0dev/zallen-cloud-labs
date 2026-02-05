@@ -15,6 +15,7 @@ param(
   [string]$Location = "centralus",
   [string]$Owner = "",
   [int]$AwsBgpAsn = 65001,
+  [switch]$AlternateApipa,
   [switch]$Force
 )
 
@@ -49,28 +50,73 @@ $AwsVpcCidr = "10.20.0.0/16"
 $AwsSubnetCidr = "10.20.1.0/24"
 
 # VPN Sites configuration - 2 sites, 2 links each (4 tunnels total)
-# Site 1 -> Azure Instance 0, Site 2 -> Azure Instance 1
-# APIPA Layout:
-#   Instance 0: 169.254.21.0/30, 169.254.21.4/30
-#   Instance 1: 169.254.22.0/30, 169.254.22.4/30
-$VpnSites = @(
-  @{
-    Name = "aws-site-1"
-    Instance = 0
-    Links = @(
-      @{ Name = "link-1"; Apipa = "169.254.21.0/30"; TunnelIndex = 1 }
-      @{ Name = "link-2"; Apipa = "169.254.21.4/30"; TunnelIndex = 2 }
-    )
-  },
-  @{
-    Name = "aws-site-2"
-    Instance = 1
-    Links = @(
-      @{ Name = "link-3"; Apipa = "169.254.22.0/30"; TunnelIndex = 3 }
-      @{ Name = "link-4"; Apipa = "169.254.22.4/30"; TunnelIndex = 4 }
-    )
-  }
-)
+# Two configuration modes:
+#
+# STANDARD MODE (default):
+#   Instance 0: 169.254.21.2, 169.254.21.6  (both from .21 range)
+#   Instance 1: 169.254.22.2, 169.254.22.6  (both from .22 range)
+#   Site 1 (links 1,2) -> Instance 0
+#   Site 2 (links 3,4) -> Instance 1
+#
+# ALTERNATE MODE (-AlternateApipa):
+#   Instance 0: 169.254.21.2, 169.254.22.2  (first IP from each range)
+#   Instance 1: 169.254.21.6, 169.254.22.6  (second IP from each range)
+#   Site 1 (links 1,2) -> Instance 0 (tunnels from both ranges)
+#   Site 2 (links 3,4) -> Instance 1 (tunnels from both ranges)
+#   This tests cross-range APIPA assignment behavior
+
+if ($AlternateApipa) {
+  Write-Host "Using ALTERNATE APIPA configuration" -ForegroundColor Magenta
+  Write-Host "  Instance 0: 169.254.21.2, 169.254.22.2 (first from each range)" -ForegroundColor Magenta
+  Write-Host "  Instance 1: 169.254.21.6, 169.254.22.6 (second from each range)" -ForegroundColor Magenta
+
+  # Alternate: Each instance has one IP from each /30 range
+  $Instance0Apipas = @("169.254.21.2", "169.254.22.2")
+  $Instance1Apipas = @("169.254.21.6", "169.254.22.6")
+
+  # Sites: Each site has links from different ranges
+  $VpnSites = @(
+    @{
+      Name = "aws-site-1"
+      Instance = 0
+      Links = @(
+        @{ Name = "link-1"; Apipa = "169.254.21.0/30"; TunnelIndex = 1 }  # Azure: 21.2
+        @{ Name = "link-2"; Apipa = "169.254.22.0/30"; TunnelIndex = 2 }  # Azure: 22.2
+      )
+    },
+    @{
+      Name = "aws-site-2"
+      Instance = 1
+      Links = @(
+        @{ Name = "link-3"; Apipa = "169.254.21.4/30"; TunnelIndex = 3 }  # Azure: 21.6
+        @{ Name = "link-4"; Apipa = "169.254.22.4/30"; TunnelIndex = 4 }  # Azure: 22.6
+      )
+    }
+  )
+} else {
+  # Standard: Each instance owns one /24 range
+  $Instance0Apipas = @("169.254.21.2", "169.254.21.6")
+  $Instance1Apipas = @("169.254.22.2", "169.254.22.6")
+
+  $VpnSites = @(
+    @{
+      Name = "aws-site-1"
+      Instance = 0
+      Links = @(
+        @{ Name = "link-1"; Apipa = "169.254.21.0/30"; TunnelIndex = 1 }
+        @{ Name = "link-2"; Apipa = "169.254.21.4/30"; TunnelIndex = 2 }
+      )
+    },
+    @{
+      Name = "aws-site-2"
+      Instance = 1
+      Links = @(
+        @{ Name = "link-3"; Apipa = "169.254.22.0/30"; TunnelIndex = 3 }
+        @{ Name = "link-4"; Apipa = "169.254.22.4/30"; TunnelIndex = 4 }
+      )
+    }
+  )
+}
 
 # ============================================
 # HELPER FUNCTIONS
@@ -1048,16 +1094,17 @@ $ErrorActionPreference = $oldErrPref
 if (-not $existingVpn1 -or $existingVpn1 -eq "None" -or [string]::IsNullOrWhiteSpace($existingVpn1)) {
   Write-Host "  Creating VPN Connection 1 (Azure Instance 0)..." -ForegroundColor Gray
 
-  # Build options JSON as PowerShell object, then serialize without BOM
+  # Build options JSON from VPN sites configuration (supports alternate APIPA mode)
+  $site1 = $VpnSites | Where-Object { $_.Name -eq "aws-site-1" }
   $vpn1Options = @{
     TunnelOptions = @(
       @{
-        TunnelInsideCidr = "169.254.21.0/30"
+        TunnelInsideCidr = $site1.Links[0].Apipa
         PreSharedKey = $psk1
         IKEVersions = @(@{Value = "ikev2"})
       },
       @{
-        TunnelInsideCidr = "169.254.21.4/30"
+        TunnelInsideCidr = $site1.Links[1].Apipa
         PreSharedKey = $psk2
         IKEVersions = @(@{Value = "ikev2"})
       }
@@ -1098,15 +1145,17 @@ $ErrorActionPreference = $oldErrPref
 if (-not $existingVpn2 -or $existingVpn2 -eq "None" -or [string]::IsNullOrWhiteSpace($existingVpn2)) {
   Write-Host "  Creating VPN Connection 2 (Azure Instance 1)..." -ForegroundColor Gray
 
+  # Build options JSON from VPN sites configuration (supports alternate APIPA mode)
+  $site2 = $VpnSites | Where-Object { $_.Name -eq "aws-site-2" }
   $vpn2Options = @{
     TunnelOptions = @(
       @{
-        TunnelInsideCidr = "169.254.22.0/30"
+        TunnelInsideCidr = $site2.Links[0].Apipa
         PreSharedKey = $psk3
         IKEVersions = @(@{Value = "ikev2"})
       },
       @{
-        TunnelInsideCidr = "169.254.22.4/30"
+        TunnelInsideCidr = $site2.Links[1].Apipa
         PreSharedKey = $psk4
         IKEVersions = @(@{Value = "ikev2"})
       }
