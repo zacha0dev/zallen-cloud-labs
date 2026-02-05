@@ -223,16 +223,27 @@ if (-not $AzureOnly) {
         if ($deleteAws) {
           $awsStartTime = Get-Date
 
-          # Delete VPN Connections first
+          # Delete VPN Connections first (must complete before VGW can be deleted)
           if ($vpnConns -and $vpnConns.Count -gt 0) {
             Write-Host "Deleting VPN Connections..." -ForegroundColor Gray
             foreach ($vpnId in $vpnConns) {
               Write-Host "  Deleting: $vpnId" -ForegroundColor DarkGray
               aws ec2 delete-vpn-connection --vpn-connection-id $vpnId 2>$null
             }
-            # Wait for VPN connections to be deleted
+            # Wait for VPN connections to actually be deleted
             Write-Host "  Waiting for VPN connections to be deleted..." -ForegroundColor DarkGray
-            Start-Sleep -Seconds 30
+            $maxWait = 18  # 3 minutes max
+            $waited = 0
+            while ($waited -lt $maxWait) {
+              Start-Sleep -Seconds 10
+              $waited++
+              $remaining = aws ec2 describe-vpn-connections --filters "Name=tag:lab,Values=lab-003" --query "VpnConnections[?State!='deleted'].VpnConnectionId" --output json 2>$null | ConvertFrom-Json
+              if (-not $remaining -or $remaining.Count -eq 0) {
+                Write-Host "  VPN connections deleted." -ForegroundColor DarkGray
+                break
+              }
+              Write-Host "  Still waiting... ($($remaining.Count) remaining)" -ForegroundColor DarkGray
+            }
           }
 
           # Delete Customer Gateways
@@ -244,11 +255,11 @@ if (-not $AzureOnly) {
             }
           }
 
-          # Detach and Delete VGW
+          # Detach and Delete VGW (with proper wait and retry)
           if ($vgws -and $vgws.Count -gt 0) {
             Write-Host "Deleting VPN Gateways..." -ForegroundColor Gray
             foreach ($vgwId in $vgws) {
-              # Get VPC attachment
+              # Get VPC attachment and detach
               $vgwDetails = aws ec2 describe-vpn-gateways --vpn-gateway-ids $vgwId --output json 2>$null | ConvertFrom-Json
               if ($vgwDetails.VpnGateways[0].VpcAttachments) {
                 foreach ($attachment in $vgwDetails.VpnGateways[0].VpcAttachments) {
@@ -257,11 +268,40 @@ if (-not $AzureOnly) {
                     aws ec2 detach-vpn-gateway --vpn-gateway-id $vgwId --vpc-id $attachment.VpcId 2>$null
                   }
                 }
-                # Wait for detachment
-                Start-Sleep -Seconds 15
+                # Wait for detachment to complete
+                Write-Host "  Waiting for VGW detachment..." -ForegroundColor DarkGray
+                $maxWait = 18  # 3 minutes max
+                $waited = 0
+                while ($waited -lt $maxWait) {
+                  Start-Sleep -Seconds 10
+                  $waited++
+                  $vgwState = aws ec2 describe-vpn-gateways --vpn-gateway-ids $vgwId --query "VpnGateways[0].VpcAttachments[0].State" --output text 2>$null
+                  if ($vgwState -eq "detached" -or [string]::IsNullOrEmpty($vgwState) -or $vgwState -eq "None") {
+                    Write-Host "  VGW detached." -ForegroundColor DarkGray
+                    break
+                  }
+                  Write-Host "  Still detaching... (state: $vgwState)" -ForegroundColor DarkGray
+                }
               }
-              Write-Host "  Deleting: $vgwId" -ForegroundColor DarkGray
-              aws ec2 delete-vpn-gateway --vpn-gateway-id $vgwId 2>$null
+
+              # Delete VGW with retry
+              Write-Host "  Deleting VGW: $vgwId" -ForegroundColor DarkGray
+              $deleteAttempts = 0
+              $maxAttempts = 6
+              while ($deleteAttempts -lt $maxAttempts) {
+                $deleteAttempts++
+                aws ec2 delete-vpn-gateway --vpn-gateway-id $vgwId 2>$null
+                Start-Sleep -Seconds 5
+                $vgwExists = aws ec2 describe-vpn-gateways --vpn-gateway-ids $vgwId --query "VpnGateways[?State!='deleted'].VpnGatewayId" --output text 2>$null
+                if ([string]::IsNullOrEmpty($vgwExists)) {
+                  Write-Host "  VGW deleted." -ForegroundColor DarkGray
+                  break
+                }
+                if ($deleteAttempts -lt $maxAttempts) {
+                  Write-Host "  Retry $deleteAttempts/$maxAttempts..." -ForegroundColor DarkGray
+                  Start-Sleep -Seconds 10
+                }
+              }
             }
           }
 
