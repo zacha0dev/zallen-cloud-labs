@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-    Updates the azure-labs repository to the latest version.
+    Updates the azure-labs package to the latest version.
 
 .DESCRIPTION
-    Wrapper script that calls tools/update-azure-labs.ps1.
-    Safely fetches and pulls the latest changes from the remote repository.
+    Pulls the latest labs, scripts, and docs from GitHub.
+    Automatically stashes local changes, updates, then restores them.
+    Runs setup.ps1 -Status after update to verify your environment.
 
 .EXAMPLE
     .\update.ps1
 
 .NOTES
-    This script never pushes, resets, or automatically stashes changes.
-    If you have local modifications, commit or stash them first.
+    Compatible with Windows PowerShell 5.1 and PowerShell 7+
 #>
 
 [CmdletBinding()]
