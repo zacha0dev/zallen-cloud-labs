@@ -3,9 +3,10 @@
     Updates the azure-labs package to the latest version.
 
 .DESCRIPTION
-    Pulls the latest labs, scripts, and docs from GitHub.
-    Automatically stashes local changes, updates, then restores them.
-    Runs setup.ps1 -Status after update to verify your environment.
+    Convenience wrapper — runs setup.ps1 which checks for updates
+    as its first step, then verifies your environment.
+
+    setup.ps1 is the single entry point for all setup and update tasks.
 
 .EXAMPLE
     .\update.ps1
@@ -17,12 +18,12 @@
 [CmdletBinding()]
 param()
 
-$UpdateScript = Join-Path (Join-Path $PSScriptRoot "tools") "update-azure-labs.ps1"
+$SetupScript = Join-Path $PSScriptRoot "setup.ps1"
 
-if (-not (Test-Path $UpdateScript)) {
-    Write-Host "Error: Update script not found at: $UpdateScript" -ForegroundColor Red
+if (-not (Test-Path $SetupScript)) {
+    Write-Host "Error: setup.ps1 not found at: $SetupScript" -ForegroundColor Red
     exit 1
 }
 
-& $UpdateScript @args
+& $SetupScript @args
 exit $LASTEXITCODE
