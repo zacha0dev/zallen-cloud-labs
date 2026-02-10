@@ -3,10 +3,11 @@ setup.ps1
 Single entry point for Azure Labs environment setup.
 
 Usage:
-  .\setup.ps1              # Interactive - checks all, prompts for logins
-  .\setup.ps1 -Status      # Quick status check (no prompts)
+  .\setup.ps1              # Interactive - checks for updates, prompts for logins
+  .\setup.ps1 -Status      # Quick status check (no prompts, no update check)
   .\setup.ps1 -Azure       # Azure setup only
   .\setup.ps1 -Aws         # AWS setup only
+  .\setup.ps1 -SkipUpdate  # Skip update check
 
 After setup is green, deploy labs directly:
   .\labs\lab-003-vwan-aws-vpn-bgp-apipa\scripts\deploy.ps1
@@ -17,6 +18,7 @@ param(
   [switch]$Azure,
   [switch]$Aws,
   [switch]$Status,
+  [switch]$SkipUpdate,
   [string]$AwsProfile = "aws-labs"
 )
 
@@ -344,6 +346,14 @@ Write-Host "Azure Labs Setup" -ForegroundColor Cyan
 Write-Host "================" -ForegroundColor Cyan
 
 Ensure-DataDir
+
+# Check for updates (skip in -Status mode or if -SkipUpdate)
+if (-not $Status -and -not $SkipUpdate) {
+  $updateScript = Join-Path (Join-Path $RepoRoot "scripts") "update-labs.ps1"
+  if (Test-Path $updateScript) {
+    & $updateScript -RepoRoot $RepoRoot
+  }
+}
 
 if ($Status) {
   Show-Status
