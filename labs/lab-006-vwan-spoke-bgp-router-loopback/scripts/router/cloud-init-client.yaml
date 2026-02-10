@@ -1,0 +1,17 @@
+#cloud-config
+# labs/lab-006-vwan-spoke-bgp-router-loopback/scripts/router/cloud-init-client.yaml
+# Bootstrap for client VMs — basic network tools for testing
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - tcpdump
+  - traceroute
+  - net-tools
+  - jq
+  - curl
+  - mtr-tiny
+
+runcmd:
+  - echo "cloud-init client bootstrap complete" | systemd-cat -t cloud-init-lab006
