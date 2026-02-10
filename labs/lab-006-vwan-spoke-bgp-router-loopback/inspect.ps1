@@ -85,7 +85,7 @@ if (-not $RoutesOnly) {
 
 # --- Effective Routes ---
 if (-not $BgpOnly) {
-  Write-Section "Effective Routes — Client A"
+  Write-Section "Effective Routes - Client A"
   $clientANicId = az vm show -g $ResourceGroup -n $ClientAVmName --query "networkProfile.networkInterfaces[0].id" -o tsv 2>$null
   if ($clientANicId) {
     $clientANicName = ($clientANicId -split "/")[-1]
@@ -94,7 +94,7 @@ if (-not $BgpOnly) {
     Write-Host "  Client A VM not found." -ForegroundColor Yellow
   }
 
-  Write-Section "Effective Routes — Client B"
+  Write-Section "Effective Routes - Client B"
   $clientBNicId = az vm show -g $ResourceGroup -n $ClientBVmName --query "networkProfile.networkInterfaces[0].id" -o tsv 2>$null
   if ($clientBNicId) {
     $clientBNicName = ($clientBNicId -split "/")[-1]
@@ -103,7 +103,7 @@ if (-not $BgpOnly) {
     Write-Host "  Client B VM not found." -ForegroundColor Yellow
   }
 
-  Write-Section "Effective Routes — Router (hub-side NIC)"
+  Write-Section "Effective Routes - Router (hub-side NIC)"
   $routerNicName = "nic-router-hubside-006"
   az network nic show-effective-route-table -g $ResourceGroup -n $routerNicName -o table 2>$null
 }

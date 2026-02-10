@@ -14,8 +14,6 @@
 .EXAMPLE
     .\tools\update-azure-labs.ps1
 
-    # Or from anywhere via the wrapper:
-    .\update.ps1
 
 .NOTES
     Compatible with Windows PowerShell 5.1 and PowerShell 7+
@@ -213,7 +211,7 @@ $cleanCheck = Test-WorkingTreeClean -RepoPath $RepoRoot
 $didStash = $false
 
 if (-not $cleanCheck.Clean) {
-    Write-Warn "Local changes detected — stashing automatically"
+    Write-Warn "Local changes detected - stashing automatically"
     Push-Location $RepoRoot
     try {
         $stashOutput = git stash push -m "azure-labs-update-autostash" 2>&1
@@ -221,7 +219,7 @@ if (-not $cleanCheck.Clean) {
             Write-Fail "Could not stash local changes"
             Write-Host ""
             Write-Host "  Error: $stashOutput" -ForegroundColor Red
-            Write-Host "  Please commit or manually stash your changes, then re-run .\update.ps1" -ForegroundColor Yellow
+            Write-Host "  Please commit or manually stash your changes, then re-run .\setup.ps1" -ForegroundColor Yellow
             Write-Host ""
             exit 1
         }
@@ -342,7 +340,7 @@ if (Test-Path $setupScript) {
         Pop-Location
     }
 } else {
-    Write-Warn "setup.ps1 not found — skipping environment check"
+    Write-Warn "setup.ps1 not found - skipping environment check"
 }
 
 # Step 9: Summary

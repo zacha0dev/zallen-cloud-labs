@@ -7,7 +7,7 @@
     Fetches from remote, compares versions, and pulls latest if available.
     Handles local changes gracefully: asks user whether to keep or override.
 
-    Not intended to be called directly — use .\setup.ps1 instead.
+    Not intended to be called directly -- use .\setup.ps1 instead.
 
 .NOTES
     Compatible with Windows PowerShell 5.1 and PowerShell 7+
@@ -58,12 +58,12 @@ Write-Host ""
 
 # Preflight: git must exist and this must be a repo
 if (-not (Test-HasGit)) {
-  Write-Host "  [--] Git not installed — skipping update check" -ForegroundColor Yellow
+  Write-Host "  [--] Git not installed - skipping update check" -ForegroundColor Yellow
   return
 }
 
 if (-not (Test-IsGitRepo $RepoRoot)) {
-  Write-Host "  [--] Not a git repository — skipping update check" -ForegroundColor Yellow
+  Write-Host "  [--] Not a git repository - skipping update check" -ForegroundColor Yellow
   Write-Host "       If you downloaded the ZIP, re-download from GitHub to update." -ForegroundColor Gray
   return
 }
@@ -78,7 +78,7 @@ Push-Location $RepoRoot
 try {
   $fetchOutput = git fetch origin 2>&1
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "  [--] Could not reach GitHub — skipping update check" -ForegroundColor Yellow
+    Write-Host "  [--] Could not reach GitHub - skipping update check" -ForegroundColor Yellow
     Write-Host "       Check your network connection. Setup will continue." -ForegroundColor Gray
     Write-Host ""
     return
@@ -97,7 +97,7 @@ try {
   # Check if remote branch exists
   $remoteHash = git rev-parse $remoteRef 2>$null
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "  [ok] No remote branch to compare — skipping" -ForegroundColor DarkGray
+    Write-Host "  [ok] No remote branch to compare - skipping" -ForegroundColor DarkGray
     Write-Host ""
     return
   }
@@ -178,7 +178,7 @@ if ($hasLocalChanges) {
     try {
       git stash push -m "azure-labs-setup-autostash" 2>&1 | Out-Null
       if ($LASTEXITCODE -ne 0) {
-        Write-Host "  [--] Could not stash changes — skipping update" -ForegroundColor Yellow
+        Write-Host "  [--] Could not stash changes - skipping update" -ForegroundColor Yellow
         Write-Host ""
         return
       }
@@ -188,7 +188,7 @@ if ($hasLocalChanges) {
     Write-Host "  [ok] Changes stashed" -ForegroundColor Green
   }
 } else {
-  # No local changes — just confirm update
+  # No local changes - just confirm update
   $confirm = Read-Host "  Pull latest updates? (y/n)"
   if ($confirm.Trim().ToLower() -ne "y") {
     Write-Host "  Skipped." -ForegroundColor DarkGray
