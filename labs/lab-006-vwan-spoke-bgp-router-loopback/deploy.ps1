@@ -470,9 +470,9 @@ Write-Validation -Check "Hub connection $ConnSpokeB" -Passed ($connBState -eq "S
 Write-Log "Phase 2 completed in $phase2Elapsed" "SUCCESS"
 
 # ============================================
-# PHASE 3: Compute — Router VM + Client VMs
+# PHASE 3: Compute - Router VM + Client VMs
 # ============================================
-Write-Phase -Number 3 -Title "Compute — Router VM + Client VMs"
+Write-Phase -Number 3 -Title "Compute - Router VM + Client VMs"
 
 $phase3Start = Get-Date
 
@@ -704,7 +704,7 @@ if (Test-Path $routerBootstrap) {
 $phase4Elapsed = Get-ElapsedTime -StartTime $phase4Start
 Write-Host ""
 Write-Host "Phase 4 Validation:" -ForegroundColor Yellow
-Write-Host "  Manual validation required — SSH to router and verify:" -ForegroundColor Yellow
+Write-Host "  Manual validation required - SSH to router and verify:" -ForegroundColor Yellow
 Write-Host "    ip link show lo0" -ForegroundColor DarkGray
 Write-Host "    ip addr show lo0" -ForegroundColor DarkGray
 Write-Host "    sysctl net.ipv4.ip_forward" -ForegroundColor DarkGray
@@ -712,9 +712,9 @@ Write-Host "    ping -c 2 $($nic1Info.ip)  # self-check hub-side NIC" -Foregroun
 Write-Log "Phase 4 completed in $phase4Elapsed" "SUCCESS"
 
 # ============================================
-# PHASE 5: BGP — Peer Router to Virtual Hub
+# PHASE 5: BGP - Peer Router to Virtual Hub
 # ============================================
-Write-Phase -Number 5 -Title "BGP — Peer Router to Virtual Hub"
+Write-Phase -Number 5 -Title "BGP - Peer Router to Virtual Hub"
 
 $phase5Start = Get-Date
 
