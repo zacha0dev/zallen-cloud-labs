@@ -13,7 +13,8 @@ cd zallen-cloud-labs
 
 # Setup
 .\setup.ps1 -Status        # Check environment
-.\setup.ps1 -DoLogin       # Login if needed
+.\setup.ps1                # Interactive — checks tools, prompts for az login
+.\setup.ps1 -Azure         # Azure setup only (skip AWS)
 
 # Configure subscription
 copy .data\subs.example.json .data\subs.json
@@ -43,6 +44,7 @@ Some labs deploy **billable resources** (vWAN hubs, VPN gateways, VMs).
 | [lab-003](labs/lab-003-vwan-aws-bgp-apipa/) | vWAN ↔ AWS VPN (BGP/APIPA) | Azure + AWS | ~$0.70/hr |
 | [lab-004](labs/lab-004-vwan-default-route-propagation/) | vWAN default route propagation | Azure | ~$0.60/hr |
 | [lab-005](labs/lab-005-vwan-s2s-bgp-apipa/) | vWAN S2S BGP/APIPA (reference) | Azure | ~$0.60/hr |
+| [lab-006](labs/lab-006-vwan-spoke-bgp-router-loopback/) | vWAN spoke BGP router + loopback | Azure | ~$0.37/hr |
 
 ## Documentation
 
