@@ -3,8 +3,11 @@
     Updates the azure-labs repository safely.
 
 .DESCRIPTION
-    Fetches and pulls the latest changes from the remote repository.
-    This script is safe: it never pushes, never resets, never stashes automatically.
+    Client-facing updater for the Azure Labs package. Pulls the latest labs,
+    scripts, and docs from GitHub. Automatically handles local changes by
+    stashing them before update and restoring them after.
+
+    After pulling, runs setup.ps1 -Status so you know if your tools are current.
 
     Can be run from any working directory - it will detect the repository root.
 
@@ -24,20 +27,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# --- Configuration ---
-$ScriptName = "Azure Labs Updater"
-$ScriptVersion = "1.0.0"
-
 # --- Helper Functions ---
-function Write-Header {
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  $ScriptName" -ForegroundColor Cyan
-    Write-Host "  v$ScriptVersion" -ForegroundColor DarkCyan
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host ""
-}
-
 function Write-Step {
     param([string]$Message)
     Write-Host "  -> $Message" -ForegroundColor White
@@ -115,7 +105,6 @@ function Test-WorkingTreeClean {
 
     Push-Location $RepoPath
     try {
-        # Check for uncommitted changes (staged or unstaged)
         $status = git status --porcelain 2>&1
         if ($LASTEXITCODE -ne 0) {
             return @{ Clean = $false; Error = "Failed to check git status" }
@@ -166,8 +155,29 @@ function Get-LatestCommit {
     }
 }
 
+function Get-LabVersion {
+    param([string]$RepoPath)
+    $versionFile = Join-Path $RepoPath "VERSION"
+    if (Test-Path $versionFile) {
+        return (Get-Content $versionFile -Raw).Trim()
+    }
+    return "unknown"
+}
+
 # --- Main Script ---
-Write-Header
+
+# Read current version before update
+$preRepoRoot = Get-RepoRoot
+$versionBefore = if ($preRepoRoot) { Get-LabVersion $preRepoRoot } else { "unknown" }
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  Azure Labs Updater" -ForegroundColor Cyan
+if ($versionBefore -ne "unknown") {
+    Write-Host "  Current: v$versionBefore" -ForegroundColor DarkCyan
+}
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
 
 # Step 1: Check git is installed
 Write-Step "Checking for Git..."
@@ -190,32 +200,39 @@ if (-not $RepoRoot) {
     Write-Host "  If you downloaded the ZIP, updates require re-downloading from GitHub." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  To clone the repository:" -ForegroundColor Cyan
-    Write-Host "    git clone https://github.com/zacha0dev/azure-labs.git" -ForegroundColor Gray
+    Write-Host "    git clone https://github.com/zacha0dev/zallen-cloud-labs.git" -ForegroundColor Gray
     Write-Host ""
     exit 1
 }
 Write-Pass "Repository found"
 Write-Detail "Path:" $RepoRoot
 
-# Step 3: Check working tree is clean
+# Step 3: Handle local changes (auto-stash)
 Write-Step "Checking for local changes..."
 $cleanCheck = Test-WorkingTreeClean -RepoPath $RepoRoot
+$didStash = $false
+
 if (-not $cleanCheck.Clean) {
-    Write-Fail "Local changes detected"
-    Write-Host ""
-    Write-Host "  Your working tree has uncommitted changes." -ForegroundColor Yellow
-    Write-Host "  Please commit or stash your changes first:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "    git stash           # Temporarily save changes" -ForegroundColor Gray
-    Write-Host "    git stash pop       # Restore changes after update" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  Or commit your changes:" -ForegroundColor Gray
-    Write-Host "    git add ." -ForegroundColor Gray
-    Write-Host "    git commit -m `"Your message`"" -ForegroundColor Gray
-    Write-Host ""
-    exit 1
+    Write-Warn "Local changes detected — stashing automatically"
+    Push-Location $RepoRoot
+    try {
+        $stashOutput = git stash push -m "azure-labs-update-autostash" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "Could not stash local changes"
+            Write-Host ""
+            Write-Host "  Error: $stashOutput" -ForegroundColor Red
+            Write-Host "  Please commit or manually stash your changes, then re-run .\update.ps1" -ForegroundColor Yellow
+            Write-Host ""
+            exit 1
+        }
+        $didStash = $true
+        Write-Info "Changes stashed (will restore after update)"
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Pass "Working tree is clean"
 }
-Write-Pass "Working tree is clean"
 
 # Step 4: Fetch from remote
 Write-Step "Fetching from remote..."
@@ -229,6 +246,11 @@ try {
         Write-Host ""
         Write-Host "  Check your network connection and try again." -ForegroundColor Yellow
         Write-Host ""
+        # Restore stash if we stashed
+        if ($didStash) {
+            git stash pop 2>&1 | Out-Null
+            Write-Info "Local changes restored"
+        }
         exit 1
     }
     Write-Pass "Fetched successfully"
@@ -244,36 +266,31 @@ try {
     $pullExitCode = $LASTEXITCODE
 
     if ($pullExitCode -ne 0) {
-        # Check if it's a non-fast-forward error
         if ($pullOutput -match "fatal.*not possible to fast-forward" -or
             $pullOutput -match "fatal.*Cannot fast-forward") {
             Write-Fail "Cannot fast-forward"
             Write-Host ""
             Write-Host "  Your local branch has diverged from the remote." -ForegroundColor Yellow
-            Write-Host "  This usually means you have local commits that aren't on the remote." -ForegroundColor Yellow
+            Write-Host "  This usually means you have local commits." -ForegroundColor Yellow
             Write-Host ""
-            Write-Host "  To resolve, choose one of these options:" -ForegroundColor Cyan
+            Write-Host "  Options:" -ForegroundColor Cyan
+            Write-Host "    git pull --rebase     # Replay your commits on top of remote" -ForegroundColor Gray
+            Write-Host "    git pull --no-ff      # Merge (keeps your commits)" -ForegroundColor Gray
             Write-Host ""
-            Write-Host "  Option 1: Merge (keeps your commits)" -ForegroundColor White
-            Write-Host "    git pull --no-ff" -ForegroundColor Gray
-            Write-Host ""
-            Write-Host "  Option 2: Rebase (replays your commits on top)" -ForegroundColor White
-            Write-Host "    git pull --rebase" -ForegroundColor Gray
-            Write-Host ""
-            Write-Host "  Option 3: Reset to remote (WARNING: loses local commits)" -ForegroundColor White
-            Write-Host "    git reset --hard origin/<branch>" -ForegroundColor Gray
-            Write-Host ""
-            exit 1
         } else {
             Write-Fail "Failed to pull"
             Write-Host ""
             Write-Host "  Error: $pullOutput" -ForegroundColor Red
             Write-Host ""
-            exit 1
         }
+        # Restore stash if we stashed
+        if ($didStash) {
+            git stash pop 2>&1 | Out-Null
+            Write-Info "Local changes restored"
+        }
+        exit 1
     }
 
-    # Check if we got updates
     if ($pullOutput -match "Already up to date" -or $pullOutput -match "Already up-to-date") {
         Write-Pass "Already up to date"
     } else {
@@ -283,25 +300,76 @@ try {
     Pop-Location
 }
 
-# Step 6: Show summary
+# Step 6: Restore stashed changes
+if ($didStash) {
+    Write-Step "Restoring your local changes..."
+    Push-Location $RepoRoot
+    try {
+        $popOutput = git stash pop 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Stash restore had conflicts"
+            Write-Host ""
+            Write-Host "  Your local changes conflicted with the update." -ForegroundColor Yellow
+            Write-Host "  Your changes are still in the stash. To resolve:" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "    git stash show         # See what was stashed" -ForegroundColor Gray
+            Write-Host "    git stash pop          # Try again" -ForegroundColor Gray
+            Write-Host "    git stash drop         # Discard stashed changes" -ForegroundColor Gray
+            Write-Host ""
+        } else {
+            Write-Pass "Local changes restored"
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+# Step 7: Read version after update
+$versionAfter = Get-LabVersion $RepoRoot
+
+# Step 8: Run setup status check
+Write-Host ""
+Write-Step "Checking environment..."
+$setupScript = Join-Path $RepoRoot "setup.ps1"
+if (Test-Path $setupScript) {
+    Push-Location $RepoRoot
+    try {
+        & $setupScript -Status
+    } catch {
+        Write-Warn "Setup status check failed: $($_.Exception.Message)"
+        Write-Host "  Run .\setup.ps1 manually to fix." -ForegroundColor Yellow
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Warn "setup.ps1 not found — skipping environment check"
+}
+
+# Step 9: Summary
+$branch = Get-CurrentBranch -RepoPath $RepoRoot
+$commit = Get-LatestCommit -RepoPath $RepoRoot
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  Update Complete" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 
-$branch = Get-CurrentBranch -RepoPath $RepoRoot
-$commit = Get-LatestCommit -RepoPath $RepoRoot
+if ($versionBefore -ne $versionAfter -and $versionAfter -ne "unknown") {
+    Write-Info "Updated: v$versionBefore -> v$versionAfter"
+} elseif ($versionAfter -ne "unknown") {
+    Write-Info "Version: v$versionAfter"
+}
 
-Write-Info "Current state:"
 Write-Detail "Branch:" $branch
 if ($commit) {
     Write-Detail "Commit:" "$($commit.Hash) - $($commit.Message)"
 }
 Write-Detail "Path:" $RepoRoot
+if ($didStash) {
+    Write-Detail "Stash:" "Local changes were preserved"
+}
 
-Write-Host ""
-Write-Host "  Run .\setup.ps1 -Status to check your environment." -ForegroundColor Gray
 Write-Host ""
 
 exit 0
