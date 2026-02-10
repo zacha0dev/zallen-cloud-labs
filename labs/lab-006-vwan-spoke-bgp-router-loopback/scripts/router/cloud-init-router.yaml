@@ -1,0 +1,108 @@
+#cloud-config
+# labs/lab-006-vwan-spoke-bgp-router-loopback/scripts/router/cloud-init-router.yaml
+# Bootstrap for FRR router VM — installs FRR, enables IP forwarding, creates loopback
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - frr
+  - frr-pythontools
+  - tcpdump
+  - traceroute
+  - net-tools
+  - jq
+  - curl
+
+write_files:
+  # Enable BGP daemon in FRR
+  - path: /etc/frr/daemons
+    content: |
+      bgpd=yes
+      ospfd=no
+      ospf6d=no
+      ripd=no
+      ripngd=no
+      isisd=no
+      pimd=no
+      ldpd=no
+      nhrpd=no
+      eigrpd=no
+      babeld=no
+      sharpd=no
+      pbrd=no
+      bfdd=no
+      fabricd=no
+      vrrpd=no
+      pathd=no
+    owner: frr:frr
+    permissions: '0640'
+
+  # FRR configuration — BGP peering to vHub
+  # NOTE: Peer IP (vHub router IP) must be updated after deployment.
+  #       The vHub BGP peer IP is assigned dynamically from 10.0.0.0/24.
+  - path: /etc/frr/frr.conf
+    content: |
+      frr version 8.1
+      frr defaults traditional
+      hostname router-006
+      log syslog informational
+      no ipv6 forwarding
+      !
+      router bgp 65100
+       bgp router-id 10.61.1.4
+       no bgp ebgp-requires-policy
+       !
+       ! Peer to vHub — UPDATE THIS IP after deployment
+       ! Get vHub router IP: az network vhub show -g rg-lab-006-vwan-bgp-router -n vhub-lab-006 --query virtualRouterIps -o json
+       neighbor 10.0.0.68 remote-as 65515
+       neighbor 10.0.0.69 remote-as 65515
+       !
+       address-family ipv4 unicast
+        ! Advertise loopback prefixes
+        network 10.61.250.1/32
+        network 10.200.200.1/32
+        ! Optionally advertise client-a subnet
+        ! network 10.61.10.0/24
+       exit-address-family
+      !
+      line vty
+      !
+    owner: frr:frr
+    permissions: '0640'
+
+  # IP forwarding sysctl
+  - path: /etc/sysctl.d/99-ip-forward.conf
+    content: |
+      net.ipv4.ip_forward=1
+    permissions: '0644'
+
+runcmd:
+  # Enable IP forwarding immediately
+  - sysctl -w net.ipv4.ip_forward=1
+
+  # Create dummy loopback interface
+  - ip link add lo0 type dummy
+  - ip link set lo0 up
+  - ip addr add 10.61.250.1/32 dev lo0
+  - ip addr add 10.200.200.1/32 dev lo0
+
+  # Make loopback persistent across reboots
+  - |
+    cat > /etc/networkd-dispatcher/routable.d/50-loopback <<'SCRIPT'
+    #!/bin/bash
+    ip link show lo0 > /dev/null 2>&1 || {
+      ip link add lo0 type dummy
+      ip link set lo0 up
+      ip addr add 10.61.250.1/32 dev lo0
+      ip addr add 10.200.200.1/32 dev lo0
+    }
+    SCRIPT
+  - chmod +x /etc/networkd-dispatcher/routable.d/50-loopback
+
+  # Restart FRR to pick up config
+  - systemctl enable frr
+  - systemctl restart frr
+
+  # Log completion
+  - echo "cloud-init router bootstrap complete" | systemd-cat -t cloud-init-lab006

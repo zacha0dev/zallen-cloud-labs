@@ -1,0 +1,37 @@
+{
+  "location": "centralus",
+  "resourceGroup": "rg-lab-006-vwan-bgp-router",
+  "vhubCidr": "10.0.0.0/24",
+  "spokeA": {
+    "name": "vnet-spoke-a",
+    "addressSpace": "10.61.0.0/16",
+    "subnets": {
+      "routerHubside":  { "name": "snet-router-hubside",  "cidr": "10.61.1.0/24" },
+      "routerSpokeside": { "name": "snet-router-spokeside", "cidr": "10.61.2.0/24" },
+      "clientA":         { "name": "snet-client-a",         "cidr": "10.61.10.0/24" }
+    }
+  },
+  "spokeB": {
+    "name": "vnet-spoke-b",
+    "addressSpace": "10.62.0.0/16",
+    "subnets": {
+      "clientB": { "name": "snet-client-b", "cidr": "10.62.10.0/24" }
+    }
+  },
+  "vmSize": "Standard_B2s",
+  "vmImage": "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest",
+  "routerBgpAsn": 65100,
+  "vhubBgpAsn": 65515,
+  "loopbackTests": {
+    "insideVnet": "10.61.250.1/32",
+    "outsideVnet": "10.200.200.1/32"
+  },
+  "diagnostics": {
+    "nsgFlowLogs": false,
+    "connectionMonitor": false
+  },
+  "storageConfigPull": {
+    "enabled": false,
+    "containerName": "router-config"
+  }
+}
