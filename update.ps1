@@ -17,7 +17,7 @@
 [CmdletBinding()]
 param()
 
-$UpdateScript = Join-Path $PSScriptRoot "tools" "update-azure-labs.ps1"
+$UpdateScript = Join-Path (Join-Path $PSScriptRoot "tools") "update-azure-labs.ps1"
 
 if (-not (Test-Path $UpdateScript)) {
     Write-Host "Error: Update script not found at: $UpdateScript" -ForegroundColor Red

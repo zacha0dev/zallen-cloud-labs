@@ -91,8 +91,8 @@ function Test-AwsIdentity {
 function Clear-AwsCredentialCache {
   <# Removes local AWS CLI credential/SSO caches so a fresh login is required. #>
   $awsDir = Join-Path $env:USERPROFILE ".aws"
-  $ssoCache = Join-Path $awsDir "sso" "cache"
-  $cliCache = Join-Path $awsDir "cli" "cache"
+  $ssoCache = Join-Path (Join-Path $awsDir "sso") "cache"
+  $cliCache = Join-Path (Join-Path $awsDir "cli") "cache"
 
   foreach ($dir in @($ssoCache, $cliCache)) {
     if (Test-Path $dir) {
@@ -121,7 +121,7 @@ function Ensure-AwsAuth {
   $profileExists = ($profiles.Count -gt 0 -and ($profiles -contains $Profile))
 
   # Check if ~/.aws/config exists at all
-  $awsConfigPath = Join-Path $env:USERPROFILE ".aws" "config"
+  $awsConfigPath = Join-Path (Join-Path $env:USERPROFILE ".aws") "config"
   $configExists = Test-Path $awsConfigPath
 
   if (-not $profileExists) {
