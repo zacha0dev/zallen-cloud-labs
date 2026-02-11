@@ -87,12 +87,17 @@ function Write-Check {
   if ($Detail) { Write-Host "         $Detail" -ForegroundColor DarkGray }
 }
 
-# --- Auth ---
+# --- Auth (opens browser if no valid token) ---
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Ensure-AzureAuth -DoLogin
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 az account set --subscription $SubscriptionId 2>$null | Out-Null
+$setExit = $LASTEXITCODE
 $ErrorActionPreference = $oldErrPref
+if ($setExit -ne 0) {
+  Write-Host "Could not set subscription $SubscriptionId. Check .data/subs.json." -ForegroundColor Red
+  exit 1
+}
 
 Write-Host ""
 Write-Host "Lab 006: Inspect" -ForegroundColor Cyan

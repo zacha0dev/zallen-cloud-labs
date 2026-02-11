@@ -205,12 +205,29 @@ Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Write-Validation -Check "Subscription resolved" -Passed $true -Details $SubscriptionId
 
-# Azure auth
+# Azure auth -- opens browser if no valid token
 Ensure-AzureAuth -DoLogin
+
+# Set subscription and verify it took effect
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 az account set --subscription $SubscriptionId 2>$null | Out-Null
+$setExit = $LASTEXITCODE
 $ErrorActionPreference = $oldErrPref
-Write-Validation -Check "Azure authenticated" -Passed $true
+if ($setExit -ne 0) {
+  Write-Validation -Check "Azure subscription set" -Passed $false -Details "Could not set subscription $SubscriptionId"
+  Write-Host ""
+  Write-Host "  The subscription ID in .data/subs.json may not match your account." -ForegroundColor Yellow
+  Write-Host "  Run: az account list -o table" -ForegroundColor Cyan
+  Write-Host "  Then update .data/subs.json with the correct ID." -ForegroundColor Cyan
+  throw "Failed to set Azure subscription. Verify .data/subs.json has the correct ID."
+}
+# Confirm active subscription matches what we asked for
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$activeSubRaw = az account show -o json 2>$null
+$ErrorActionPreference = $oldErrPref
+$activeSubName = ""
+if ($activeSubRaw) { try { $activeSubName = ($activeSubRaw | ConvertFrom-Json).name } catch { } }
+Write-Validation -Check "Azure authenticated" -Passed $true -Details "$activeSubName ($SubscriptionId)"
 
 # Provider registration checks
 $providers = @("Microsoft.Network", "Microsoft.Compute", "Microsoft.Insights")
