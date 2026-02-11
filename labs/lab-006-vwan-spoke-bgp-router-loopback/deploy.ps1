@@ -841,11 +841,28 @@ while ($bgpAttempt -lt $maxBgpWait) {
     break
   }
 
-  # Check for failures
+  # Check for failures -- dump diagnostics and hard-stop
   $anyFailed = $bgpStates.Values | Where-Object { $_ -eq "Failed" }
   if ($anyFailed) {
-    Write-Log "BGP peering provisioning failed. Check router VM is running and hub-side NIC IP is correct." "ERROR"
-    break
+    Write-Log "BGP peering provisioning failed. Dumping diagnostics..." "ERROR"
+    $diagDir = Join-Path $RepoRoot ".data\lab-006"
+    Ensure-Directory $diagDir
+    $diagPayload = @{
+      timestamp = (Get-Date -Format "o")
+      phase = 5
+      error = "bgpconnection provisioning failed"
+      bgpStates = $bgpStates
+      routerHubIp = $routerHubIp
+      routerBgpAsn = $RouterBgpAsn
+      connSpokeAId = $connSpokeAId
+    }
+    $diagJson = $diagPayload | ConvertTo-Json -Depth 5
+    $diagPath = Join-Path $diagDir "phase5-bgp-diag.json"
+    Write-JsonWithoutBom -Path $diagPath -Content $diagJson
+    Write-Log "Diagnostics written to $diagPath" "ERROR"
+    Write-Host "  [FAIL] One or more bgpconnections failed. See $diagPath" -ForegroundColor Red
+    Write-Host "  Action: Verify router VM is running and hub-side NIC IP ($routerHubIp) is correct." -ForegroundColor Yellow
+    throw "Phase 5 FAIL: BGP peering provisioning failed. Diagnostics at $diagPath"
   }
 
   $elapsed = Get-ElapsedTime -StartTime $phase5Start
@@ -936,6 +953,45 @@ vtysh -c 'show bgp summary' 2>/dev/null || echo 'BGP summary not available yet'
   }
 }
 
+# Validate BGP adjacency on the router via vtysh
+Write-Host ""
+Write-Host "Validating BGP adjacency on the router (vtysh show bgp summary)..." -ForegroundColor Gray
+Start-Sleep -Seconds 10  # allow FRR convergence time
+
+$bgpCheckScript = 'sudo vtysh -c "show bgp summary json" 2>/dev/null || echo "{}"'
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$bgpCheckRaw = az vm run-command invoke `
+  --resource-group $ResourceGroup `
+  --name $RouterVmName `
+  --command-id RunShellScript `
+  --scripts $bgpCheckScript `
+  -o json 2>$null
+$ErrorActionPreference = $oldErrPref
+
+$bgpEstablishedCount = 0
+if ($bgpCheckRaw) {
+  try {
+    $bgpCheckObj = $bgpCheckRaw | ConvertFrom-Json
+    $bgpStdout = ($bgpCheckObj.value | Where-Object { $_.code -eq "ProvisionDiagnostics" -or $_.message } | Select-Object -First 1).message
+    if (-not $bgpStdout) {
+      $bgpStdout = $bgpCheckObj.value[0].message
+    }
+    if ($bgpStdout) {
+      # Count Established peers from the JSON output
+      $peerMatches = [regex]::Matches($bgpStdout, '"state"\s*:\s*"Established"')
+      $bgpEstablishedCount = $peerMatches.Count
+      Write-Host "  BGP established peers on router: $bgpEstablishedCount" -ForegroundColor $(if ($bgpEstablishedCount -ge 2) { "Green" } else { "Yellow" })
+    }
+  } catch {
+    Write-Host "  Could not parse BGP summary from router (non-fatal)" -ForegroundColor DarkGray
+  }
+}
+
+if ($bgpEstablishedCount -lt 2 -and $vhubRouterIps.Count -ge 2) {
+  Write-Host "  [WARN] Not all BGP neighbors Established yet. This may take 30-60s after FRR restart." -ForegroundColor Yellow
+  Write-Host "  Verify manually: az vm run-command invoke -g $ResourceGroup -n $RouterVmName --command-id RunShellScript --scripts `"sudo vtysh -c 'show bgp summary'`"" -ForegroundColor DarkGray
+}
+
 # Check vHub learned routes
 Write-Host ""
 Write-Host "Checking vHub learned routes..." -ForegroundColor Gray
@@ -955,6 +1011,13 @@ if ($vhubRouterIps.Count -ge 2) {
   Write-Validation -Check "FRR config pushed" -Passed ($frrUpdateExit -eq 0) -Details "Both active-active peers configured"
 } else {
   Write-Validation -Check "vHub active-active peers" -Passed $false -Details "Could not resolve both IPs"
+}
+if ($bgpEstablishedCount -ge 2) {
+  Write-Validation -Check "Router BGP adjacency (both neighbors Established)" -Passed $true -Details "$bgpEstablishedCount peers established"
+} elseif ($bgpEstablishedCount -eq 1) {
+  Write-Validation -Check "Router BGP adjacency" -Passed $false -Details "Only $bgpEstablishedCount/2 peers Established. Second peer may still be converging."
+} else {
+  Write-Validation -Check "Router BGP adjacency" -Passed $false -Details "No peers Established yet. Allow 30-60s for convergence."
 }
 Write-Host ""
 Write-Host "  NOTE: Route propagation depends on FRR config on the router VM." -ForegroundColor Yellow
