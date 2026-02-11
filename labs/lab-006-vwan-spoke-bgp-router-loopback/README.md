@@ -94,6 +94,7 @@ cd labs\lab-006-vwan-spoke-bgp-router-loopback
 | `-Location` | `centralus` | Azure region (centralus, eastus, eastus2, westus2) |
 | `-Owner` | (empty) | Optional owner tag |
 | `-Force` | `$false` | Skip cost confirmation prompt |
+| `-AutoResetHubRouter` | `$false` | Auto-reset hub router if routing failed (requires Az.Network) |
 
 ### inspect.ps1
 
@@ -116,13 +117,14 @@ cd labs\lab-006-vwan-spoke-bgp-router-loopback
 | Phase | Description | Duration |
 |-------|-------------|----------|
 | 0 | Preflight + config contracts (auth, quota, providers) | ~30s |
-| 1 | Core fabric (RG + vWAN + vHub) | 5-10 min |
+| 1 | Core fabric (RG + vWAN + vHub) + hub router health gate | 5-10 min |
 | 2 | Spoke VNets + hub connections | 2-5 min |
 | 3 | Compute (Router VM + Client VMs, all parallel) | 3-5 min |
-| 4 | Router config + loopback creation (FRR bootstrap) | 1-2 min |
-| 5 | BGP peering (router to vHub) | 2-5 min |
-| 6 | Route table control + propagation experiments | ~1 min |
-| 7 | Observability proof pack (outputs.json) | ~30s |
+| 4 | Router config (FRR with real vHub peer IPs via RunCommand) | 1-2 min |
+| 5 | vHub BGP connection (single, with hub-conn precondition) | 2-5 min |
+| 6 | Blob-driven router config (optional) | ~1 min |
+| 7 | Route table control + propagation experiments | ~1 min |
+| 8 | Observability proof pack (outputs.json) | ~30s |
 
 **Total expected time: 15-30 minutes**
 
@@ -140,25 +142,41 @@ Each phase has [PASS]/[FAIL] validation gates. If a phase fails, the script stop
 
 **Run `destroy.ps1` when done to stop billing!**
 
+## Expected BGP Behavior
+
+- **One bgpconnection** on the hub side (`bgp-peer-router-006`) pointing to the router's hub-side NIC IP.
+- The vHub internally peers from **both** its active-active instances through this single bgpconnection.
+- The router (FRR) has **two** BGP neighbors: the two `virtualRouterIps` from `az network vhub show`.
+- `deploy.ps1` Phase 4 pushes the real vHub IPs to `/etc/frr/frr.conf` via RunCommand.
+
 ## Validation
 
 ```powershell
-# Quick: check BGP peering state
-az network vhub bgpconnection list `
-  -g rg-lab-006-vwan-bgp-router `
-  --vhub-name vhub-lab-006 -o table
+# Quick: check hub router health + BGP peering
+az network vhub show -g rg-lab-006-vwan-bgp-router -n vhub-lab-006 -o json | ConvertFrom-Json | Select routingState, virtualRouterIps
+az network vhub bgpconnection list -g rg-lab-006-vwan-bgp-router --vhub-name vhub-lab-006 -o table
 
 # Quick: effective routes on Client A
 .\inspect.ps1 -RoutesOnly
 
-# Full inspection (BGP + routes + VM status)
+# Full inspection (BGP + routes + VM status + hub health)
 .\inspect.ps1
 
 # SSH to router for FRR state
-ssh azurelab@<router-public-ip>
+ssh azurelab@<router-private-ip>
 sudo vtysh -c "show bgp summary"
 sudo vtysh -c "show bgp ipv4 unicast"
 ```
+
+## Artifacts
+
+All diagnostic artifacts are written to `.data/lab-006/`:
+- `outputs.json` -- deployment outputs (IPs, ASNs, peering state)
+- `diag-vhub.json` -- hub health snapshot on routing failure
+- `diag-vhub-poll.json` -- hub recovery poll snapshots (if `-AutoResetHubRouter` used)
+- `diag-vhub-prephase5.json` -- hub state at Phase 5 entry if IPs empty
+- `phase5-bgp-diag.json` -- BGP connection failure diagnostics
+- `bgpconnections.json` -- final bgpconnection list
 
 See [docs/validation.md](docs/validation.md) for full commands and expected outputs.
 
@@ -185,7 +203,7 @@ See [docs/experiments.md](docs/experiments.md) for step-by-step procedures, FRR 
 | Router VM | `vm-router-006` | 2 NICs, IP forwarding, FRR |
 | Client A VM | `vm-client-a-006` | Spoke A test workload |
 | Client B VM | `vm-client-b-006` | Spoke B control workload |
-| BGP Peering | `bgp-peer-router-006` | vHub <-> Router, ASN 65100 |
+| BGP Peering | `bgp-peer-router-006` | Single bgpconnection, vHub <-> Router (ASN 65100). Hub peers from both active-active instances. |
 
 ## Cleanup
 

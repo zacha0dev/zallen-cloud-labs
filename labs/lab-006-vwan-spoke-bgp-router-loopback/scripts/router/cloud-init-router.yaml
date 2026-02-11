@@ -1,6 +1,9 @@
 #cloud-config
 # labs/lab-006-vwan-spoke-bgp-router-loopback/scripts/router/cloud-init-router.yaml
 # Bootstrap for FRR router VM -- installs FRR, enables IP forwarding, creates loopback
+#
+# deploy.ps1 Phase 4 overwrites /etc/frr/frr.conf with the REAL vHub peer IPs.
+# The IPs below (10.0.0.69, 10.0.0.70) are common defaults but NOT guaranteed.
 
 package_update: true
 package_upgrade: false
@@ -20,9 +23,7 @@ write_files:
   # Instead, we fix it in runcmd after package install completes.
 
   # FRR configuration -- BGP peering to vHub (active-active)
-  # NOTE: The vHub has two router instances (active-active). Both must be peered.
-  #       deploy.ps1 Phase 5 overwrites this config with the actual vHub IPs.
-  #       IPs below are initial placeholders from the hub prefix 10.0.0.0/24.
+  # deploy.ps1 Phase 4 overwrites this with actual IPs from az network vhub show.
   - path: /etc/frr/frr.conf
     content: |
       frr version 8.1
@@ -35,16 +36,13 @@ write_files:
        bgp router-id 10.61.1.4
        no bgp ebgp-requires-policy
        !
-       ! vHub active-active BGP peers (both required -- deploy.ps1 overwrites with actual IPs)
-       neighbor 10.0.0.68 remote-as 65515
+       ! vHub active-active BGP peers (deploy.ps1 Phase 4 overwrites with actual IPs)
        neighbor 10.0.0.69 remote-as 65515
+       neighbor 10.0.0.70 remote-as 65515
        !
        address-family ipv4 unicast
-        ! Advertise loopback prefixes
         network 10.61.250.1/32
         network 10.200.200.1/32
-        ! Optionally advertise client-a subnet
-        ! network 10.61.10.0/24
        exit-address-family
       !
       line vty
@@ -57,6 +55,24 @@ write_files:
     content: |
       net.ipv4.ip_forward=1
     permissions: '0644'
+
+  # Health check script (invoked by deploy.ps1 via az vm run-command)
+  - path: /usr/local/bin/lab006_check.sh
+    content: |
+      #!/bin/bash
+      echo "=== FRR daemon ==="
+      systemctl is-active frr 2>/dev/null || echo "frr not running"
+      echo "=== bgpd enabled ==="
+      grep '^bgpd=' /etc/frr/daemons 2>/dev/null || echo "daemons file missing"
+      echo "=== TCP 179 ==="
+      ss -tlnp sport = :179 2>/dev/null || echo "ss failed"
+      echo "=== BGP Summary ==="
+      vtysh -c 'show bgp summary' 2>/dev/null || echo "vtysh unavailable"
+      echo "=== Loopback ==="
+      ip addr show lo0 2>/dev/null || echo "lo0 not found"
+      echo "=== IP Forward ==="
+      sysctl net.ipv4.ip_forward 2>/dev/null
+    permissions: '0755'
 
 runcmd:
   # Enable IP forwarding immediately
