@@ -9,6 +9,10 @@ Provides:
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Suppress Python 32-bit-on-64-bit-Windows UserWarning from Azure CLI.
+# Without this, stderr warnings become terminating errors under PS 5.1.
+if (-not $env:PYTHONWARNINGS) { $env:PYTHONWARNINGS = "ignore::UserWarning" }
+
 function Get-RepoRoot {
   <# Returns the repository root path. #>
   $path = $PSScriptRoot

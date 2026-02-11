@@ -1,6 +1,10 @@
 # labs/lab-006-vwan-spoke-bgp-router-loopback/inspect.ps1
 # Quick inspection of lab-006 routes, BGP state, and VM health
 #
+# Captures all artifacts to .data/lab-006/ and prints a PASS/FAIL summary.
+# Safe on Windows PowerShell 5.1: all az calls use JSON + ConvertFrom-Json,
+# stderr is suppressed with SilentlyContinue to prevent crash from native warnings.
+#
 # Usage:
 #   .\inspect.ps1                    # Full inspection
 #   .\inspect.ps1 -RoutesOnly        # Just effective routes
@@ -17,7 +21,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # Suppress Python 32-bit-on-64-bit-Windows UserWarning from Azure CLI.
-# Without this, stderr warnings become terminating errors under $ErrorActionPreference = "Stop" in PS 5.1.
 $env:PYTHONWARNINGS = "ignore::UserWarning"
 
 $LabRoot = $PSScriptRoot
@@ -33,6 +36,39 @@ $RouterVmName  = "vm-router-006"
 $ClientAVmName = "vm-client-a-006"
 $ClientBVmName = "vm-client-b-006"
 
+# Artifacts output directory
+$DataDir = Join-Path $RepoRoot ".data\lab-006"
+if (-not (Test-Path $DataDir)) {
+  New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
+}
+
+# Helper: safe az CLI call returning parsed JSON (never crashes on stderr)
+function Invoke-AzJson {
+  param([string]$Command)
+  $oldErrPref = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  try {
+    $raw = Invoke-Expression "az $Command -o json 2>`$null"
+    if ($LASTEXITCODE -ne 0) { return $null }
+    if ($raw) {
+      try { return ($raw | ConvertFrom-Json) } catch { return $null }
+    }
+    return $null
+  } finally {
+    $ErrorActionPreference = $oldErrPref
+  }
+}
+
+# Helper: write JSON artifact without BOM
+function Write-JsonArtifact {
+  param([string]$Name, $Object)
+  if (-not $Object) { return }
+  $json = $Object | ConvertTo-Json -Depth 10
+  $path = Join-Path $DataDir "inspect-$Name.json"
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($path, $json, $utf8NoBom)
+}
+
 function Write-Section {
   param([string]$Title)
   Write-Host ""
@@ -41,7 +77,17 @@ function Write-Section {
   Write-Host ("=" * 50) -ForegroundColor Cyan
 }
 
-# Auth
+function Write-Check {
+  param([string]$Label, [bool]$Passed, [string]$Detail = "")
+  if ($Passed) {
+    Write-Host "  [PASS] $Label" -ForegroundColor Green
+  } else {
+    Write-Host "  [FAIL] $Label" -ForegroundColor Red
+  }
+  if ($Detail) { Write-Host "         $Detail" -ForegroundColor DarkGray }
+}
+
+# --- Auth ---
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Ensure-AzureAuth -DoLogin
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
@@ -53,46 +99,78 @@ Write-Host "Lab 006: Inspect" -ForegroundColor Cyan
 Write-Host "=================" -ForegroundColor Cyan
 
 # Check RG exists
-$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
-$ErrorActionPreference = $oldErrPref
+$existingRg = Invoke-AzJson "group show -n $ResourceGroup"
 if (-not $existingRg) {
   Write-Host "Resource group '$ResourceGroup' not found. Deploy first." -ForegroundColor Red
   exit 1
 }
 
+# Track pass/fail for summary
+$checks = @()
+
+# --- vHub Router IPs ---
+$vhubObj = Invoke-AzJson "network vhub show -g $ResourceGroup -n $VhubName"
+$vhubRouterIps = @()
+if ($vhubObj -and $vhubObj.virtualRouterIps) {
+  $vhubRouterIps = @($vhubObj.virtualRouterIps)
+}
+Write-JsonArtifact -Name "vhub" -Object $vhubObj
+
 # --- BGP Status ---
 if (-not $RoutesOnly) {
   Write-Section "BGP Peering Status"
 
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $bgpConnsRaw = az network vhub bgpconnection list -g $ResourceGroup --vhub-name $VhubName -o json 2>$null
-  $ErrorActionPreference = $oldErrPref
-  $bgpConns = $null
-  if ($bgpConnsRaw) { try { $bgpConns = $bgpConnsRaw | ConvertFrom-Json } catch { } }
+  $bgpConns = Invoke-AzJson "network vhub bgpconnection list -g $ResourceGroup --vhub-name $VhubName"
+  Write-JsonArtifact -Name "bgpconnections" -Object $bgpConns
+
   if ($bgpConns) {
-    foreach ($conn in $bgpConns) {
+    $bgpConnsArr = @($bgpConns)
+    foreach ($conn in $bgpConnsArr) {
       $stateColor = if ($conn.provisioningState -eq "Succeeded") { "Green" } else { "Red" }
       Write-Host "  $($conn.name)" -ForegroundColor White
       Write-Host "    Peer IP:     $($conn.peerIp)" -ForegroundColor DarkGray
       Write-Host "    Peer ASN:    $($conn.peerAsn)" -ForegroundColor DarkGray
       Write-Host "    State:       $($conn.provisioningState)" -ForegroundColor $stateColor
-      Write-Host "    Connection:  $($conn.hubVirtualNetworkConnection.id -split '/')[-1]" -ForegroundColor DarkGray
+      $connName = ""
+      if ($conn.hubVirtualNetworkConnection -and $conn.hubVirtualNetworkConnection.id) {
+        $connName = ($conn.hubVirtualNetworkConnection.id -split "/")[-1]
+      }
+      Write-Host "    Connection:  $connName" -ForegroundColor DarkGray
     }
+
+    $succeededCount = @($bgpConnsArr | Where-Object { $_.provisioningState -eq "Succeeded" }).Count
+    $bothSucceeded = ($succeededCount -ge 2)
+    $checks += @{ label = "Both bgpconnections Succeeded"; passed = $bothSucceeded }
   } else {
     Write-Host "  No BGP peerings found." -ForegroundColor Yellow
+    $checks += @{ label = "Both bgpconnections Succeeded"; passed = $false }
+  }
+
+  # Per-connection show (for detailed diagnostics)
+  foreach ($name in @("bgp-peer-router-006-0", "bgp-peer-router-006-1")) {
+    $connDetail = Invoke-AzJson "network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $name"
+    Write-JsonArtifact -Name "bgpconn-$name" -Object $connDetail
+  }
+
+  # vHub router IPs
+  Write-Host ""
+  if ($vhubRouterIps.Count -ge 2) {
+    Write-Host "  vHub Router IPs: $($vhubRouterIps[0]), $($vhubRouterIps[1])" -ForegroundColor Gray
+    $checks += @{ label = "vHub virtualRouterIps resolved (2)"; passed = $true }
+  } else {
+    Write-Host "  vHub Router IPs: not available" -ForegroundColor Yellow
+    $checks += @{ label = "vHub virtualRouterIps resolved (2)"; passed = $false }
   }
 
   # vHub learned routes
   Write-Section "vHub Learned Routes (defaultRouteTable)"
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $learnedRaw = az network vhub route-table show -g $ResourceGroup --vhub-name $VhubName -n defaultRouteTable --query routes -o json 2>$null
-  $ErrorActionPreference = $oldErrPref
-  $learnedRoutes = $null
-  if ($learnedRaw) { try { $learnedRoutes = $learnedRaw | ConvertFrom-Json } catch { } }
+  $learnedRoutes = Invoke-AzJson "network vhub route-table show -g $ResourceGroup --vhub-name $VhubName -n defaultRouteTable --query routes"
+  Write-JsonArtifact -Name "vhub-routes" -Object $learnedRoutes
   if ($learnedRoutes) {
-    foreach ($route in $learnedRoutes) {
-      Write-Host "  $($route.destinationType): $($route.destinations -join ', ') -> $($route.nextHopType)" -ForegroundColor DarkGray
+    $routesArr = @($learnedRoutes)
+    foreach ($route in $routesArr) {
+      $dests = if ($route.destinations) { $route.destinations -join ", " } else { "" }
+      Write-Host "  $($route.destinationType): $dests -> $($route.nextHopType)" -ForegroundColor DarkGray
     }
   } else {
     Write-Host "  No static routes in default RT (BGP-learned routes show in effective routes)" -ForegroundColor DarkGray
@@ -101,62 +179,139 @@ if (-not $RoutesOnly) {
 
 # --- Effective Routes ---
 if (-not $BgpOnly) {
+  # Client A
   Write-Section "Effective Routes - Client A"
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $clientANicRaw = az vm show -g $ResourceGroup -n $ClientAVmName -o json 2>$null
-  $ErrorActionPreference = $oldErrPref
+  $clientAVm = Invoke-AzJson "vm show -g $ResourceGroup -n $ClientAVmName"
   $clientANicId = $null
-  if ($clientANicRaw) { try { $clientANicId = ($clientANicRaw | ConvertFrom-Json).networkProfile.networkInterfaces[0].id } catch { } }
+  if ($clientAVm) { try { $clientANicId = $clientAVm.networkProfile.networkInterfaces[0].id } catch { } }
   if ($clientANicId) {
     $clientANicName = ($clientANicId -split "/")[-1]
-    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    az network nic show-effective-route-table -g $ResourceGroup -n $clientANicName -o table 2>$null
-    $ErrorActionPreference = $oldErrPref
+    $clientARoutes = Invoke-AzJson "network nic show-effective-route-table -g $ResourceGroup -n $clientANicName"
+    Write-JsonArtifact -Name "routes-client-a" -Object $clientARoutes
+    if ($clientARoutes -and $clientARoutes.value) {
+      foreach ($r in $clientARoutes.value) {
+        $prefixes = if ($r.addressPrefix) { $r.addressPrefix -join ", " } else { "" }
+        $nhops = if ($r.nextHopIpAddress) { $r.nextHopIpAddress -join ", " } else { "" }
+        Write-Host "  $($r.source) $prefixes -> $($r.nextHopType) $nhops" -ForegroundColor DarkGray
+      }
+    }
   } else {
     Write-Host "  Client A VM not found." -ForegroundColor Yellow
   }
 
+  # Client B
   Write-Section "Effective Routes - Client B"
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $clientBNicRaw = az vm show -g $ResourceGroup -n $ClientBVmName -o json 2>$null
-  $ErrorActionPreference = $oldErrPref
+  $clientBVm = Invoke-AzJson "vm show -g $ResourceGroup -n $ClientBVmName"
   $clientBNicId = $null
-  if ($clientBNicRaw) { try { $clientBNicId = ($clientBNicRaw | ConvertFrom-Json).networkProfile.networkInterfaces[0].id } catch { } }
+  if ($clientBVm) { try { $clientBNicId = $clientBVm.networkProfile.networkInterfaces[0].id } catch { } }
   if ($clientBNicId) {
     $clientBNicName = ($clientBNicId -split "/")[-1]
-    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    az network nic show-effective-route-table -g $ResourceGroup -n $clientBNicName -o table 2>$null
-    $ErrorActionPreference = $oldErrPref
+    $clientBRoutes = Invoke-AzJson "network nic show-effective-route-table -g $ResourceGroup -n $clientBNicName"
+    Write-JsonArtifact -Name "routes-client-b" -Object $clientBRoutes
+    if ($clientBRoutes -and $clientBRoutes.value) {
+      foreach ($r in $clientBRoutes.value) {
+        $prefixes = if ($r.addressPrefix) { $r.addressPrefix -join ", " } else { "" }
+        $nhops = if ($r.nextHopIpAddress) { $r.nextHopIpAddress -join ", " } else { "" }
+        Write-Host "  $($r.source) $prefixes -> $($r.nextHopType) $nhops" -ForegroundColor DarkGray
+      }
+    }
   } else {
     Write-Host "  Client B VM not found." -ForegroundColor Yellow
   }
 
+  # Router hub-side NIC
   Write-Section "Effective Routes - Router (hub-side NIC)"
   $routerNicName = "nic-router-hubside-006"
+  $routerRoutes = Invoke-AzJson "network nic show-effective-route-table -g $ResourceGroup -n $routerNicName"
+  Write-JsonArtifact -Name "routes-router" -Object $routerRoutes
+  if ($routerRoutes -and $routerRoutes.value) {
+    foreach ($r in $routerRoutes.value) {
+      $prefixes = if ($r.addressPrefix) { $r.addressPrefix -join ", " } else { "" }
+      $nhops = if ($r.nextHopIpAddress) { $r.nextHopIpAddress -join ", " } else { "" }
+      Write-Host "  $($r.source) $prefixes -> $($r.nextHopType) $nhops" -ForegroundColor DarkGray
+    }
+  }
+}
+
+# --- Router vtysh outputs ---
+if (-not $RoutesOnly) {
+  Write-Section "Router BGP Status (vtysh)"
+
+  $bgpSummaryScript = 'sudo vtysh -c "show bgp summary" 2>/dev/null; echo "---"; sudo vtysh -c "show bgp ipv4 unicast" 2>/dev/null'
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  az network nic show-effective-route-table -g $ResourceGroup -n $routerNicName -o table 2>$null
+  $vtyshRaw = az vm run-command invoke `
+    --resource-group $ResourceGroup `
+    --name $RouterVmName `
+    --command-id RunShellScript `
+    --scripts $bgpSummaryScript `
+    -o json 2>$null
   $ErrorActionPreference = $oldErrPref
+
+  $vtyshOutput = $null
+  if ($vtyshRaw) {
+    try {
+      $vtyshObj = $vtyshRaw | ConvertFrom-Json
+      $vtyshOutput = $vtyshObj.value[0].message
+    } catch { }
+  }
+
+  if ($vtyshOutput) {
+    Write-Host $vtyshOutput -ForegroundColor DarkGray
+    Write-JsonArtifact -Name "vtysh-bgp" -Object @{ output = $vtyshOutput }
+
+    # Parse established count
+    $establishedMatches = [regex]::Matches($vtyshOutput, '(?m)^\S+\s+4\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+[\d:]+\s+\d+')
+    $establishedCount = $establishedMatches.Count
+    $checks += @{ label = "Both BGP neighbors Established on router"; passed = ($establishedCount -ge 2) }
+  } else {
+    Write-Host "  Could not retrieve vtysh output from router." -ForegroundColor Yellow
+    $checks += @{ label = "Both BGP neighbors Established on router"; passed = $false }
+  }
 }
 
 # --- VM Status ---
 if (-not $RoutesOnly -and -not $BgpOnly) {
   Write-Section "VM Status"
   $vms = @($RouterVmName, $ClientAVmName, $ClientBVmName)
+  $allRunning = $true
   foreach ($vm in $vms) {
-    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $vmRaw = az vm show -g $ResourceGroup -n $vm --show-details -o json 2>$null
-    $ErrorActionPreference = $oldErrPref
-    $vmInfo = $null
-    if ($vmRaw) { try { $obj = $vmRaw | ConvertFrom-Json; $vmInfo = [PSCustomObject]@{Name=$obj.name; State=$obj.powerState; PrivateIPs=$obj.privateIps; PublicIPs=$obj.publicIps} } catch { } }
-    if ($vmInfo) {
-      $stateColor = if ($vmInfo.State -eq "VM running") { "Green" } else { "Yellow" }
-      Write-Host "  $($vmInfo.Name): $($vmInfo.State)" -ForegroundColor $stateColor
-      Write-Host "    Private: $($vmInfo.PrivateIPs)  Public: $($vmInfo.PublicIPs)" -ForegroundColor DarkGray
+    $vmObj = Invoke-AzJson "vm show -g $ResourceGroup -n $vm --show-details"
+    if ($vmObj) {
+      $stateColor = if ($vmObj.powerState -eq "VM running") { "Green" } else { "Yellow" }
+      if ($vmObj.powerState -ne "VM running") { $allRunning = $false }
+      Write-Host "  $($vmObj.name): $($vmObj.powerState)" -ForegroundColor $stateColor
+      Write-Host "    Private: $($vmObj.privateIps)  Public: $($vmObj.publicIps)" -ForegroundColor DarkGray
     }
+  }
+  $checks += @{ label = "All 3 VMs running"; passed = $allRunning }
+}
+
+# --- PASS/FAIL Summary ---
+Write-Host ""
+Write-Host ("=" * 50) -ForegroundColor Cyan
+Write-Host "INSPECTION SUMMARY" -ForegroundColor Cyan
+Write-Host ("=" * 50) -ForegroundColor Cyan
+
+$passCount = 0
+$failCount = 0
+foreach ($c in $checks) {
+  if ($c.passed) {
+    Write-Host "  [PASS] $($c.label)" -ForegroundColor Green
+    $passCount++
+  } else {
+    Write-Host "  [FAIL] $($c.label)" -ForegroundColor Red
+    $failCount++
   }
 }
 
 Write-Host ""
-Write-Host "Inspection complete." -ForegroundColor Green
-Write-Host "For detailed validation, see docs/validation.md" -ForegroundColor DarkGray
+if ($failCount -eq 0) {
+  Write-Host "  Result: ALL CHECKS PASSED ($passCount/$passCount)" -ForegroundColor Green
+} else {
+  Write-Host "  Result: $failCount FAILED, $passCount PASSED" -ForegroundColor Red
+}
+
+Write-Host ""
+Write-Host "  Artifacts saved to: $DataDir" -ForegroundColor DarkGray
+Write-Host "  For detailed validation, see docs/validation.md" -ForegroundColor DarkGray
 Write-Host ""

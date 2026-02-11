@@ -95,8 +95,12 @@ try {
 # Compare local vs remote
 Push-Location $RepoRoot
 try {
-  $branch = (git rev-parse --abbrev-ref HEAD 2>&1).Trim()
-  $localHash = (git rev-parse HEAD 2>&1).Trim()
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $branch = (git rev-parse --abbrev-ref HEAD 2>&1)
+  $localHash = (git rev-parse HEAD 2>&1)
+  $ErrorActionPreference = $oldErrPref
+  $branch = "$branch".Trim()
+  $localHash = "$localHash".Trim()
   $remoteRef = "origin/$branch"
 
   # Check if remote branch exists
@@ -115,7 +119,9 @@ try {
   }
 
   # Count how many commits behind
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $behind = git rev-list --count "HEAD..$remoteRef" 2>$null
+  $ErrorActionPreference = $oldErrPref
   if (-not $behind) { $behind = "some" }
   Write-Host "  Updates available ($behind new commit$(if ($behind -ne '1') { 's' }))" -ForegroundColor Yellow
 } finally {
@@ -125,7 +131,9 @@ try {
 # Check for local changes
 Push-Location $RepoRoot
 try {
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $dirtyFiles = git status --porcelain 2>&1
+  $ErrorActionPreference = $oldErrPref
   $hasLocalChanges = [bool]$dirtyFiles
 } finally {
   Pop-Location
@@ -139,7 +147,9 @@ if ($hasLocalChanges) {
   # Show changed files (just lab files, keep it clean)
   Push-Location $RepoRoot
   try {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $changedFiles = git status --porcelain 2>&1
+    $ErrorActionPreference = $oldErrPref
     $changedFiles | ForEach-Object {
       $line = $_.ToString().Trim()
       if ($line) {
