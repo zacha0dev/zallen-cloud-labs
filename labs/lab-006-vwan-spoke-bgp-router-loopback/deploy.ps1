@@ -24,6 +24,10 @@ $AllowedLocations = @("centralus", "eastus", "eastus2", "westus2")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Suppress Python 32-bit-on-64-bit-Windows UserWarning from Azure CLI.
+# Without this, stderr warnings become terminating errors under $ErrorActionPreference = "Stop" in PS 5.1.
+$env:PYTHONWARNINGS = "ignore::UserWarning"
+
 $LabRoot = $PSScriptRoot
 $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandProperty Path
 $LogsDir = Join-Path $LabRoot "logs"
@@ -203,18 +207,24 @@ Write-Validation -Check "Subscription resolved" -Passed $true -Details $Subscrip
 
 # Azure auth
 Ensure-AzureAuth -DoLogin
-az account set --subscription $SubscriptionId | Out-Null
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+az account set --subscription $SubscriptionId 2>$null | Out-Null
+$ErrorActionPreference = $oldErrPref
 Write-Validation -Check "Azure authenticated" -Passed $true
 
 # Provider registration checks
 $providers = @("Microsoft.Network", "Microsoft.Compute", "Microsoft.Insights")
 foreach ($provider in $providers) {
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $regState = az provider show -n $provider --query "registrationState" -o tsv 2>$null
+  $ErrorActionPreference = $oldErrPref
   $isRegistered = ($regState -eq "Registered")
   Write-Validation -Check "Provider $provider registered" -Passed $isRegistered -Details $regState
   if (-not $isRegistered) {
     Write-Log "Provider $provider not registered. Attempting registration..." "WARN"
-    az provider register -n $provider --wait | Out-Null
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    az provider register -n $provider --wait 2>$null | Out-Null
+    $ErrorActionPreference = $oldErrPref
   }
 }
 
@@ -648,8 +658,10 @@ if (-not $allReady) {
 }
 
 # Validate NICs
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $nic1Info = az network nic show -g $ResourceGroup -n $routerNic1 --query "{ipForwarding:enableIpForwarding, ip:ipConfigurations[0].privateIpAddress}" -o json 2>$null | ConvertFrom-Json
 $nic2Info = az network nic show -g $ResourceGroup -n $routerNic2 --query "{ipForwarding:enableIpForwarding, ip:ipConfigurations[0].privateIpAddress}" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 
 $phase3Elapsed = Get-ElapsedTime -StartTime $phase3Start
 Write-Host ""
@@ -681,12 +693,14 @@ if (Test-Path $routerBootstrap) {
   $ErrorActionPreference = $oldErrPref
 
   if (-not $existingExt) {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az vm run-command invoke `
       --resource-group $ResourceGroup `
       --name $RouterVmName `
       --command-id RunShellScript `
       --scripts @$routerBootstrap `
       --output none 2>$null
+    $ErrorActionPreference = $oldErrPref
     Write-Log "Router bootstrap script executed"
   } else {
     Write-Host "  Router bootstrap already applied, skipping..." -ForegroundColor DarkGray
@@ -734,7 +748,9 @@ $ErrorActionPreference = $oldErrPref
 
 if (-not $existingBgpConn) {
   # Get the hub connection resource ID for Spoke A (needed for BGP peering)
-  $connSpokeAId = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnSpokeA --query id -o tsv
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $connSpokeAId = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnSpokeA --query id -o tsv 2>$null
+  $ErrorActionPreference = $oldErrPref
 
   az network vhub bgpconnection create `
     --name $bgpConnName `
@@ -810,7 +826,9 @@ Write-Host ""
 
 # Dump effective routes for Client A NIC
 Write-Host "Fetching effective routes for Client A NIC..." -ForegroundColor Gray
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $clientANicName = az vm show -g $ResourceGroup -n $ClientAVmName --query "networkProfile.networkInterfaces[0].id" -o tsv 2>$null
+$ErrorActionPreference = $oldErrPref
 if ($clientANicName) {
   $clientANicShort = ($clientANicName -split "/")[-1]
   $effectiveRoutesA = Invoke-AzCommand "network nic show-effective-route-table -g $ResourceGroup -n $clientANicShort -o json"
@@ -819,7 +837,9 @@ if ($clientANicName) {
 
 # Dump effective routes for Client B NIC
 Write-Host "Fetching effective routes for Client B NIC..." -ForegroundColor Gray
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $clientBNicName = az vm show -g $ResourceGroup -n $ClientBVmName --query "networkProfile.networkInterfaces[0].id" -o tsv 2>$null
+$ErrorActionPreference = $oldErrPref
 if ($clientBNicName) {
   $clientBNicShort = ($clientBNicName -split "/")[-1]
   $effectiveRoutesB = Invoke-AzCommand "network nic show-effective-route-table -g $ResourceGroup -n $clientBNicShort -o json"
