@@ -657,14 +657,22 @@ if (-not $allReady) {
   Write-Log "Not all VMs provisioned within timeout" "WARN"
 }
 
-# Validate NICs -- use separate tsv queries to avoid PS 5.1 pipeline/stderr issues
-# with ConvertFrom-Json (32-bit Python warning corrupts piped JSON parsing)
+# Validate NICs -- use JSON + ConvertFrom-Json to extract NIC properties.
+# PS 5.1 loses single-line stdout when 2>$null is combined with --query/-o tsv
+# on native commands. JSON (multi-line) output is not affected.
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$nic1Fwd = az network nic show -g $ResourceGroup -n $routerNic1 --query "enableIpForwarding" -o tsv 2>$null
-$nic1Ip  = az network nic show -g $ResourceGroup -n $routerNic1 --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null
-$nic2Fwd = az network nic show -g $ResourceGroup -n $routerNic2 --query "enableIpForwarding" -o tsv 2>$null
-$nic2Ip  = az network nic show -g $ResourceGroup -n $routerNic2 --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null
+$nic1Raw = az network nic show -g $ResourceGroup -n $routerNic1 -o json 2>$null
+$nic2Raw = az network nic show -g $ResourceGroup -n $routerNic2 -o json 2>$null
 $ErrorActionPreference = $oldErrPref
+
+$nic1Obj = $null; $nic2Obj = $null
+if ($nic1Raw) { try { $nic1Obj = $nic1Raw | ConvertFrom-Json } catch { } }
+if ($nic2Raw) { try { $nic2Obj = $nic2Raw | ConvertFrom-Json } catch { } }
+
+$nic1Fwd = if ($nic1Obj) { "$($nic1Obj.enableIpForwarding)".ToLower() } else { "" }
+$nic1Ip  = if ($nic1Obj) { $nic1Obj.ipConfigurations[0].privateIpAddress } else { "" }
+$nic2Fwd = if ($nic2Obj) { "$($nic2Obj.enableIpForwarding)".ToLower() } else { "" }
+$nic2Ip  = if ($nic2Obj) { $nic2Obj.ipConfigurations[0].privateIpAddress } else { "" }
 
 $phase3Elapsed = Get-ElapsedTime -StartTime $phase3Start
 Write-Host ""
@@ -740,8 +748,14 @@ $phase5Start = Get-Date
 $routerHubIp = $nic1Ip
 if (-not $routerHubIp) {
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $routerHubIp = az network nic show -g $ResourceGroup -n $routerNic1 --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null
+  $nic1Retry = az network nic show -g $ResourceGroup -n $routerNic1 -o json 2>$null
   $ErrorActionPreference = $oldErrPref
+  if ($nic1Retry) {
+    try {
+      $nic1RetryObj = $nic1Retry | ConvertFrom-Json
+      $routerHubIp = $nic1RetryObj.ipConfigurations[0].privateIpAddress
+    } catch { }
+  }
 }
 Write-Host "Router hub-side IP: $routerHubIp" -ForegroundColor Gray
 Write-Host "Router BGP ASN: $RouterBgpAsn" -ForegroundColor Gray
