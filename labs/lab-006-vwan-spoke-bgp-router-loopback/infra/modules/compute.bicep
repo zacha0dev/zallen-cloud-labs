@@ -1,7 +1,7 @@
 // infra/modules/compute.bicep
 // Router VM (2 NICs) + Client VMs
 //
-// Status: PLACEHOLDER — structure only. Full implementation TBD.
+// Status: PLACEHOLDER -- structure only. Full implementation TBD.
 //         deploy.ps1 uses az CLI for phased VM creation with resume support.
 
 param location string

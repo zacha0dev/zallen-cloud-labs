@@ -58,8 +58,8 @@ Prove that a vWAN Virtual Hub learns routes via BGP from a router/NVA VM and pro
 git clone https://github.com/zacha0dev/zallen-cloud-labs.git
 cd zallen-cloud-labs
 
-.\setup.ps1                # Interactive — checks tools, prompts for az login
-.\setup.ps1 -Status        # Quick check — are tools + auth ready?
+.\setup.ps1                # Interactive -- checks tools, prompts for az login
+.\setup.ps1 -Status        # Quick check -- are tools + auth ready?
 
 # 2. Configure subscription (one-time)
 copy .data\subs.example.json .data\subs.json

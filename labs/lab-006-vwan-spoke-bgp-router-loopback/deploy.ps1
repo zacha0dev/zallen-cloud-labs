@@ -42,7 +42,7 @@ $VhubPrefix    = "10.0.0.0/24"
 $AzureBgpAsn   = 65515
 $RouterBgpAsn  = 65100
 
-# Spoke A (BGP spoke) — Router VM + Client VM
+# Spoke A (BGP spoke) -- Router VM + Client VM
 $SpokeAVnetName      = "vnet-spoke-a"
 $SpokeAPrefix        = "10.61.0.0/16"
 $SpokeARouterHubSub  = "snet-router-hubside"
@@ -52,7 +52,7 @@ $SpokeARouterSpkCidr = "10.61.2.0/24"
 $SpokeAClientSub     = "snet-client-a"
 $SpokeAClientCidr    = "10.61.10.0/24"
 
-# Spoke B (control spoke) — Client VM only, no BGP
+# Spoke B (control spoke) -- Client VM only, no BGP
 $SpokeBVnetName   = "vnet-spoke-b"
 $SpokeBPrefix     = "10.62.0.0/16"
 $SpokeBClientSub  = "snet-client-b"

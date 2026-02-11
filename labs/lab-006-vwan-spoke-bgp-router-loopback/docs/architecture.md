@@ -88,8 +88,8 @@ This lab deploys a vWAN Standard hub with two spoke VNets. Spoke A contains a 2-
 - **NIC2**: `nic-router-spokeside-006` in `snet-router-spokeside` (10.61.2.0/24), IP forwarding ON
 - **Routing stack**: FRRouting (FRR)
 - **Loopback (lo0)**: `ip link add lo0 type dummy`
-  - 10.61.250.1/32 (inside VNet CIDR — tests system route conflict)
-  - 10.200.200.1/32 (outside VNet CIDR — clean propagation test)
+  - 10.61.250.1/32 (inside VNet CIDR -- tests system route conflict)
+  - 10.200.200.1/32 (outside VNet CIDR -- clean propagation test)
 - **BGP**: Peers to vHub via NIC1 IP, advertises loopback prefixes
 
 ### Client VMs
@@ -107,7 +107,7 @@ FRR on Ubuntu is simpler to bootstrap (apt install), has excellent BGP support, 
 
 ### Why Two Loopback Prefixes?
 - **Inside VNet** (10.61.250.1/32): Tests whether Azure's system routes for the VNet CIDR conflict with BGP-learned routes. This is the interesting edge case.
-- **Outside VNet** (10.200.200.1/32): Clean baseline — should propagate without conflict.
+- **Outside VNet** (10.200.200.1/32): Clean baseline -- should propagate without conflict.
 
 ### Why Spoke B as Control?
 Having a non-BGP spoke lets you compare effective routes between "BGP-peered spoke" and "default spoke" to prove propagation behavior.
@@ -130,6 +130,6 @@ Having a non-BGP spoke lets you compare effective routes between "BGP-peered spo
 
 1. **2-NIC VMs**: IP forwarding must be enabled at both NIC resource AND OS level (`sysctl net.ipv4.ip_forward=1`)
 2. **Asymmetric routing**: With 2 NICs in different subnets, return traffic may take unexpected paths. UDRs may be needed.
-3. **Inside-VNet loopback**: Azure system routes for the VNet CIDR (10.61.0.0/16) have priority over BGP-learned more-specific routes in some cases — this is what we're testing.
-4. **vHub BGP peering**: Uses `az network vhub bgpconnection` — requires the hub connection to Spoke A as the anchor.
+3. **Inside-VNet loopback**: Azure system routes for the VNet CIDR (10.61.0.0/16) have priority over BGP-learned more-specific routes in some cases -- this is what we're testing.
+4. **vHub BGP peering**: Uses `az network vhub bgpconnection` -- requires the hub connection to Spoke A as the anchor.
 5. **Route propagation**: Often about association + propagation on route tables, not "BGP is broken."
