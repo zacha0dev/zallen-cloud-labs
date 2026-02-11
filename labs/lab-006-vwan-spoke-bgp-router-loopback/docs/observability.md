@@ -184,12 +184,44 @@ az monitor activity-log list -g rg-lab-006-vwan-bgp-router --max-events 30 `
 
 ---
 
+## Hub Router Health Triage
+
+**Symptom:** `routingState` = `Failed` or `None`, `virtualRouterIps` = empty (`[]`), no BGP peers.
+
+**Why it matters:** The vHub allocates two active-active router instances with IPs from the hub prefix. If these IPs are empty, the hub's BGP router never started. `bgpconnection create` will fail or succeed but never establish. `deploy.ps1` Phase 1 now gates on this condition.
+
+**Check:**
+```powershell
+az network vhub show -g rg-lab-006-vwan-bgp-router -n vhub-lab-006 -o json | ConvertFrom-Json | Select-Object routingState, virtualRouterIps, virtualRouterAsn
+```
+
+**Fix (Option A - Portal):**
+1. Azure Portal > Virtual Hub > Settings > Router Reset
+2. Wait 5-10 min, re-query
+
+**Fix (Option B - PowerShell, requires Az.Network module):**
+```powershell
+Get-AzVirtualHub -ResourceGroupName rg-lab-006-vwan-bgp-router -Name vhub-lab-006 | Reset-AzHubRouter
+```
+
+**Fix (Option C - deploy.ps1):**
+```powershell
+.\deploy.ps1 -AutoResetHubRouter -Force
+```
+This runs Reset-AzHubRouter automatically and polls up to ~10 min for recovery.
+
+**Diagnostics:** `deploy.ps1` writes `.data/lab-006/diag-vhub.json` with the full vHub JSON + timestamp when this condition is detected. If `-AutoResetHubRouter` is used, poll snapshots are saved to `.data/lab-006/diag-vhub-poll.json`.
+
+---
+
 ## Common Failure Patterns (Fast Triage)
 
 | Symptom | Likely Cause | Fastest Check |
 |---------|--------------|---------------|
+| `routingState=Failed`, `virtualRouterIps=[]` | Hub router not provisioned | See "Hub Router Health Triage" above |
 | BGP peering stuck at `Updating` | vHub still provisioning | Check vHub state |
 | BGP peering `Failed` | Wrong peer IP or router VM not running | Verify NIC1 IP |
+| Duplicate peer IP error on bgpconnection create | Created 2 bgpconnections with same IP | Delete extras, keep single `bgp-peer-router-006` |
 | Session `Idle` in FRR | vHub not peering back | Check BGP connection resource |
 | Routes in vHub but not in spoke | Association/propagation config | Check route table labels |
 | Inside-VNet loopback unreachable | System route takes precedence | Expected behavior to document |
