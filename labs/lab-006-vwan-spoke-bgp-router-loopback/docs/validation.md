@@ -251,3 +251,85 @@ ping -c 2 10.61.2.4        # router spoke-side NIC
 | Inside-VNet loopback not reachable | Expected -- system routes may take precedence |
 | Client B has routes but shouldn't | Check propagation labels on route tables |
 | FRR neighbor shows Active/Connect | vHub peer IP may be wrong; check `show run` in vtysh |
+
+## Terminal-First Router Management (az vm run-command)
+
+No SSH or portal needed. All commands below run from your local terminal.
+
+### Check if bgpd is running
+
+```powershell
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "systemctl is-active frr && grep '^bgpd=' /etc/frr/daemons"
+```
+
+**Expected:** `active` and `bgpd=yes`
+
+### Show BGP summary
+
+```powershell
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "sudo vtysh -c 'show bgp summary'"
+```
+
+**Expected:** Both vHub peer IPs in Established state with a prefix count (not `Active`/`Connect`).
+
+### Show advertised routes per neighbor
+
+Replace the IPs below with the actual vHub virtualRouterIps from `az network vhub show ... --query virtualRouterIps`.
+
+```powershell
+# Advertised to vHub instance 0
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "sudo vtysh -c 'show bgp ipv4 unicast neighbors 10.0.0.70 advertised-routes'"
+
+# Advertised to vHub instance 1
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "sudo vtysh -c 'show bgp ipv4 unicast neighbors 10.0.0.69 advertised-routes'"
+```
+
+### Show loopback interface state
+
+```powershell
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "ip addr show lo0"
+```
+
+**Expected:** `10.61.250.1/32` and `10.200.200.1/32` on `lo0`.
+
+### Quick tcpdump capture (BGP TCP 179)
+
+```powershell
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "sudo timeout 10 tcpdump -i eth0 -n port 179 -c 10 2>&1 || true"
+```
+
+### Full routing table
+
+```powershell
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "sudo vtysh -c 'show ip route'"
+```
+
+### IP forwarding check
+
+```powershell
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "sysctl net.ipv4.ip_forward"
+```
+
+### All-in-one health check
+
+```powershell
+az vm run-command invoke -g rg-lab-006-vwan-bgp-router -n vm-router-006 `
+  --command-id RunShellScript `
+  --scripts "echo '=== FRR daemon ===' && systemctl is-active frr && echo '=== BGP Summary ===' && sudo vtysh -c 'show bgp summary' && echo '=== Loopback ===' && ip addr show lo0 && echo '=== IP Forward ===' && sysctl net.ipv4.ip_forward"
+```

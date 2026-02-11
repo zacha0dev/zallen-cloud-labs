@@ -58,7 +58,9 @@ az network nic show -g rg-lab-006-vwan-bgp-router -n nic-router-spokeside-006 --
 
 ### Gate 3: BGP Session (The PROOF)
 
-SSH to router VM, then:
+Preferred: use `az vm run-command` (no SSH needed). See validation.md "Terminal-First Router Management" section for copy-paste recipes.
+
+Alternative: SSH to router VM, then:
 
 ```bash
 # BGP session summary
@@ -93,6 +95,18 @@ sysctl net.ipv4.ip_forward
 ```
 
 Compare effective routes between Client A and Client B. Key differences prove propagation behavior.
+
+---
+
+### Gate 5: Terminal-First Router Control
+
+All router checks can be run without SSH via `az vm run-command invoke`.
+See **docs/validation.md > Terminal-First Router Management** for all recipes:
+- bgpd running check
+- show bgp summary
+- show advertised-routes per neighbor
+- loopback interface state
+- tcpdump quick captures
 
 ---
 
