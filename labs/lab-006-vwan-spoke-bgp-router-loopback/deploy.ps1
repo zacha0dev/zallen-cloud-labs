@@ -820,6 +820,88 @@ while ($bgpAttempt -lt $maxBgpWait) {
   Start-Sleep -Seconds 15
 }
 
+# Query vHub router instance IPs (active-active -- both peers required)
+Write-Host ""
+Write-Host "Querying vHub active-active router instance IPs..." -ForegroundColor Gray
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$vhubRaw = az network vhub show -g $ResourceGroup -n $VhubName -o json 2>$null
+$ErrorActionPreference = $oldErrPref
+
+$vhubRouterIps = @()
+if ($vhubRaw) {
+  try {
+    $vhubObj = $vhubRaw | ConvertFrom-Json
+    $vhubRouterIps = @($vhubObj.virtualRouterIps)
+  } catch { }
+}
+
+if ($vhubRouterIps.Count -lt 2) {
+  Write-Log "Could not resolve both vHub router IPs. FRR config may need manual update." "WARN"
+  Write-Host "  [--] Could not query vHub router IPs. Update FRR neighbors manually." -ForegroundColor Yellow
+} else {
+  $vhubPeerIp0 = $vhubRouterIps[0]
+  $vhubPeerIp1 = $vhubRouterIps[1]
+  Write-Host "  vHub instance 0: $vhubPeerIp0" -ForegroundColor Gray
+  Write-Host "  vHub instance 1: $vhubPeerIp1" -ForegroundColor Gray
+
+  # Push FRR config with actual vHub peer IPs to router VM.
+  # Both active-active instances must be peered to avoid routing failures.
+  Write-Host "Pushing FRR config with both vHub peer IPs to router VM..." -ForegroundColor Gray
+
+  $frrUpdateScript = Join-Path $LogsDir "frr-update-temp.sh"
+  $frrScriptContent = @"
+#!/bin/bash
+set -e
+cat > /etc/frr/frr.conf <<'FRREOF'
+frr version 8.1
+frr defaults traditional
+hostname router-006
+log syslog informational
+no ipv6 forwarding
+!
+router bgp $RouterBgpAsn
+ bgp router-id $routerHubIp
+ no bgp ebgp-requires-policy
+ !
+ ! vHub active-active BGP peers (both required for full routing)
+ neighbor $vhubPeerIp0 remote-as $AzureBgpAsn
+ neighbor $vhubPeerIp1 remote-as $AzureBgpAsn
+ !
+ address-family ipv4 unicast
+  network $LoopbackInsideVnet
+  network $LoopbackOutsideVnet
+ exit-address-family
+!
+line vty
+!
+FRREOF
+chown frr:frr /etc/frr/frr.conf
+chmod 640 /etc/frr/frr.conf
+systemctl restart frr
+sleep 3
+echo "=== BGP Summary ==="
+vtysh -c 'show bgp summary' 2>/dev/null || echo 'BGP summary not available yet'
+"@
+  Set-Content -Path $frrUpdateScript -Value $frrScriptContent -Encoding UTF8 -NoNewline
+
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  az vm run-command invoke `
+    --resource-group $ResourceGroup `
+    --name $RouterVmName `
+    --command-id RunShellScript `
+    --scripts @$frrUpdateScript `
+    --output none 2>$null
+  $frrUpdateExit = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrPref
+  Remove-Item $frrUpdateScript -Force -ErrorAction SilentlyContinue
+
+  if ($frrUpdateExit -eq 0) {
+    Write-Log "FRR config updated with vHub peers: $vhubPeerIp0, $vhubPeerIp1"
+  } else {
+    Write-Log "FRR config push may have failed (exit $frrUpdateExit). Verify manually." "WARN"
+  }
+}
+
 # Check vHub learned routes
 Write-Host ""
 Write-Host "Checking vHub learned routes..." -ForegroundColor Gray
@@ -830,6 +912,13 @@ Write-Host ""
 Write-Host "Phase 5 Validation:" -ForegroundColor Yellow
 Write-Validation -Check "BGP peering provisioned" -Passed $bgpReady -Details "State: $bgpState"
 Write-Validation -Check "Router peer IP" -Passed ([bool]$routerHubIp) -Details $routerHubIp
+if ($vhubRouterIps.Count -ge 2) {
+  Write-Validation -Check "vHub instance 0 peered" -Passed $true -Details "$vhubPeerIp0 (ASN $AzureBgpAsn)"
+  Write-Validation -Check "vHub instance 1 peered" -Passed $true -Details "$vhubPeerIp1 (ASN $AzureBgpAsn)"
+  Write-Validation -Check "FRR config pushed" -Passed ($frrUpdateExit -eq 0) -Details "Both active-active peers configured"
+} else {
+  Write-Validation -Check "vHub active-active peers" -Passed $false -Details "Could not resolve both IPs"
+}
 Write-Host ""
 Write-Host "  NOTE: Route propagation depends on FRR config on the router VM." -ForegroundColor Yellow
 Write-Host "  If BGP is up but routes don't propagate, the failure domain is" -ForegroundColor Yellow
@@ -927,6 +1016,7 @@ $outputs = @{
       vhubAsn = $AzureBgpAsn
       peeringName = $bgpConnName
       peeringState = $bgpState
+      vhubRouterIps = $vhubRouterIps
     }
     loopbackTests = @{
       insideVnet = $LoopbackInsideVnet
@@ -957,6 +1047,9 @@ Write-Host "  Resource Group:   $ResourceGroup" -ForegroundColor White
 Write-Host "  Location:         $Location" -ForegroundColor White
 Write-Host "  Router VM:        $RouterVmName (hub=$routerHubIp, spoke=$nic2Ip)" -ForegroundColor White
 Write-Host "  BGP Peering:      ASN $RouterBgpAsn -> vHub ASN $AzureBgpAsn" -ForegroundColor White
+if ($vhubRouterIps.Count -ge 2) {
+  Write-Host "  vHub Peers:       $($vhubRouterIps[0]), $($vhubRouterIps[1]) (active-active)" -ForegroundColor White
+}
 Write-Host "  Loopback (in):    $LoopbackInsideVnet" -ForegroundColor White
 Write-Host "  Loopback (out):   $LoopbackOutsideVnet" -ForegroundColor White
 Write-Host ""

@@ -57,6 +57,5 @@ systemctl enable frr
 systemctl restart frr
 
 echo "[lab-006] Router bootstrap complete."
-echo "[lab-006] Next: configure BGP peers in /etc/frr/frr.conf"
-echo "[lab-006]   Get vHub router IPs:"
-echo "[lab-006]   az network vhub show -g rg-lab-006-vwan-bgp-router -n vhub-lab-006 --query virtualRouterIps -o json"
+echo "[lab-006] deploy.ps1 Phase 5 will push FRR config with actual vHub peer IPs."
+echo "[lab-006] The vHub runs active-active -- both instances must be BGP-peered."

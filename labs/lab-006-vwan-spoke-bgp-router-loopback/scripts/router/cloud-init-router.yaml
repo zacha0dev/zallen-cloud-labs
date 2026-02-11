@@ -38,9 +38,10 @@ write_files:
     owner: frr:frr
     permissions: '0640'
 
-  # FRR configuration -- BGP peering to vHub
-  # NOTE: Peer IP (vHub router IP) must be updated after deployment.
-  #       The vHub BGP peer IP is assigned dynamically from 10.0.0.0/24.
+  # FRR configuration -- BGP peering to vHub (active-active)
+  # NOTE: The vHub has two router instances (active-active). Both must be peered.
+  #       deploy.ps1 Phase 5 overwrites this config with the actual vHub IPs.
+  #       IPs below are initial placeholders from the hub prefix 10.0.0.0/24.
   - path: /etc/frr/frr.conf
     content: |
       frr version 8.1
@@ -53,8 +54,7 @@ write_files:
        bgp router-id 10.61.1.4
        no bgp ebgp-requires-policy
        !
-       ! Peer to vHub -- UPDATE THIS IP after deployment
-       ! Get vHub router IP: az network vhub show -g rg-lab-006-vwan-bgp-router -n vhub-lab-006 --query virtualRouterIps -o json
+       ! vHub active-active BGP peers (both required -- deploy.ps1 overwrites with actual IPs)
        neighbor 10.0.0.68 remote-as 65515
        neighbor 10.0.0.69 remote-as 65515
        !
