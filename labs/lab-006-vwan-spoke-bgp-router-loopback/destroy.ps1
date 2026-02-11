@@ -1,4 +1,4 @@
-# labs/lab-006-vwan-spoke-bgp-router-loopback/destroy.ps1
+﻿# labs/lab-006-vwan-spoke-bgp-router-loopback/destroy.ps1
 # Destroys all resources created by lab-006
 
 [CmdletBinding()]
@@ -102,24 +102,27 @@ Write-Host ""
 Write-Host "Resource group deleted in $totalStr" -ForegroundColor Green
 
 # Clean up local data
-$dataDir = Join-Path $RepoRoot ".data\lab-006"
-if (Test-Path $dataDir) {
-  Write-Host "Cleaning up local data: $dataDir" -ForegroundColor Gray
-  Remove-Item -Path $dataDir -Recurse -Force
-}
+# ------------------------------
+# Local data cleanup (safe)
+# ------------------------------
+try {
+  # Repo root assumption: destroy.ps1 lives under labs/lab-006..., so repo root is 2 levels up
+  $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 
-# Optionally clean up logs
-if (-not $KeepLogs) {
-  $logsDir = Join-Path $LabRoot "logs"
-  if (Test-Path $logsDir) {
-    $logFiles = Get-ChildItem -Path $logsDir -Filter "lab-006-*.log"
-    if ($logFiles.Count -gt 0) {
-      Write-Host "Cleaning up $($logFiles.Count) log file(s)..." -ForegroundColor Gray
-      $logFiles | Remove-Item -Force
-    }
+  $labDataDir = Join-Path $RepoRoot ".data\lab-006"
+  Write-Host "Cleaning up local data: $labDataDir"
+
+  if (Test-Path -LiteralPath $labDataDir) {
+    # Wrap in @() so .Count is always valid (even if null)
+    $items = @(Get-ChildItem -LiteralPath $labDataDir -Force -ErrorAction SilentlyContinue)
+    $count = $items.Count
+
+    # Remove directory regardless of count; handle empty + non-empty safely
+    Remove-Item -LiteralPath $labDataDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  [ok] Removed $labDataDir ($count item(s) observed)"
+  } else {
+    Write-Host "  [ok] No local data directory found (already cleaned)"
   }
+} catch {
+  Write-Host "  [warn] Local cleanup encountered an issue but will not fail destroy: $($_.Exception.Message)" -ForegroundColor Yellow
 }
-
-Write-Host ""
-Write-Host "Cleanup complete!" -ForegroundColor Green
-Write-Host ""
