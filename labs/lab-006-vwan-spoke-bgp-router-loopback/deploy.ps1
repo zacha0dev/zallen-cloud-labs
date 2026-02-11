@@ -657,18 +657,21 @@ if (-not $allReady) {
   Write-Log "Not all VMs provisioned within timeout" "WARN"
 }
 
-# Validate NICs
+# Validate NICs -- use separate tsv queries to avoid PS 5.1 pipeline/stderr issues
+# with ConvertFrom-Json (32-bit Python warning corrupts piped JSON parsing)
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$nic1Info = az network nic show -g $ResourceGroup -n $routerNic1 --query "{ipForwarding:enableIpForwarding, ip:ipConfigurations[0].privateIpAddress}" -o json 2>$null | ConvertFrom-Json
-$nic2Info = az network nic show -g $ResourceGroup -n $routerNic2 --query "{ipForwarding:enableIpForwarding, ip:ipConfigurations[0].privateIpAddress}" -o json 2>$null | ConvertFrom-Json
+$nic1Fwd = az network nic show -g $ResourceGroup -n $routerNic1 --query "enableIpForwarding" -o tsv 2>$null
+$nic1Ip  = az network nic show -g $ResourceGroup -n $routerNic1 --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null
+$nic2Fwd = az network nic show -g $ResourceGroup -n $routerNic2 --query "enableIpForwarding" -o tsv 2>$null
+$nic2Ip  = az network nic show -g $ResourceGroup -n $routerNic2 --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null
 $ErrorActionPreference = $oldErrPref
 
 $phase3Elapsed = Get-ElapsedTime -StartTime $phase3Start
 Write-Host ""
 Write-Host "Phase 3 Validation:" -ForegroundColor Yellow
 Write-Validation -Check "Router VM provisioned" -Passed $allReady -Details $RouterVmName
-Write-Validation -Check "Router NIC1 IP forwarding" -Passed ($nic1Info.ipForwarding -eq $true) -Details "IP: $($nic1Info.ip)"
-Write-Validation -Check "Router NIC2 IP forwarding" -Passed ($nic2Info.ipForwarding -eq $true) -Details "IP: $($nic2Info.ip)"
+Write-Validation -Check "Router NIC1 IP forwarding" -Passed ($nic1Fwd -eq "true") -Details "IP: $nic1Ip"
+Write-Validation -Check "Router NIC2 IP forwarding" -Passed ($nic2Fwd -eq "true") -Details "IP: $nic2Ip"
 Write-Validation -Check "Client A VM provisioned" -Passed $allReady -Details $ClientAVmName
 Write-Validation -Check "Client B VM provisioned" -Passed $allReady -Details $ClientBVmName
 Write-Log "Phase 3 completed in $phase3Elapsed" "SUCCESS"
@@ -722,7 +725,7 @@ Write-Host "  Manual validation required - SSH to router and verify:" -Foregroun
 Write-Host "    ip link show lo0" -ForegroundColor DarkGray
 Write-Host "    ip addr show lo0" -ForegroundColor DarkGray
 Write-Host "    sysctl net.ipv4.ip_forward" -ForegroundColor DarkGray
-Write-Host "    ping -c 2 $($nic1Info.ip)  # self-check hub-side NIC" -ForegroundColor DarkGray
+Write-Host "    ping -c 2 $nic1Ip  # self-check hub-side NIC" -ForegroundColor DarkGray
 Write-Log "Phase 4 completed in $phase4Elapsed" "SUCCESS"
 
 # ============================================
@@ -733,9 +736,20 @@ Write-Phase -Number 5 -Title "BGP - Peer Router to Virtual Hub"
 $phase5Start = Get-Date
 
 # Get the router's hub-side NIC IP for BGP peering
-$routerHubIp = $nic1Info.ip
+# Re-query if not set (safety net for PS 5.1 pipeline issues in Phase 3)
+$routerHubIp = $nic1Ip
+if (-not $routerHubIp) {
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $routerHubIp = az network nic show -g $ResourceGroup -n $routerNic1 --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null
+  $ErrorActionPreference = $oldErrPref
+}
 Write-Host "Router hub-side IP: $routerHubIp" -ForegroundColor Gray
 Write-Host "Router BGP ASN: $RouterBgpAsn" -ForegroundColor Gray
+
+if (-not $routerHubIp) {
+  Write-Log "FATAL: Could not resolve router hub-side IP from NIC $routerNic1. Cannot create BGP peering." "ERROR"
+  throw "Router hub-side IP is empty. Verify NIC '$routerNic1' exists and has a private IP."
+}
 
 # Create BGP connection from vHub to Router VM
 # vHub BGP peering uses the hub connection + bgp peer config
@@ -752,6 +766,7 @@ if (-not $existingBgpConn) {
   $connSpokeAId = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnSpokeA --query id -o tsv 2>$null
   $ErrorActionPreference = $oldErrPref
 
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az network vhub bgpconnection create `
     --name $bgpConnName `
     --resource-group $ResourceGroup `
@@ -759,7 +774,8 @@ if (-not $existingBgpConn) {
     --peer-asn $RouterBgpAsn `
     --peer-ip $routerHubIp `
     --vhub-conn $connSpokeAId `
-    --output none
+    --output none 2>$null
+  $ErrorActionPreference = $oldErrPref
   Write-Log "vHub BGP peering created: $bgpConnName -> $routerHubIp (ASN $RouterBgpAsn)"
 } else {
   Write-Host "  BGP peering already exists, skipping..." -ForegroundColor DarkGray
@@ -799,7 +815,7 @@ $phase5Elapsed = Get-ElapsedTime -StartTime $phase5Start
 Write-Host ""
 Write-Host "Phase 5 Validation:" -ForegroundColor Yellow
 Write-Validation -Check "BGP peering provisioned" -Passed $bgpReady -Details "State: $bgpState"
-Write-Validation -Check "Router peer IP" -Passed ($routerHubIp -ne $null) -Details $routerHubIp
+Write-Validation -Check "Router peer IP" -Passed ([bool]$routerHubIp) -Details $routerHubIp
 Write-Host ""
 Write-Host "  NOTE: Route propagation depends on FRR config on the router VM." -ForegroundColor Yellow
 Write-Host "  If BGP is up but routes don't propagate, the failure domain is" -ForegroundColor Yellow
@@ -884,7 +900,7 @@ $outputs = @{
       routerHubNic = $routerNic1
       routerSpokeNic = $routerNic2
       routerHubIp = $routerHubIp
-      routerSpokeIp = $nic2Info.ip
+      routerSpokeIp = $nic2Ip
       clientVm = $ClientAVmName
     }
     spokeB = @{
@@ -925,7 +941,7 @@ Write-Host ""
 Write-Host "  Total time:       $totalElapsed" -ForegroundColor White
 Write-Host "  Resource Group:   $ResourceGroup" -ForegroundColor White
 Write-Host "  Location:         $Location" -ForegroundColor White
-Write-Host "  Router VM:        $RouterVmName (hub=$routerHubIp, spoke=$($nic2Info.ip))" -ForegroundColor White
+Write-Host "  Router VM:        $RouterVmName (hub=$routerHubIp, spoke=$nic2Ip)" -ForegroundColor White
 Write-Host "  BGP Peering:      ASN $RouterBgpAsn -> vHub ASN $AzureBgpAsn" -ForegroundColor White
 Write-Host "  Loopback (in):    $LoopbackInsideVnet" -ForegroundColor White
 Write-Host "  Loopback (out):   $LoopbackOutsideVnet" -ForegroundColor White
