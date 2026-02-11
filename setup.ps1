@@ -25,6 +25,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Suppress Python 32-bit-on-64-bit-Windows UserWarning from Azure CLI.
+# Without this, stderr warnings become terminating errors under PS 5.1.
+$env:PYTHONWARNINGS = "ignore::UserWarning"
+
 $RepoRoot = $PSScriptRoot
 $DataDir = Join-Path $RepoRoot ".data"
 $SubsPath = Join-Path $DataDir "subs.json"
@@ -68,8 +72,15 @@ function Get-SubsConfig {
 function Test-AzureCli {
   if (-not (HasCmd "az")) { return @{ ok = $false; version = $null } }
   try {
-    $ver = ((az version --output json 2>$null | ConvertFrom-Json)."azure-cli")
-    return @{ ok = $true; version = $ver }
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    $raw = az version --output json 2>$null
+    $ErrorActionPreference = $oldPreference
+    if ($raw) {
+      $ver = ($raw | ConvertFrom-Json)."azure-cli"
+      return @{ ok = $true; version = $ver }
+    }
+    return @{ ok = $true; version = "unknown" }
   } catch {
     return @{ ok = $true; version = "unknown" }
   }

@@ -841,11 +841,28 @@ while ($bgpAttempt -lt $maxBgpWait) {
     break
   }
 
-  # Check for failures
+  # Check for failures -- dump diagnostics and hard-stop
   $anyFailed = $bgpStates.Values | Where-Object { $_ -eq "Failed" }
   if ($anyFailed) {
-    Write-Log "BGP peering provisioning failed. Check router VM is running and hub-side NIC IP is correct." "ERROR"
-    break
+    Write-Log "BGP peering provisioning failed. Dumping diagnostics..." "ERROR"
+    $diagDir = Join-Path $RepoRoot ".data\lab-006"
+    Ensure-Directory $diagDir
+    $diagPayload = @{
+      timestamp = (Get-Date -Format "o")
+      phase = 5
+      error = "bgpconnection provisioning failed"
+      bgpStates = $bgpStates
+      routerHubIp = $routerHubIp
+      routerBgpAsn = $RouterBgpAsn
+      connSpokeAId = $connSpokeAId
+    }
+    $diagJson = $diagPayload | ConvertTo-Json -Depth 5
+    $diagPath = Join-Path $diagDir "phase5-bgp-diag.json"
+    Write-JsonWithoutBom -Path $diagPath -Content $diagJson
+    Write-Log "Diagnostics written to $diagPath" "ERROR"
+    Write-Host "  [FAIL] One or more bgpconnections failed. See $diagPath" -ForegroundColor Red
+    Write-Host "  Action: Verify router VM is running and hub-side NIC IP ($routerHubIp) is correct." -ForegroundColor Yellow
+    throw "Phase 5 FAIL: BGP peering provisioning failed. Diagnostics at $diagPath"
   }
 
   $elapsed = Get-ElapsedTime -StartTime $phase5Start
@@ -936,6 +953,45 @@ vtysh -c 'show bgp summary' 2>/dev/null || echo 'BGP summary not available yet'
   }
 }
 
+# Validate BGP adjacency on the router via vtysh
+Write-Host ""
+Write-Host "Validating BGP adjacency on the router (vtysh show bgp summary)..." -ForegroundColor Gray
+Start-Sleep -Seconds 10  # allow FRR convergence time
+
+$bgpCheckScript = 'sudo vtysh -c "show bgp summary json" 2>/dev/null || echo "{}"'
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$bgpCheckRaw = az vm run-command invoke `
+  --resource-group $ResourceGroup `
+  --name $RouterVmName `
+  --command-id RunShellScript `
+  --scripts $bgpCheckScript `
+  -o json 2>$null
+$ErrorActionPreference = $oldErrPref
+
+$bgpEstablishedCount = 0
+if ($bgpCheckRaw) {
+  try {
+    $bgpCheckObj = $bgpCheckRaw | ConvertFrom-Json
+    $bgpStdout = ($bgpCheckObj.value | Where-Object { $_.code -eq "ProvisionDiagnostics" -or $_.message } | Select-Object -First 1).message
+    if (-not $bgpStdout) {
+      $bgpStdout = $bgpCheckObj.value[0].message
+    }
+    if ($bgpStdout) {
+      # Count Established peers from the JSON output
+      $peerMatches = [regex]::Matches($bgpStdout, '"state"\s*:\s*"Established"')
+      $bgpEstablishedCount = $peerMatches.Count
+      Write-Host "  BGP established peers on router: $bgpEstablishedCount" -ForegroundColor $(if ($bgpEstablishedCount -ge 2) { "Green" } else { "Yellow" })
+    }
+  } catch {
+    Write-Host "  Could not parse BGP summary from router (non-fatal)" -ForegroundColor DarkGray
+  }
+}
+
+if ($bgpEstablishedCount -lt 2 -and $vhubRouterIps.Count -ge 2) {
+  Write-Host "  [WARN] Not all BGP neighbors Established yet. This may take 30-60s after FRR restart." -ForegroundColor Yellow
+  Write-Host "  Verify manually: az vm run-command invoke -g $ResourceGroup -n $RouterVmName --command-id RunShellScript --scripts `"sudo vtysh -c 'show bgp summary'`"" -ForegroundColor DarkGray
+}
+
 # Check vHub learned routes
 Write-Host ""
 Write-Host "Checking vHub learned routes..." -ForegroundColor Gray
@@ -956,6 +1012,13 @@ if ($vhubRouterIps.Count -ge 2) {
 } else {
   Write-Validation -Check "vHub active-active peers" -Passed $false -Details "Could not resolve both IPs"
 }
+if ($bgpEstablishedCount -ge 2) {
+  Write-Validation -Check "Router BGP adjacency (both neighbors Established)" -Passed $true -Details "$bgpEstablishedCount peers established"
+} elseif ($bgpEstablishedCount -eq 1) {
+  Write-Validation -Check "Router BGP adjacency" -Passed $false -Details "Only $bgpEstablishedCount/2 peers Established. Second peer may still be converging."
+} else {
+  Write-Validation -Check "Router BGP adjacency" -Passed $false -Details "No peers Established yet. Allow 30-60s for convergence."
+}
 Write-Host ""
 Write-Host "  NOTE: Route propagation depends on FRR config on the router VM." -ForegroundColor Yellow
 Write-Host "  If BGP is up but routes don't propagate, the failure domain is" -ForegroundColor Yellow
@@ -963,11 +1026,149 @@ Write-Host "  'hub routing table association/propagation' not VM plumbing." -For
 Write-Log "Phase 5 completed in $phase5Elapsed" "SUCCESS"
 
 # ============================================
-# PHASE 6: Route Table Control + Propagation Experiments
+# PHASE 6: Blob-Driven Router Config (Optional)
 # ============================================
-Write-Phase -Number 6 -Title "Route Table Control + Propagation"
+Write-Phase -Number 6 -Title "Blob-Driven Router Config (Optional)"
 
 $phase6Start = Get-Date
+
+# Load lab config to check if blob-driven config is enabled
+$labConfigPath = Join-Path $LabRoot "lab.config.json"
+$blobConfigEnabled = $false
+$blobStorageAccount = "stlab006router"
+$blobContainer = "router-config"
+
+if (Test-Path $labConfigPath) {
+  try {
+    $labCfg = Get-Content $labConfigPath -Raw | ConvertFrom-Json
+    if ($labCfg.routerConfig -and $labCfg.routerConfig.enabled -eq $true) {
+      $blobConfigEnabled = $true
+      if ($labCfg.routerConfig.storageAccountName) { $blobStorageAccount = $labCfg.routerConfig.storageAccountName }
+      if ($labCfg.routerConfig.containerName) { $blobContainer = $labCfg.routerConfig.containerName }
+    }
+  } catch { }
+}
+
+if ($blobConfigEnabled) {
+  Write-Host "Blob-driven router config is ENABLED." -ForegroundColor Gray
+  Write-Host "  Storage account: $blobStorageAccount" -ForegroundColor DarkGray
+  Write-Host "  Container: $blobContainer" -ForegroundColor DarkGray
+
+  # Create storage account (idempotent)
+  Write-Host "Creating storage account: $blobStorageAccount" -ForegroundColor Gray
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $existingSa = az storage account show -g $ResourceGroup -n $blobStorageAccount -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldErrPref
+  if (-not $existingSa) {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    az storage account create `
+      --name $blobStorageAccount `
+      --resource-group $ResourceGroup `
+      --location $Location `
+      --sku Standard_LRS `
+      --kind StorageV2 `
+      --allow-blob-public-access false `
+      --tags $baseTags `
+      --output none 2>$null
+    $ErrorActionPreference = $oldErrPref
+    Write-Log "Storage account created: $blobStorageAccount"
+  } else {
+    Write-Host "  Storage account already exists, skipping..." -ForegroundColor DarkGray
+  }
+
+  # Create container (idempotent)
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  az storage container create `
+    --name $blobContainer `
+    --account-name $blobStorageAccount `
+    --auth-mode login `
+    --output none 2>$null
+  $ErrorActionPreference = $oldErrPref
+
+  # Assign system-assigned managed identity to router VM (idempotent)
+  Write-Host "Assigning managed identity to $RouterVmName..." -ForegroundColor Gray
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $identityRaw = az vm identity assign -g $ResourceGroup -n $RouterVmName -o json 2>$null
+  $ErrorActionPreference = $oldErrPref
+  $vmPrincipalId = $null
+  if ($identityRaw) {
+    try { $vmPrincipalId = ($identityRaw | ConvertFrom-Json).systemAssignedIdentity } catch { }
+  }
+  # Fallback: query if assign returned empty (already assigned)
+  if (-not $vmPrincipalId) {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $vmIdRaw = az vm show -g $ResourceGroup -n $RouterVmName --query "identity.principalId" -o json 2>$null
+    $ErrorActionPreference = $oldErrPref
+    if ($vmIdRaw) { try { $vmPrincipalId = ($vmIdRaw | ConvertFrom-Json) } catch { } }
+  }
+
+  # Grant Storage Blob Data Reader to the VM identity
+  if ($vmPrincipalId) {
+    Write-Host "Granting Storage Blob Data Reader to VM identity..." -ForegroundColor Gray
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $saId = az storage account show -g $ResourceGroup -n $blobStorageAccount --query id -o json 2>$null
+    $ErrorActionPreference = $oldErrPref
+    if ($saId) {
+      $saIdClean = ($saId | ConvertFrom-Json)
+      $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      az role assignment create `
+        --assignee-object-id $vmPrincipalId `
+        --assignee-principal-type ServicePrincipal `
+        --role "Storage Blob Data Reader" `
+        --scope $saIdClean `
+        --output none 2>$null
+      $ErrorActionPreference = $oldErrPref
+      Write-Log "Storage Blob Data Reader assigned to VM identity"
+    }
+  }
+
+  # Upload default blobs (frr.conf + apply.sh)
+  Write-Host "Uploading default router config blobs..." -ForegroundColor Gray
+  $frrConfLocal = Join-Path $LabRoot "scripts\router\frr.conf"
+  $applyShLocal = Join-Path $LabRoot "scripts\router\apply.sh"
+
+  foreach ($blobInfo in @(
+    @{ local = $frrConfLocal; name = "frr.conf" },
+    @{ local = $applyShLocal; name = "apply.sh" }
+  )) {
+    if (Test-Path $blobInfo.local) {
+      $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      az storage blob upload `
+        --account-name $blobStorageAccount `
+        --container-name $blobContainer `
+        --name $blobInfo.name `
+        --file $blobInfo.local `
+        --overwrite `
+        --auth-mode login `
+        --output none 2>$null
+      $ErrorActionPreference = $oldErrPref
+      Write-Log "Uploaded blob: $($blobInfo.name)"
+    }
+  }
+
+  $phase6Elapsed = Get-ElapsedTime -StartTime $phase6Start
+  Write-Host ""
+  Write-Host "Phase 6 Validation:" -ForegroundColor Yellow
+  Write-Validation -Check "Storage account created" -Passed ([bool]$existingSa -or $true) -Details $blobStorageAccount
+  Write-Validation -Check "Managed identity assigned" -Passed ([bool]$vmPrincipalId) -Details "PrincipalId: $vmPrincipalId"
+  Write-Validation -Check "Config blobs uploaded" -Passed $true -Details "$blobContainer/frr.conf, $blobContainer/apply.sh"
+  Write-Host ""
+  Write-Host "  To pull config on the router:" -ForegroundColor Yellow
+  Write-Host "    az vm run-command invoke -g $ResourceGroup -n $RouterVmName --command-id RunShellScript --scripts '/opt/router-config/pull-config.sh $blobStorageAccount $blobContainer'" -ForegroundColor DarkGray
+  Write-Log "Phase 6 completed in $phase6Elapsed" "SUCCESS"
+} else {
+  Write-Host "Blob-driven router config is DISABLED (default)." -ForegroundColor DarkGray
+  Write-Host "  To enable, copy lab.config.example.json to lab.config.json" -ForegroundColor DarkGray
+  Write-Host "  and set routerConfig.enabled = true." -ForegroundColor DarkGray
+  Write-Log "Phase 6 skipped (blob config disabled)" "SUCCESS"
+}
+
+# ============================================
+# PHASE 7: Route Table Control + Propagation Experiments
+# ============================================
+Write-Phase -Number 7 -Title "Route Table Control + Propagation"
+
+$phase7Start = Get-Date
 
 Write-Host "Experiment setup:" -ForegroundColor Gray
 Write-Host "  Spoke A: BGP-peered (via router), associated to defaultRouteTable" -ForegroundColor DarkGray
@@ -1002,19 +1203,19 @@ if ($clientBNicName) {
   Write-Host "  Client B effective routes retrieved" -ForegroundColor DarkGray
 }
 
-$phase6Elapsed = Get-ElapsedTime -StartTime $phase6Start
+$phase7Elapsed = Get-ElapsedTime -StartTime $phase7Start
 Write-Host ""
-Write-Host "Phase 6 Validation:" -ForegroundColor Yellow
+Write-Host "Phase 7 Validation:" -ForegroundColor Yellow
 Write-Host "  Run inspect.ps1 for detailed route comparison." -ForegroundColor Yellow
 Write-Host "  See docs/experiments.md for loopback inside vs outside VNet results." -ForegroundColor Yellow
-Write-Log "Phase 6 completed in $phase6Elapsed" "SUCCESS"
+Write-Log "Phase 7 completed in $phase7Elapsed" "SUCCESS"
 
 # ============================================
-# PHASE 7: Observability Proof Pack
+# PHASE 8: Observability Proof Pack
 # ============================================
-Write-Phase -Number 7 -Title "Observability Proof Pack"
+Write-Phase -Number 8 -Title "Observability Proof Pack"
 
-$phase7Start = Get-Date
+$phase8Start = Get-Date
 
 Write-Host "Saving deployment outputs..." -ForegroundColor Gray
 
@@ -1067,7 +1268,7 @@ Ensure-Directory (Split-Path $OutputsPath -Parent)
 Write-JsonWithoutBom -Path $OutputsPath -Content $outputsJson
 Write-Log "Outputs saved to: $OutputsPath"
 
-$phase7Elapsed = Get-ElapsedTime -StartTime $phase7Start
+$phase8Elapsed = Get-ElapsedTime -StartTime $phase8Start
 
 # ============================================
 # DEPLOYMENT SUMMARY

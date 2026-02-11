@@ -30,8 +30,15 @@
     "nsgFlowLogs": false,
     "connectionMonitor": false
   },
-  "storageConfigPull": {
-    "enabled": false,
-    "containerName": "router-config"
+  "routerConfig": {
+    "mode": "blob",
+    "storageAccountName": "stlab006router",
+    "containerName": "router-config",
+    "blobNames": {
+      "frrConf": "frr.conf",
+      "applyScript": "apply.sh"
+    },
+    "authMethod": "managed-identity",
+    "enabled": false
   }
 }
