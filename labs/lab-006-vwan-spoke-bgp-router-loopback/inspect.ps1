@@ -16,6 +16,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Suppress Python 32-bit-on-64-bit-Windows UserWarning from Azure CLI.
+# Without this, stderr warnings become terminating errors under $ErrorActionPreference = "Stop" in PS 5.1.
+$env:PYTHONWARNINGS = "ignore::UserWarning"
+
 $LabRoot = $PSScriptRoot
 $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandProperty Path
 
@@ -40,14 +44,18 @@ function Write-Section {
 # Auth
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Ensure-AzureAuth -DoLogin
-az account set --subscription $SubscriptionId | Out-Null
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+az account set --subscription $SubscriptionId 2>$null | Out-Null
+$ErrorActionPreference = $oldErrPref
 
 Write-Host ""
 Write-Host "Lab 006: Inspect" -ForegroundColor Cyan
 Write-Host "=================" -ForegroundColor Cyan
 
 # Check RG exists
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 if (-not $existingRg) {
   Write-Host "Resource group '$ResourceGroup' not found. Deploy first." -ForegroundColor Red
   exit 1
@@ -57,7 +65,11 @@ if (-not $existingRg) {
 if (-not $RoutesOnly) {
   Write-Section "BGP Peering Status"
 
-  $bgpConns = az network vhub bgpconnection list -g $ResourceGroup --vhub-name $VhubName -o json 2>$null | ConvertFrom-Json
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $bgpConnsRaw = az network vhub bgpconnection list -g $ResourceGroup --vhub-name $VhubName -o json 2>$null
+  $ErrorActionPreference = $oldErrPref
+  $bgpConns = $null
+  if ($bgpConnsRaw) { try { $bgpConns = $bgpConnsRaw | ConvertFrom-Json } catch { } }
   if ($bgpConns) {
     foreach ($conn in $bgpConns) {
       $stateColor = if ($conn.provisioningState -eq "Succeeded") { "Green" } else { "Red" }
@@ -73,7 +85,11 @@ if (-not $RoutesOnly) {
 
   # vHub learned routes
   Write-Section "vHub Learned Routes (defaultRouteTable)"
-  $learnedRoutes = az network vhub route-table show -g $ResourceGroup --vhub-name $VhubName -n defaultRouteTable --query routes -o json 2>$null | ConvertFrom-Json
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $learnedRaw = az network vhub route-table show -g $ResourceGroup --vhub-name $VhubName -n defaultRouteTable --query routes -o json 2>$null
+  $ErrorActionPreference = $oldErrPref
+  $learnedRoutes = $null
+  if ($learnedRaw) { try { $learnedRoutes = $learnedRaw | ConvertFrom-Json } catch { } }
   if ($learnedRoutes) {
     foreach ($route in $learnedRoutes) {
       Write-Host "  $($route.destinationType): $($route.destinations -join ', ') -> $($route.nextHopType)" -ForegroundColor DarkGray
@@ -86,26 +102,40 @@ if (-not $RoutesOnly) {
 # --- Effective Routes ---
 if (-not $BgpOnly) {
   Write-Section "Effective Routes - Client A"
-  $clientANicId = az vm show -g $ResourceGroup -n $ClientAVmName --query "networkProfile.networkInterfaces[0].id" -o tsv 2>$null
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $clientANicRaw = az vm show -g $ResourceGroup -n $ClientAVmName -o json 2>$null
+  $ErrorActionPreference = $oldErrPref
+  $clientANicId = $null
+  if ($clientANicRaw) { try { $clientANicId = ($clientANicRaw | ConvertFrom-Json).networkProfile.networkInterfaces[0].id } catch { } }
   if ($clientANicId) {
     $clientANicName = ($clientANicId -split "/")[-1]
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az network nic show-effective-route-table -g $ResourceGroup -n $clientANicName -o table 2>$null
+    $ErrorActionPreference = $oldErrPref
   } else {
     Write-Host "  Client A VM not found." -ForegroundColor Yellow
   }
 
   Write-Section "Effective Routes - Client B"
-  $clientBNicId = az vm show -g $ResourceGroup -n $ClientBVmName --query "networkProfile.networkInterfaces[0].id" -o tsv 2>$null
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $clientBNicRaw = az vm show -g $ResourceGroup -n $ClientBVmName -o json 2>$null
+  $ErrorActionPreference = $oldErrPref
+  $clientBNicId = $null
+  if ($clientBNicRaw) { try { $clientBNicId = ($clientBNicRaw | ConvertFrom-Json).networkProfile.networkInterfaces[0].id } catch { } }
   if ($clientBNicId) {
     $clientBNicName = ($clientBNicId -split "/")[-1]
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az network nic show-effective-route-table -g $ResourceGroup -n $clientBNicName -o table 2>$null
+    $ErrorActionPreference = $oldErrPref
   } else {
     Write-Host "  Client B VM not found." -ForegroundColor Yellow
   }
 
   Write-Section "Effective Routes - Router (hub-side NIC)"
   $routerNicName = "nic-router-hubside-006"
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az network nic show-effective-route-table -g $ResourceGroup -n $routerNicName -o table 2>$null
+  $ErrorActionPreference = $oldErrPref
 }
 
 # --- VM Status ---
@@ -113,7 +143,11 @@ if (-not $RoutesOnly -and -not $BgpOnly) {
   Write-Section "VM Status"
   $vms = @($RouterVmName, $ClientAVmName, $ClientBVmName)
   foreach ($vm in $vms) {
-    $vmInfo = az vm show -g $ResourceGroup -n $vm --show-details --query "{Name:name, State:powerState, PrivateIPs:privateIps, PublicIPs:publicIps}" -o json 2>$null | ConvertFrom-Json
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $vmRaw = az vm show -g $ResourceGroup -n $vm --show-details -o json 2>$null
+    $ErrorActionPreference = $oldErrPref
+    $vmInfo = $null
+    if ($vmRaw) { try { $obj = $vmRaw | ConvertFrom-Json; $vmInfo = [PSCustomObject]@{Name=$obj.name; State=$obj.powerState; PrivateIPs=$obj.privateIps; PublicIPs=$obj.publicIps} } catch { } }
     if ($vmInfo) {
       $stateColor = if ($vmInfo.State -eq "VM running") { "Green" } else { "Yellow" }
       Write-Host "  $($vmInfo.Name): $($vmInfo.State)" -ForegroundColor $stateColor
