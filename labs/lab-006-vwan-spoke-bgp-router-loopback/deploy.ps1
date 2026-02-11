@@ -1040,12 +1040,59 @@ foreach ($stale in @("bgp-peer-router-006-0", "bgp-peer-router-006-1")) {
   }
 }
 
-# Create single bgpconnection (idempotent)
+# Create single bgpconnection (idempotent -- deletes Failed/stale resources first)
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingBgpConn = az network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $BgpConnName -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldErrPref
 
+$needsCreate = $false
 if (-not $existingBgpConn) {
+  $needsCreate = $true
+} elseif ($existingBgpConn.provisioningState -eq "Failed") {
+  # Prior deployment left a Failed bgpconnection -- delete and recreate
+  Write-Host "  Existing '$BgpConnName' is in Failed state. Deleting before recreate..." -ForegroundColor Yellow
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  az network vhub bgpconnection delete -g $ResourceGroup --vhub-name $VhubName -n $BgpConnName --yes --output none 2>$null
+  $ErrorActionPreference = $oldErrPref
+  Write-Log "Deleted Failed bgpconnection: $BgpConnName"
+  # Wait for delete to propagate before recreating
+  Start-Sleep -Seconds 15
+  $needsCreate = $true
+} elseif ($existingBgpConn.provisioningState -eq "Succeeded") {
+  Write-Host "  $BgpConnName already exists (Succeeded), skipping create..." -ForegroundColor DarkGray
+  $bgpCreateExit = 0
+} else {
+  # Updating / Deleting / other transitional state -- wait for it to resolve
+  Write-Host "  $BgpConnName in '$($existingBgpConn.provisioningState)' state. Waiting for it to resolve..." -ForegroundColor Yellow
+  $transWait = 0
+  while ($transWait -lt 20) {
+    Start-Sleep -Seconds 15
+    $transWait++
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $transRaw = az network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $BgpConnName -o json 2>$null
+    $ErrorActionPreference = $oldErrPref
+    $transState = ""
+    if ($transRaw) { try { $transState = ($transRaw | ConvertFrom-Json).provisioningState } catch { } }
+    if ($transState -eq "Succeeded") {
+      Write-Host "  $BgpConnName resolved to Succeeded." -ForegroundColor Green
+      $bgpCreateExit = 0
+      break
+    }
+    if ($transState -eq "Failed" -or -not $transRaw) {
+      Write-Host "  $BgpConnName resolved to $transState. Will delete and recreate." -ForegroundColor Yellow
+      $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      az network vhub bgpconnection delete -g $ResourceGroup --vhub-name $VhubName -n $BgpConnName --yes --output none 2>$null
+      $ErrorActionPreference = $oldErrPref
+      Start-Sleep -Seconds 15
+      $needsCreate = $true
+      break
+    }
+    Write-Host "    [$transWait/20] Still $transState..." -ForegroundColor DarkGray
+  }
+}
+
+if ($needsCreate) {
+  Write-Host "  Creating bgpconnection: $BgpConnName -> $routerHubIp (ASN $RouterBgpAsn)..." -ForegroundColor Gray
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az network vhub bgpconnection create `
     --name $BgpConnName `
@@ -1058,9 +1105,6 @@ if (-not $existingBgpConn) {
   $bgpCreateExit = $LASTEXITCODE
   $ErrorActionPreference = $oldErrPref
   Write-Log "vHub BGP peering created: $BgpConnName -> $routerHubIp (ASN $RouterBgpAsn)"
-} else {
-  Write-Host "  $BgpConnName already exists, skipping..." -ForegroundColor DarkGray
-  $bgpCreateExit = 0
 }
 
 # Wait for BGP connection to provision
