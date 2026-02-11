@@ -87,12 +87,17 @@ function Write-Check {
   if ($Detail) { Write-Host "         $Detail" -ForegroundColor DarkGray }
 }
 
-# --- Auth ---
+# --- Auth (opens browser if no valid token) ---
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Ensure-AzureAuth -DoLogin
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 az account set --subscription $SubscriptionId 2>$null | Out-Null
+$setExit = $LASTEXITCODE
 $ErrorActionPreference = $oldErrPref
+if ($setExit -ne 0) {
+  Write-Host "Could not set subscription $SubscriptionId. Check .data/subs.json." -ForegroundColor Red
+  exit 1
+}
 
 Write-Host ""
 Write-Host "Lab 006: Inspect" -ForegroundColor Cyan
@@ -108,15 +113,41 @@ if (-not $existingRg) {
 # Track pass/fail for summary
 $checks = @()
 
-# --- vHub Router IPs ---
+# =============================================
+# vHub Router Health
+# =============================================
+Write-Section "vHub Router Health"
+
 $vhubObj = Invoke-AzJson "network vhub show -g $ResourceGroup -n $VhubName"
-$vhubRouterIps = @()
-if ($vhubObj -and $vhubObj.virtualRouterIps) {
-  $vhubRouterIps = @($vhubObj.virtualRouterIps)
-}
 Write-JsonArtifact -Name "vhub" -Object $vhubObj
 
-# --- BGP Status ---
+$vhubRouterIps = @()
+$vhubRoutingState = "<unknown>"
+$vhubRouterAsn = "<unknown>"
+if ($vhubObj) {
+  if ($vhubObj.virtualRouterIps) { $vhubRouterIps = @($vhubObj.virtualRouterIps) }
+  if ($vhubObj.PSObject.Properties["routingState"]) { $vhubRoutingState = $vhubObj.routingState }
+  if ($vhubObj.virtualRouterAsn) { $vhubRouterAsn = $vhubObj.virtualRouterAsn }
+}
+
+Write-Host "  provisioningState : $($vhubObj.provisioningState)" -ForegroundColor DarkGray
+Write-Host "  routingState      : $vhubRoutingState" -ForegroundColor $(if ($vhubRoutingState -eq "Provisioned") { "Green" } else { "Yellow" })
+Write-Host "  virtualRouterAsn  : $vhubRouterAsn" -ForegroundColor DarkGray
+Write-Host "  virtualRouterIps  : $($vhubRouterIps.Count) [$($vhubRouterIps -join ', ')]" -ForegroundColor $(if ($vhubRouterIps.Count -ge 2) { "Green" } else { "Red" })
+
+$routerHealthy = ($vhubRouterIps.Count -ge 2) -and ($vhubRoutingState -notin @("Failed", "None"))
+$checks += @{ label = "vHub router healthy (routingState + IPs)"; passed = $routerHealthy }
+
+if (-not $routerHealthy) {
+  Write-Host ""
+  Write-Host "  [FAIL] Hub router not provisioned. BGP peers cannot exist." -ForegroundColor Red
+  Write-Host "         Action: Reset router from portal OR run Reset-AzHubRouter." -ForegroundColor Yellow
+  Write-Host "         See: docs/observability.md > Hub Router Health Triage" -ForegroundColor Yellow
+}
+
+# =============================================
+# BGP Peering Status
+# =============================================
 if (-not $RoutesOnly) {
   Write-Section "BGP Peering Status"
 
@@ -138,27 +169,21 @@ if (-not $RoutesOnly) {
       Write-Host "    Connection:  $connName" -ForegroundColor DarkGray
     }
 
+    # Expect at least 1 Succeeded bgpconnection (single peer IP model)
     $succeededCount = @($bgpConnsArr | Where-Object { $_.provisioningState -eq "Succeeded" }).Count
-    $bothSucceeded = ($succeededCount -ge 2)
-    $checks += @{ label = "Both bgpconnections Succeeded"; passed = $bothSucceeded }
+    $checks += @{ label = "BGP connection Succeeded"; passed = ($succeededCount -ge 1) }
   } else {
     Write-Host "  No BGP peerings found." -ForegroundColor Yellow
-    $checks += @{ label = "Both bgpconnections Succeeded"; passed = $false }
+    $checks += @{ label = "BGP connection Succeeded"; passed = $false }
   }
 
-  # Per-connection show (for detailed diagnostics)
-  foreach ($name in @("bgp-peer-router-006-0", "bgp-peer-router-006-1")) {
-    $connDetail = Invoke-AzJson "network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $name"
-    Write-JsonArtifact -Name "bgpconn-$name" -Object $connDetail
-  }
-
-  # vHub router IPs
+  # vHub router IPs (for FRR neighbor config)
   Write-Host ""
   if ($vhubRouterIps.Count -ge 2) {
-    Write-Host "  vHub Router IPs: $($vhubRouterIps[0]), $($vhubRouterIps[1])" -ForegroundColor Gray
+    Write-Host "  vHub Router IPs (FRR neighbors): $($vhubRouterIps[0]), $($vhubRouterIps[1])" -ForegroundColor Gray
     $checks += @{ label = "vHub virtualRouterIps resolved (2)"; passed = $true }
   } else {
-    Write-Host "  vHub Router IPs: not available" -ForegroundColor Yellow
+    Write-Host "  vHub Router IPs: not available (FRR cannot peer)" -ForegroundColor Red
     $checks += @{ label = "vHub virtualRouterIps resolved (2)"; passed = $false }
   }
 
@@ -233,17 +258,18 @@ if (-not $BgpOnly) {
   }
 }
 
-# --- Router vtysh outputs ---
+# --- Router BGP Status (via health check script or direct command) ---
 if (-not $RoutesOnly) {
-  Write-Section "Router BGP Status (vtysh)"
+  Write-Section "Router BGP Status"
 
-  $bgpSummaryScript = 'sudo vtysh -c "show bgp summary" 2>/dev/null; echo "---"; sudo vtysh -c "show bgp ipv4 unicast" 2>/dev/null'
+  # Prefer the lab006_check.sh script installed by cloud-init (no quoting issues).
+  # Falls back to direct vtysh command if the script doesn't exist.
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $vtyshRaw = az vm run-command invoke `
     --resource-group $ResourceGroup `
     --name $RouterVmName `
     --command-id RunShellScript `
-    --scripts $bgpSummaryScript `
+    --scripts "/usr/local/bin/lab006_check.sh" `
     -o json 2>$null
   $ErrorActionPreference = $oldErrPref
 
@@ -257,14 +283,15 @@ if (-not $RoutesOnly) {
 
   if ($vtyshOutput) {
     Write-Host $vtyshOutput -ForegroundColor DarkGray
-    Write-JsonArtifact -Name "vtysh-bgp" -Object @{ output = $vtyshOutput }
+    Write-JsonArtifact -Name "router-health" -Object @{ output = $vtyshOutput }
 
-    # Parse established count
+    # Parse established count from BGP summary output
     $establishedMatches = [regex]::Matches($vtyshOutput, '(?m)^\S+\s+4\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+[\d:]+\s+\d+')
     $establishedCount = $establishedMatches.Count
     $checks += @{ label = "Both BGP neighbors Established on router"; passed = ($establishedCount -ge 2) }
   } else {
-    Write-Host "  Could not retrieve vtysh output from router." -ForegroundColor Yellow
+    Write-Host "  Could not retrieve router health output." -ForegroundColor Yellow
+    Write-Host "  Bastion SSH is recommended for deep troubleshooting." -ForegroundColor DarkGray
     $checks += @{ label = "Both BGP neighbors Established on router"; passed = $false }
   }
 }

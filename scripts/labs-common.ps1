@@ -226,9 +226,28 @@ function Test-AzureTokenFresh {
   <#
   .SYNOPSIS
     Tests if Azure CLI has a fresh, valid token (not just cached metadata).
+    Uses JSON output (not tsv) to avoid PS 5.1 stdout-loss bugs.
+    Rejects tokens with less than 5 minutes remaining.
   #>
-  az account get-access-token --query "expiresOn" -o tsv 1>$null 2>$null
-  return ($LASTEXITCODE -eq 0)
+  $oldErrPref = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  try {
+    $raw = az account get-access-token -o json 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $raw) { return $false }
+    try {
+      $tok = $raw | ConvertFrom-Json
+      if ($tok.expiresOn) {
+        $expiry = [datetime]::Parse($tok.expiresOn)
+        $remaining = ($expiry - (Get-Date)).TotalMinutes
+        if ($remaining -lt 5) { return $false }
+      }
+    } catch {
+      # Could not parse expiry -- trust the exit code
+    }
+    return $true
+  } finally {
+    $ErrorActionPreference = $oldErrPref
+  }
 }
 
 function Clear-AzureCredentialCache {
@@ -252,13 +271,13 @@ function Clear-AzureCredentialCache {
 function Ensure-AzureAuth {
   <#
   .SYNOPSIS
-    Validates Azure CLI authentication with interactive prompts.
+    Validates Azure CLI authentication. Opens browser login when needed.
   .DESCRIPTION
-    Checks if Azure CLI is authenticated with a valid token.
-    If not, prompts the user to login interactively.
-    Provides clear next-step instructions on failure.
+    Checks if Azure CLI has a valid, non-expired token.
+    With -DoLogin, automatically runs az login (opens browser) -- no y/n prompt.
+    Without -DoLogin, throws with instructions.
   .PARAMETER DoLogin
-    If set, automatically prompts to run az login when not authenticated.
+    If set, runs az login automatically when not authenticated.
   #>
   param(
     [switch]$DoLogin
@@ -276,45 +295,46 @@ function Ensure-AzureAuth {
     throw "Azure CLI not installed. Run: .\scripts\setup.ps1"
   }
 
-  # Fast path: already authenticated with fresh token
+  # Fast path: already authenticated with fresh token (>5 min remaining)
   if (Test-AzureTokenFresh) {
     return
   }
 
-  # Check if we have cached session metadata (but expired token)
-  az account show 1>$null 2>$null
-  $hasSession = ($LASTEXITCODE -eq 0)
+  # Token missing, expired, or about to expire -- need login
+  Write-Host ""
+  Write-Host "Azure CLI needs authentication (no valid token)." -ForegroundColor Yellow
 
-  if ($hasSession) {
-    # Token expired but session exists
-    Write-Host ""
-    Write-Host "Azure CLI session expired. Token needs refresh." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Next step:" -ForegroundColor White
-    Write-Host "  az login" -ForegroundColor Cyan
+  if ($DoLogin) {
+    # Clear stale caches so az login always opens a fresh browser prompt
+    Clear-AzureCredentialCache
+    Write-Host "Opening browser for Azure login..." -ForegroundColor Cyan
     Write-Host ""
 
-    if ($DoLogin) {
-      Write-Host "Clearing stale credential caches..." -ForegroundColor DarkGray
-      Clear-AzureCredentialCache
-      Write-Host ""
-      $ans = Read-Host "Login now in browser? (y/n)"
-      if ($ans.Trim().ToLower() -eq "y") {
-        Write-Host "Running: az login" -ForegroundColor Yellow
-        az login | Out-Null
-        if (Test-AzureTokenFresh) {
-          $sub = az account show --query "name" -o tsv
-          Write-Host "Azure CLI authenticated: $sub" -ForegroundColor Green
-          return
-        }
-      }
+    # Run az login -- this opens the browser automatically
+    $oldErrPref = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    az login -o none 2>$null
+    $loginExit = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrPref
+
+    if ($loginExit -eq 0 -and (Test-AzureTokenFresh)) {
+      $oldErrPref = $ErrorActionPreference
+      $ErrorActionPreference = "SilentlyContinue"
+      $subRaw = az account show -o json 2>$null
+      $ErrorActionPreference = $oldErrPref
+      $subName = ""
+      if ($subRaw) { try { $subName = ($subRaw | ConvertFrom-Json).name } catch { } }
+      Write-Host "Azure CLI authenticated: $subName" -ForegroundColor Green
+      return
     }
-    throw "Azure CLI token expired. Run: az login"
+
+    Write-Host ""
+    Write-Host "Login did not complete. Try running manually:" -ForegroundColor Red
+    Write-Host "  az login" -ForegroundColor Cyan
+    throw "Azure login failed. Run: az login"
   }
 
-  # No session at all
-  Write-Host ""
-  Write-Host "Azure CLI is not authenticated." -ForegroundColor Yellow
+  # No -DoLogin flag -- just print instructions and stop
   Write-Host ""
   Write-Host "Next step:" -ForegroundColor White
   Write-Host "  az login" -ForegroundColor Cyan
@@ -322,18 +342,5 @@ function Ensure-AzureAuth {
   Write-Host "Or run full setup:" -ForegroundColor Gray
   Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
   Write-Host ""
-
-  if ($DoLogin) {
-    $ans = Read-Host "Login now in browser? (y/n)"
-    if ($ans.Trim().ToLower() -eq "y") {
-      Write-Host "Running: az login" -ForegroundColor Yellow
-      az login | Out-Null
-      if (Test-AzureTokenFresh) {
-        $sub = az account show --query "name" -o tsv
-        Write-Host "Azure CLI authenticated: $sub" -ForegroundColor Green
-        return
-      }
-    }
-  }
   throw "Azure CLI not authenticated. Run: az login"
 }

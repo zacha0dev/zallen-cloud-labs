@@ -29,20 +29,30 @@ conn-spoke-a  Succeeded
 conn-spoke-b  Succeeded
 ```
 
-### 3. Check BGP Peerings (both active-active instances)
+### 3. Check Hub Router Health (BEFORE checking BGP)
+
+```powershell
+az network vhub show -g rg-lab-006-vwan-bgp-router -n vhub-lab-006 -o json | ConvertFrom-Json | Select-Object provisioningState, routingState, virtualRouterAsn, virtualRouterIps
+```
+
+**Expected:** `routingState` = `Provisioned`, `virtualRouterIps` has 2 IPs (active-active).
+If `virtualRouterIps` is empty or `routingState` = `Failed`, see docs/observability.md > Hub Router Health Triage.
+
+### 4. Check BGP Peering (single bgpconnection)
 
 ```powershell
 az network vhub bgpconnection list -g rg-lab-006-vwan-bgp-router --vhub-name vhub-lab-006 `
   --query "[].{Name:name, PeerIP:peerIp, PeerASN:peerAsn, State:provisioningState}" -o table
 ```
 
-**Expected:** Two peerings, one per vHub active-active instance:
+**Expected:** One peering. The vHub peers from both active-active instances via this single resource:
 ```
-Name                    PeerIP      PeerASN  State
-----------------------  ----------  -------  ---------
-bgp-peer-router-006-0  10.61.1.4   65100    Succeeded
-bgp-peer-router-006-1  10.61.1.4   65100    Succeeded
+Name                   PeerIP      PeerASN  State
+---------------------  ----------  -------  ---------
+bgp-peer-router-006   10.61.1.4   65100    Succeeded
 ```
+
+**Note:** You do NOT need two bgpconnection resources. Azure's vHub internally peers from both its active-active router instances through the single bgpconnection. The router VM (FRR) has two neighbors (the two `virtualRouterIps`).
 
 ### 4. Check VM Status
 
@@ -222,8 +232,9 @@ ping -c 2 10.61.2.4        # router spoke-side NIC
 
 ### PASS
 - vHub provisioning = Succeeded
+- vHub routingState = Provisioned, virtualRouterIps has 2 IPs
 - Both hub connections = Succeeded (Connected)
-- **Both** BGP peerings provisioned = Succeeded (2 entries in portal)
+- BGP peering (`bgp-peer-router-006`) provisioned = Succeeded
 - All 3 VMs running with correct IPs
 - Router NIC1 + NIC2 have IP forwarding enabled
 - FRR running on router, **both** BGP sessions established (show bgp summary)
@@ -232,9 +243,10 @@ ping -c 2 10.61.2.4        # router spoke-side NIC
 - Outside-VNet loopback (10.200.200.1/32) propagates cleanly
 
 ### FAIL Conditions
+- vHub routingState = Failed / virtualRouterIps empty (hub router not provisioned)
 - vHub or hub connections in Failed state
 - BGP peering Failed (check router VM is running, NIC1 IP is correct)
-- Only 1 of 2 BGP sessions established (incomplete active-active)
+- Only 1 of 2 BGP sessions established on router (check FRR has both vHub IPs as neighbors)
 - No BGP-learned routes in vHub (check FRR config, advertised networks)
 - Client A has no route to loopback (propagation/association issue)
 - Router NICs missing IP forwarding
