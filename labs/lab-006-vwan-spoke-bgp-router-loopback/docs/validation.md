@@ -54,7 +54,7 @@ bgp-peer-router-006   10.61.1.4   65100    Succeeded
 
 **Note:** You do NOT need two bgpconnection resources. Azure's vHub internally peers from both its active-active router instances through the single bgpconnection. The router VM (FRR) has two neighbors (the two `virtualRouterIps`).
 
-### 4. Check VM Status
+### 5. Check VM Status
 
 ```powershell
 az vm list -g rg-lab-006-vwan-bgp-router --show-details `
