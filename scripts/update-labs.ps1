@@ -74,10 +74,15 @@ if ($currentVersion) {
 }
 
 # Fetch from remote (silent)
+# Wrap in SilentlyContinue: git fetch writes progress to stderr which PS 5.1
+# converts to a terminating error under $ErrorActionPreference = "Stop".
 Push-Location $RepoRoot
 try {
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $fetchOutput = git fetch origin 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  $fetchExit = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrPref
+  if ($fetchExit -ne 0) {
     Write-Host "  [--] Could not reach GitHub - skipping update check" -ForegroundColor Yellow
     Write-Host "       Check your network connection. Setup will continue." -ForegroundColor Gray
     Write-Host ""
@@ -176,8 +181,11 @@ if ($hasLocalChanges) {
     Write-Host "  Stashing local changes..." -ForegroundColor Gray
     Push-Location $RepoRoot
     try {
+      $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
       git stash push -m "azure-labs-setup-autostash" 2>&1 | Out-Null
-      if ($LASTEXITCODE -ne 0) {
+      $stashExit = $LASTEXITCODE
+      $ErrorActionPreference = $oldErrPref
+      if ($stashExit -ne 0) {
         Write-Host "  [--] Could not stash changes - skipping update" -ForegroundColor Yellow
         Write-Host ""
         return
@@ -201,6 +209,7 @@ if ($hasLocalChanges) {
 Write-Host "  Pulling latest from GitHub..." -ForegroundColor Gray
 Push-Location $RepoRoot
 try {
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $pullOutput = git pull --ff-only 2>&1
   $pullOk = ($LASTEXITCODE -eq 0)
 
@@ -209,6 +218,7 @@ try {
     $pullOutput = git pull --rebase 2>&1
     $pullOk = ($LASTEXITCODE -eq 0)
   }
+  $ErrorActionPreference = $oldErrPref
 
   if ($pullOk) {
     $newVersion = Get-LabVersion $RepoRoot
@@ -230,8 +240,11 @@ if ($hasLocalChanges -and $choice -ne "O") {
   Write-Host "  Restoring your local changes..." -ForegroundColor Gray
   Push-Location $RepoRoot
   try {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $popOutput = git stash pop 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $popExit = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrPref
+    if ($popExit -eq 0) {
       Write-Host "  [ok] Local changes restored" -ForegroundColor Green
     } else {
       Write-Host "  [--] Could not auto-restore changes (conflicts)" -ForegroundColor Yellow
