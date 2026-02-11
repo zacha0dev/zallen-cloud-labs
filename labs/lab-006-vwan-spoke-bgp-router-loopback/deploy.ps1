@@ -765,58 +765,92 @@ if (-not $routerHubIp) {
   throw "Router hub-side IP is empty. Verify NIC '$routerNic1' exists and has a private IP."
 }
 
-# Create BGP connection from vHub to Router VM
-# vHub BGP peering uses the hub connection + bgp peer config
-Write-Host "Creating vHub BGP peering to router VM..." -ForegroundColor Gray
+# Create BGP connections from vHub to Router VM (one per active-active instance)
+# The vHub has two router instances. Each needs its own bgpconnection resource
+# pointing to the same router VM IP, so both instances peer with the NVA.
+Write-Host "Creating vHub BGP peerings (2x for active-active)..." -ForegroundColor Gray
 
-$bgpConnName = "bgp-peer-router-006"
+# Get the hub connection resource ID for Spoke A (needed for BGP peering)
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$existingBgpConn = az network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $bgpConnName -o json 2>$null | ConvertFrom-Json
+$connSpokeARaw = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnSpokeA -o json 2>$null
 $ErrorActionPreference = $oldErrPref
-
-if (-not $existingBgpConn) {
-  # Get the hub connection resource ID for Spoke A (needed for BGP peering)
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $connSpokeAId = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnSpokeA --query id -o tsv 2>$null
-  $ErrorActionPreference = $oldErrPref
-
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  az network vhub bgpconnection create `
-    --name $bgpConnName `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --peer-asn $RouterBgpAsn `
-    --peer-ip $routerHubIp `
-    --vhub-conn $connSpokeAId `
-    --output none 2>$null
-  $ErrorActionPreference = $oldErrPref
-  Write-Log "vHub BGP peering created: $bgpConnName -> $routerHubIp (ASN $RouterBgpAsn)"
-} else {
-  Write-Host "  BGP peering already exists, skipping..." -ForegroundColor DarkGray
+$connSpokeAId = $null
+if ($connSpokeARaw) {
+  try { $connSpokeAId = ($connSpokeARaw | ConvertFrom-Json).id } catch { }
 }
 
-# Wait for BGP connection to provision
-Write-Host "Waiting for BGP connection to provision..." -ForegroundColor Gray
+# Clean up old single peering from prior deployments (replaced by dual peerings)
+$oldBgpConnName = "bgp-peer-router-006"
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$oldBgpConn = az network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $oldBgpConnName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
+if ($oldBgpConn) {
+  Write-Host "  Removing old single peering '$oldBgpConnName' (replaced by dual peerings)..." -ForegroundColor Yellow
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  az network vhub bgpconnection delete -g $ResourceGroup --vhub-name $VhubName -n $oldBgpConnName --yes --output none 2>$null
+  $ErrorActionPreference = $oldErrPref
+  Write-Log "Removed old single bgpconnection: $oldBgpConnName"
+}
+
+$bgpConnNames = @("bgp-peer-router-006-0", "bgp-peer-router-006-1")
+foreach ($bgpConnName in $bgpConnNames) {
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $existingBgpConn = az network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $bgpConnName -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldErrPref
+
+  if (-not $existingBgpConn) {
+    Write-Host "  Creating $bgpConnName -> $routerHubIp..." -ForegroundColor Gray
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    az network vhub bgpconnection create `
+      --name $bgpConnName `
+      --resource-group $ResourceGroup `
+      --vhub-name $VhubName `
+      --peer-asn $RouterBgpAsn `
+      --peer-ip $routerHubIp `
+      --vhub-conn $connSpokeAId `
+      --output none 2>$null
+    $ErrorActionPreference = $oldErrPref
+    Write-Log "vHub BGP peering created: $bgpConnName -> $routerHubIp (ASN $RouterBgpAsn)"
+  } else {
+    Write-Host "  $bgpConnName already exists, skipping..." -ForegroundColor DarkGray
+  }
+}
+
+# Wait for both BGP connections to provision
+Write-Host "Waiting for BGP connections to provision..." -ForegroundColor Gray
 $maxBgpWait = 30
 $bgpAttempt = 0
 $bgpReady = $false
 
 while ($bgpAttempt -lt $maxBgpWait) {
   $bgpAttempt++
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $bgpState = az network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $bgpConnName --query provisioningState -o tsv 2>$null
-  $ErrorActionPreference = $oldErrPref
+  $readyCount = 0
+  $bgpStates = @{}
+  foreach ($bgpConnName in $bgpConnNames) {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $bgpRaw = az network vhub bgpconnection show -g $ResourceGroup --vhub-name $VhubName -n $bgpConnName -o json 2>$null
+    $ErrorActionPreference = $oldErrPref
+    $st = ""
+    if ($bgpRaw) { try { $st = ($bgpRaw | ConvertFrom-Json).provisioningState } catch { } }
+    $bgpStates[$bgpConnName] = $st
+    if ($st -eq "Succeeded") { $readyCount++ }
+  }
 
-  if ($bgpState -eq "Succeeded") {
+  if ($readyCount -eq $bgpConnNames.Count) {
     $bgpReady = $true
     break
-  } elseif ($bgpState -eq "Failed") {
+  }
+
+  # Check for failures
+  $anyFailed = $bgpStates.Values | Where-Object { $_ -eq "Failed" }
+  if ($anyFailed) {
     Write-Log "BGP peering provisioning failed. Check router VM is running and hub-side NIC IP is correct." "ERROR"
     break
   }
 
   $elapsed = Get-ElapsedTime -StartTime $phase5Start
-  Write-Host "  [$elapsed] BGP peering state: $bgpState (attempt $bgpAttempt/$maxBgpWait)" -ForegroundColor DarkGray
+  $statesSummary = ($bgpStates.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ", "
+  Write-Host "  [$elapsed] BGP states: $statesSummary (attempt $bgpAttempt/$maxBgpWait)" -ForegroundColor DarkGray
   Start-Sleep -Seconds 15
 }
 
@@ -910,11 +944,14 @@ $learnedRoutes = Invoke-AzCommand "network vhub route-table show -g $ResourceGro
 $phase5Elapsed = Get-ElapsedTime -StartTime $phase5Start
 Write-Host ""
 Write-Host "Phase 5 Validation:" -ForegroundColor Yellow
-Write-Validation -Check "BGP peering provisioned" -Passed $bgpReady -Details "State: $bgpState"
+foreach ($bgpConnName in $bgpConnNames) {
+  $st = $bgpStates[$bgpConnName]
+  Write-Validation -Check "BGP peering: $bgpConnName" -Passed ($st -eq "Succeeded") -Details "State: $st"
+}
 Write-Validation -Check "Router peer IP" -Passed ([bool]$routerHubIp) -Details $routerHubIp
 if ($vhubRouterIps.Count -ge 2) {
-  Write-Validation -Check "vHub instance 0 peered" -Passed $true -Details "$vhubPeerIp0 (ASN $AzureBgpAsn)"
-  Write-Validation -Check "vHub instance 1 peered" -Passed $true -Details "$vhubPeerIp1 (ASN $AzureBgpAsn)"
+  Write-Validation -Check "vHub instance 0 (FRR neighbor)" -Passed $true -Details "$vhubPeerIp0 (ASN $AzureBgpAsn)"
+  Write-Validation -Check "vHub instance 1 (FRR neighbor)" -Passed $true -Details "$vhubPeerIp1 (ASN $AzureBgpAsn)"
   Write-Validation -Check "FRR config pushed" -Passed ($frrUpdateExit -eq 0) -Details "Both active-active peers configured"
 } else {
   Write-Validation -Check "vHub active-active peers" -Passed $false -Details "Could not resolve both IPs"
@@ -1014,8 +1051,8 @@ $outputs = @{
     bgp = @{
       routerAsn = $RouterBgpAsn
       vhubAsn = $AzureBgpAsn
-      peeringName = $bgpConnName
-      peeringState = $bgpState
+      peeringNames = $bgpConnNames
+      peeringStates = $bgpStates
       vhubRouterIps = $vhubRouterIps
     }
     loopbackTests = @{
