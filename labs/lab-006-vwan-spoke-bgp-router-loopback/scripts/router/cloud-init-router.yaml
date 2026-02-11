@@ -1,6 +1,6 @@
 #cloud-config
 # labs/lab-006-vwan-spoke-bgp-router-loopback/scripts/router/cloud-init-router.yaml
-# Bootstrap for FRR router VM — installs FRR, enables IP forwarding, creates loopback
+# Bootstrap for FRR router VM -- installs FRR, enables IP forwarding, creates loopback
 
 package_update: true
 package_upgrade: false
@@ -38,7 +38,7 @@ write_files:
     owner: frr:frr
     permissions: '0640'
 
-  # FRR configuration — BGP peering to vHub
+  # FRR configuration -- BGP peering to vHub
   # NOTE: Peer IP (vHub router IP) must be updated after deployment.
   #       The vHub BGP peer IP is assigned dynamically from 10.0.0.0/24.
   - path: /etc/frr/frr.conf
@@ -53,7 +53,7 @@ write_files:
        bgp router-id 10.61.1.4
        no bgp ebgp-requires-policy
        !
-       ! Peer to vHub — UPDATE THIS IP after deployment
+       ! Peer to vHub -- UPDATE THIS IP after deployment
        ! Get vHub router IP: az network vhub show -g rg-lab-006-vwan-bgp-router -n vhub-lab-006 --query virtualRouterIps -o json
        neighbor 10.0.0.68 remote-as 65515
        neighbor 10.0.0.69 remote-as 65515

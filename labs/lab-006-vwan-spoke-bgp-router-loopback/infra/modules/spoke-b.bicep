@@ -1,7 +1,7 @@
 // infra/modules/spoke-b.bicep
-// Spoke B VNet — Control spoke (no BGP, client subnet only)
+// Spoke B VNet -- Control spoke (no BGP, client subnet only)
 //
-// Status: PLACEHOLDER — structure only.
+// Status: PLACEHOLDER -- structure only.
 
 param location string
 param tags object

@@ -1,7 +1,7 @@
 // infra/modules/vwan.bicep
 // Virtual WAN + Virtual Hub
 //
-// Status: PLACEHOLDER — structure only, not fully parameterized yet.
+// Status: PLACEHOLDER -- structure only, not fully parameterized yet.
 
 param location string
 param tags object

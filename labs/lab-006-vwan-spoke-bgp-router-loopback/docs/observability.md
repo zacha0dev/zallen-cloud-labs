@@ -5,7 +5,7 @@
 **Components:**
 - Virtual WAN + Virtual Hub (10.0.0.0/24, ASN 65515)
 - Spoke A VNet (10.61.0.0/16) with Router VM (2 NICs, FRR, ASN 65100) + Client A VM
-- Spoke B VNet (10.62.0.0/16) with Client B VM (control — no BGP)
+- Spoke B VNet (10.62.0.0/16) with Client B VM (control -- no BGP)
 - BGP peering from Router VM to vHub
 - Loopback interface on Router with two test prefixes
 
@@ -186,11 +186,11 @@ az monitor activity-log list -g rg-lab-006-vwan-bgp-router --max-events 30 `
 
 ## What NOT to Look At
 
-- **NSG flow logs** (unless explicitly enabled) — not on by default in this lab
-- **Connection monitor** — not configured by default
-- **vHub metrics** — useful for production, noisy for lab
-- **Azure Firewall logs** — no firewall in this lab
-- **VPN Gateway diagnostics** — no VPN gateway in this lab
+- **NSG flow logs** (unless explicitly enabled) -- not on by default in this lab
+- **Connection monitor** -- not configured by default
+- **vHub metrics** -- useful for production, noisy for lab
+- **Azure Firewall logs** -- no firewall in this lab
+- **VPN Gateway diagnostics** -- no VPN gateway in this lab
 
 ---
 

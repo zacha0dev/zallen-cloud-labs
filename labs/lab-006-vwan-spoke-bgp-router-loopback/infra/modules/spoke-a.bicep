@@ -1,7 +1,7 @@
 // infra/modules/spoke-a.bicep
-// Spoke A VNet — BGP spoke with router subnets + client subnet
+// Spoke A VNet -- BGP spoke with router subnets + client subnet
 //
-// Status: PLACEHOLDER — structure only.
+// Status: PLACEHOLDER -- structure only.
 
 param location string
 param tags object

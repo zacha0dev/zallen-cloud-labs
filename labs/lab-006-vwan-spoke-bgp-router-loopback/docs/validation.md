@@ -86,9 +86,9 @@ $nicName = ($nicId -split "/")[-1]
 az network nic show-effective-route-table -g rg-lab-006-vwan-bgp-router -n $nicName -o table
 ```
 
-**Look for:** Compare with Client A — Spoke B may or may not have the BGP-learned routes depending on propagation config.
+**Look for:** Compare with Client A -- Spoke B may or may not have the BGP-learned routes depending on propagation config.
 
-### Router VM — FRR BGP State (SSH required)
+### Router VM -- FRR BGP State (SSH required)
 
 ```bash
 # SSH to router VM, then:
@@ -143,5 +143,5 @@ ping -c 2 <router-spokeside-ip>  # direct spoke connectivity
 | BGP peering Failed | Verify router VM NIC1 IP matches peer config |
 | No learned routes | SSH to router, check `show bgp summary` |
 | Routes in vHub but not in spoke | Check route table association/propagation |
-| Inside-VNet loopback not reachable | Expected — system routes may take precedence |
+| Inside-VNet loopback not reachable | Expected -- system routes may take precedence |
 | Client B has routes but shouldn't | Check propagation labels on route tables |

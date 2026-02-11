@@ -194,7 +194,7 @@ Remove a loopback prefix from BGP advertisement and observe route withdrawal.
 Copy this template after running experiments:
 
 ```markdown
-## Results — [Date]
+## Results -- [Date]
 
 ### Experiment 1: Inside-VNet Loopback (10.61.250.1/32)
 - vHub learned: [Y/N]
@@ -251,4 +251,4 @@ az storage blob download --account-name stlab006routerconfig -c router-config -n
 sudo systemctl restart frr
 ```
 
-This enables "update config without redeploying VM" — a clean platform pattern.
+This enables "update config without redeploying VM" -- a clean platform pattern.

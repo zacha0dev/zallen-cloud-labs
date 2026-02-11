@@ -1,7 +1,7 @@
 // labs/lab-006-vwan-spoke-bgp-router-loopback/infra/main.bicep
 // Orchestrator module for lab-006 infrastructure
 //
-// Status: PLACEHOLDER — deploy.ps1 uses az CLI for phased control.
+// Status: PLACEHOLDER -- deploy.ps1 uses az CLI for phased control.
 //         This Bicep module is provided for future "single-deploy" mode.
 
 targetScope = 'resourceGroup'
