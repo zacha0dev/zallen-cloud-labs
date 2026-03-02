@@ -312,7 +312,14 @@ if ($LASTEXITCODE -ne 0) {
   throw "Bicep deployment failed. See output above."
 }
 
-$deployOutput = $bicepResult | ConvertFrom-Json
+# az output may include WARNING/progress lines before the JSON block (due to 2>&1).
+# Extract the JSON object directly to avoid ConvertFrom-Json choking on non-JSON lines.
+$bicepText = $bicepResult -join "`n"
+$jsonStart  = $bicepText.IndexOf('{')
+if ($jsonStart -lt 0) {
+  throw "Bicep deployment succeeded but output contained no JSON.`nRaw output:`n$bicepText"
+}
+$deployOutput = $bicepText.Substring($jsonStart) | ConvertFrom-Json
 Write-Log "Bicep deployment succeeded: $DeploymentName" "SUCCESS"
 Write-Validation -Check "Bicep deployment succeeded" -Passed $true -Details $DeploymentName
 
