@@ -262,6 +262,11 @@ lab-006-vwan-spoke-bgp-router-loopback/
 - [Observability](docs/observability.md) - 5 health gates, triage table, and what NOT to look at
 - [Experiments](docs/experiments.md) - 4 loopback propagation experiments with results template
 
+### Domain References
+
+- [vWAN Domain Guide](../../docs/DOMAINS/vwan.md) - vWAN concepts, hub router BGP, APIPA
+- [Observability Domain Guide](../../docs/DOMAINS/observability.md) - Cross-lab 3-gate model
+
 ## Security Note
 
 This lab is **public-safe**:

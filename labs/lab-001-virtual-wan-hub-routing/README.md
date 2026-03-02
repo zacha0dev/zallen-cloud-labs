@@ -164,5 +164,7 @@ lab-001-virtual-wan-hub-routing/
 
 ## References
 
+- [vWAN Domain Guide](../../docs/DOMAINS/vwan.md) - Concepts, routing, BGP, CLI commands
+- [Observability Guide](../../docs/DOMAINS/observability.md) - 3-gate health model, validation patterns
 - [Azure Virtual WAN overview](https://learn.microsoft.com/azure/virtual-wan/virtual-wan-about)
 - [Virtual hub routing](https://learn.microsoft.com/azure/virtual-wan/about-virtual-hub-routing)
