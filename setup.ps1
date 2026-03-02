@@ -3,14 +3,20 @@ setup.ps1
 Single entry point for Azure Labs environment setup.
 
 Usage:
-  .\setup.ps1              # Interactive - checks for updates, prompts for logins
-  .\setup.ps1 -Status      # Quick status check (no prompts, no update check)
-  .\setup.ps1 -Azure       # Azure setup only
-  .\setup.ps1 -Aws         # AWS setup only
-  .\setup.ps1 -SkipUpdate  # Skip update check
+  .\setup.ps1                             # Azure setup (default - no AWS required)
+  .\setup.ps1 -Status                     # Quick status check (no prompts)
+  .\setup.ps1 -Azure                      # Azure setup only
+  .\setup.ps1 -Aws                        # AWS setup only (lab-003 only)
+  .\setup.ps1 -SkipUpdate                 # Skip update check
+  .\setup.ps1 -ConfigureSubs              # Guided subscription configuration wizard
+  .\setup.ps1 -SubscriptionId <id>        # Write subscription ID directly to config
+  .\setup.ps1 -SubscriptionName <name>    # Friendly key name for the subscription (default: lab)
 
 After setup is green, deploy labs directly:
-  .\labs\lab-003-vwan-aws-vpn-bgp-apipa\scripts\deploy.ps1
+  .\labs\lab-000_resource-group\deploy.ps1
+
+AWS is OPTIONAL and only required for lab-003 (hybrid Azure-AWS connectivity).
+For all other labs, run this script without -Aws.
 #>
 
 [CmdletBinding()]
@@ -19,6 +25,9 @@ param(
   [switch]$Aws,
   [switch]$Status,
   [switch]$SkipUpdate,
+  [switch]$ConfigureSubs,
+  [string]$SubscriptionId,
+  [string]$SubscriptionName = "lab",
   [string]$AwsProfile = "aws-labs"
 )
 
@@ -50,13 +59,6 @@ function Ensure-DataDir {
   if (-not (Test-Path $DataDir)) {
     New-Item -ItemType Directory -Path $DataDir | Out-Null
   }
-
-  # Copy template files if needed
-  $subsExample = Join-Path $DataDir "subs.example.json"
-  if (-not (Test-Path $SubsPath) -and (Test-Path $subsExample)) {
-    Copy-Item $subsExample $SubsPath
-    Write-Host "  Created .data/subs.json from template" -ForegroundColor Yellow
-  }
 }
 
 function Get-SubsConfig {
@@ -66,6 +68,26 @@ function Get-SubsConfig {
   } catch {
     return $null
   }
+}
+
+function Test-SubsConfigValid {
+  <# Returns true if subs.json exists, has at least one real subscription, and default is set. #>
+  $cfg = Get-SubsConfig
+  if (-not $cfg) { return $false }
+  if (-not $cfg.subscriptions) { return $false }
+  $keys = @()
+  if ($cfg.subscriptions.PSObject.Properties) {
+    $keys = @($cfg.subscriptions.PSObject.Properties | ForEach-Object { $_.Name })
+  }
+  if ($keys.Count -eq 0) { return $false }
+  $placeholder = "00000000-0000-0000-0000-000000000000"
+  foreach ($k in $keys) {
+    $sub = $cfg.subscriptions.$k
+    if ($sub -and $sub.id -and $sub.id -ne $placeholder) {
+      return $true
+    }
+  }
+  return $false
 }
 
 # --- Azure Checks ---
@@ -105,7 +127,6 @@ function Test-AzureAuth {
 function Test-Bicep {
   if (-not (HasCmd "az")) { return @{ ok = $false; version = $null } }
   try {
-    # Suppress warnings (like "new version available") by capturing all output
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
     $ver = az bicep version 2>$null
@@ -157,6 +178,192 @@ function Test-AwsAuth([string]$Profile) {
   }
 }
 
+# --- Subscription Configuration Wizard ---
+function Invoke-SubsWizard {
+  <#
+  .SYNOPSIS
+    Guided interactive wizard to detect Azure subscriptions and write .data/subs.json.
+  .PARAMETER PreselectedId
+    Skip the interactive menu and use this subscription ID directly.
+  .PARAMETER FriendlyName
+    The key name to use in subs.json (default: "lab").
+  #>
+  param(
+    [string]$PreselectedId = "",
+    [string]$FriendlyName = "lab"
+  )
+
+  Write-Host ""
+  Write-Host "Subscription Configuration Wizard" -ForegroundColor Cyan
+  Write-Host "---------------------------------" -ForegroundColor Cyan
+  Write-Host ""
+
+  # Check az CLI
+  if (-not (HasCmd "az")) {
+    Write-Host "  Azure CLI not found. Install from: https://aka.ms/installazurecli" -ForegroundColor Red
+    return $false
+  }
+
+  # Check auth
+  $azAuth = Test-AzureAuth
+  if (-not $azAuth.ok) {
+    Write-Host "  Not authenticated. Running az login..." -ForegroundColor Yellow
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    az login -o none 2>$null
+    $ErrorActionPreference = $oldPref
+    $azAuth = Test-AzureAuth
+    if (-not $azAuth.ok) {
+      Write-Host "  Authentication failed. Run: az login" -ForegroundColor Red
+      return $false
+    }
+  }
+
+  Write-Host "  Authenticated as: $($azAuth.user)" -ForegroundColor Green
+  Write-Host ""
+
+  $selectedId = ""
+  $selectedDisplayName = ""
+
+  if ($PreselectedId -ne "") {
+    # Use the provided ID directly
+    $selectedId = $PreselectedId
+    $selectedDisplayName = $FriendlyName
+    Write-Host "  Using provided subscription ID: $selectedId" -ForegroundColor Gray
+  } else {
+    # List available subscriptions
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    $subsRaw = az account list -o json 2>$null
+    $ErrorActionPreference = $oldPref
+
+    if (-not $subsRaw) {
+      Write-Host "  Could not list subscriptions. Check your login." -ForegroundColor Red
+      return $false
+    }
+
+    $allSubs = $subsRaw | ConvertFrom-Json
+    $enabledSubs = @($allSubs | Where-Object { $_.state -eq "Enabled" })
+
+    if ($enabledSubs.Count -eq 0) {
+      Write-Host "  No enabled subscriptions found." -ForegroundColor Red
+      Write-Host "  Verify your Azure account has at least one active subscription." -ForegroundColor Yellow
+      return $false
+    }
+
+    if ($enabledSubs.Count -eq 1) {
+      $selectedId = $enabledSubs[0].id
+      $selectedDisplayName = $enabledSubs[0].name
+      Write-Host "  One subscription found - selected automatically:" -ForegroundColor Green
+      Write-Host "    Name: $selectedDisplayName" -ForegroundColor White
+      Write-Host "    ID:   $selectedId" -ForegroundColor DarkGray
+    } else {
+      Write-Host "  Available subscriptions:" -ForegroundColor White
+      Write-Host ""
+      for ($i = 0; $i -lt $enabledSubs.Count; $i++) {
+        $isDefault = ""
+        if ($enabledSubs[$i].isDefault) { $isDefault = " (current az context)" }
+        Write-Host "  [$($i + 1)] $($enabledSubs[$i].name)$isDefault" -ForegroundColor White
+        Write-Host "      ID: $($enabledSubs[$i].id)" -ForegroundColor DarkGray
+        Write-Host ""
+      }
+
+      $pick = Read-Host "  Select subscription number [1-$($enabledSubs.Count)]"
+      $pickInt = 0
+      $parseOk = [int]::TryParse($pick.Trim(), [ref]$pickInt)
+      if (-not $parseOk -or $pickInt -lt 1 -or $pickInt -gt $enabledSubs.Count) {
+        Write-Host "  Invalid selection. Run again: .\setup.ps1 -ConfigureSubs" -ForegroundColor Red
+        return $false
+      }
+
+      $selectedId = $enabledSubs[$pickInt - 1].id
+      $selectedDisplayName = $enabledSubs[$pickInt - 1].name
+      Write-Host ""
+      Write-Host "  Selected: $selectedDisplayName" -ForegroundColor Green
+    }
+  }
+
+  # Validate ID format
+  $uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+  $placeholder = "00000000-0000-0000-0000-000000000000"
+  if ($selectedId -notmatch $uuidPattern -or $selectedId -eq $placeholder) {
+    Write-Host "  Invalid or placeholder subscription ID: $selectedId" -ForegroundColor Red
+    Write-Host "  Run: az account list -o table  to find your real subscription ID." -ForegroundColor Yellow
+    return $false
+  }
+
+  # Fetch additional details (tenantId, verified name)
+  $tenantId = ""
+  $verifiedName = $selectedDisplayName
+  $oldPref = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  $subDetail = az account show --subscription $selectedId -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldPref
+  if ($subDetail) {
+    if ($subDetail.tenantId) { $tenantId = $subDetail.tenantId }
+    if ($subDetail.name) { $verifiedName = $subDetail.name }
+  }
+
+  # Load existing config to preserve other subscription keys
+  Ensure-DataDir
+  $existing = Get-SubsConfig
+  $subsHash = @{}
+  if ($existing -and $existing.subscriptions -and $existing.subscriptions.PSObject.Properties) {
+    foreach ($prop in $existing.subscriptions.PSObject.Properties) {
+      $subsHash[$prop.Name] = @{
+        id       = $prop.Value.id
+        name     = $prop.Value.name
+        tenantId = if ($prop.Value.tenantId) { $prop.Value.tenantId } else { "" }
+      }
+    }
+  }
+
+  # Add or update the selected subscription
+  $subsHash[$FriendlyName] = @{
+    id       = $selectedId
+    name     = $verifiedName
+    tenantId = $tenantId
+  }
+
+  # Build final config
+  $config = @{
+    subscriptions = $subsHash
+    default       = $FriendlyName
+  }
+
+  $json = $config | ConvertTo-Json -Depth 5
+  Set-Content -Path $SubsPath -Value $json -Encoding UTF8
+
+  # Print summary
+  Write-Host ""
+  Write-Host "  Written to: .data/subs.json" -ForegroundColor Green
+  Write-Host ""
+  Write-Host "  Configured subscription summary:" -ForegroundColor Yellow
+  Write-Host "    Key:          $FriendlyName" -ForegroundColor White
+  Write-Host "    Name:         $verifiedName" -ForegroundColor White
+  Write-Host "    ID:           $selectedId" -ForegroundColor White
+  if ($tenantId) {
+    Write-Host "    Tenant ID:    $tenantId" -ForegroundColor White
+  }
+  Write-Host "    Default:      yes" -ForegroundColor White
+  Write-Host ""
+
+  # Validate by re-reading
+  if (Test-SubsConfigValid) {
+    Write-Host "  Validation: PASS" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Ready to deploy labs:" -ForegroundColor Cyan
+    Write-Host "    cd labs\lab-000_resource-group" -ForegroundColor Gray
+    Write-Host "    .\deploy.ps1" -ForegroundColor Gray
+  } else {
+    Write-Host "  Validation: WARNING - could not verify written config." -ForegroundColor Yellow
+    Write-Host "  Check: .data/subs.json" -ForegroundColor Yellow
+  }
+
+  Write-Host ""
+  return $true
+}
+
 # --- Status Display ---
 function Show-Status {
   Write-Host ""
@@ -165,56 +372,67 @@ function Show-Status {
   Write-Host ""
 
   # Azure Section
-  Write-Host "Azure" -ForegroundColor White
+  Write-Host "Azure (required)" -ForegroundColor White
   $azCli = Test-AzureCli
-  Write-Status "CLI (az)" $azCli.ok $(if ($azCli.version) { "v$($azCli.version)" } else { "not installed" })
+  Write-Status "CLI (az)" $azCli.ok $(if ($azCli.version) { "v$($azCli.version)" } else { "not installed - https://aka.ms/installazurecli" })
 
   $bicep = Test-Bicep
-  Write-Status "Bicep" $bicep.ok $(if ($bicep.version) { $bicep.version } else { "not installed" })
+  Write-Status "Bicep" $bicep.ok $(if ($bicep.version) { $bicep.version } else { "not installed - run: az bicep install" })
 
   $azAuth = Test-AzureAuth
-  Write-Status "Auth" $azAuth.ok $(if ($azAuth.ok) { "$($azAuth.user)" } else { "not authenticated" })
+  Write-Status "Auth" $azAuth.ok $(if ($azAuth.ok) { $azAuth.user } else { "not authenticated - run: az login" })
 
   if ($azAuth.ok) {
-    Write-Status "Subscription" $true $azAuth.sub
+    Write-Status "Active subscription" $true $azAuth.sub
   }
 
+  $subsOk = Test-SubsConfigValid
   $cfg = Get-SubsConfig
   if ($cfg -and $cfg.subscriptions) {
     $count = @($cfg.subscriptions.PSObject.Properties).Count
-    Write-Status "Config (.data/subs.json)" ($count -gt 0) "$count subscription(s), default: $($cfg.default)"
+    $detail = "$count subscription(s), default: $($cfg.default)"
+    Write-Status "Config (.data/subs.json)" $subsOk $detail
+    if (-not $subsOk) {
+      Write-Host "    Run: .\setup.ps1 -ConfigureSubs" -ForegroundColor DarkGray
+    }
   } else {
-    Write-Status "Config (.data/subs.json)" $false "not configured"
+    Write-Status "Config (.data/subs.json)" $false "not configured - run: .\setup.ps1 -ConfigureSubs"
   }
 
   Write-Host ""
 
-  # AWS Section
-  Write-Host "AWS" -ForegroundColor White
+  # AWS Section (informational - only needed for lab-003)
+  Write-Host "AWS (optional - lab-003 only)" -ForegroundColor DarkGray
   $awsCli = Test-AwsCli
-  Write-Status "CLI (aws)" $awsCli.ok $(if ($awsCli.version) { "v$($awsCli.version)" } else { "not installed" })
+  Write-Status "CLI (aws)" $awsCli.ok $(if ($awsCli.version) { "v$($awsCli.version)" } else { "not installed (not required for Azure-only labs)" })
 
-  $tf = Test-Terraform
-  Write-Status "Terraform" $tf.ok $(if ($tf.version) { "v$($tf.version)" } else { "not installed" })
+  if ($awsCli.ok) {
+    $tf = Test-Terraform
+    Write-Status "Terraform" $tf.ok $(if ($tf.version) { "v$($tf.version)" } else { "not installed" })
 
-  $awsAuth = Test-AwsAuth -Profile $AwsProfile
-  Write-Status "Auth (profile: $AwsProfile)" $awsAuth.ok $(if ($awsAuth.ok) { "account $($awsAuth.account)" } else { "not authenticated" })
+    $awsAuth = Test-AwsAuth -Profile $AwsProfile
+    Write-Status "Auth (profile: $AwsProfile)" $awsAuth.ok $(if ($awsAuth.ok) { "account $($awsAuth.account)" } else { "not authenticated - run: aws sso login --profile $AwsProfile" })
+  }
 
   Write-Host ""
 
   # Summary
-  $allAzureOk = $azCli.ok -and $azAuth.ok
-  $allAwsOk = $awsCli.ok -and $awsAuth.ok
+  $allAzureOk = $azCli.ok -and $azAuth.ok -and $subsOk
+  $allAwsOk = $awsCli.ok -and (Test-AwsAuth -Profile $AwsProfile).ok
 
   if ($allAzureOk -and $allAwsOk) {
-    Write-Host "Ready for all labs." -ForegroundColor Green
+    Write-Host "Ready for all labs (including lab-003)." -ForegroundColor Green
   } elseif ($allAzureOk) {
-    Write-Host "Ready for Azure-only labs." -ForegroundColor Green
-    if (-not $allAwsOk) {
-      Write-Host "AWS not ready - run: .\setup.ps1 -Aws" -ForegroundColor Yellow
-    }
+    Write-Host "Ready for Azure-only labs (lab-000 through lab-002, lab-004 through lab-006)." -ForegroundColor Green
+    Write-Host "For lab-003 (hybrid AWS): .\setup.ps1 -Aws" -ForegroundColor DarkGray
   } else {
     Write-Host "Setup needed - see issues above." -ForegroundColor Yellow
+    if (-not ($azCli.ok -and $azAuth.ok)) {
+      Write-Host "Run: .\setup.ps1 -Azure" -ForegroundColor Cyan
+    }
+    if (-not $subsOk) {
+      Write-Host "Run: .\setup.ps1 -ConfigureSubs" -ForegroundColor Cyan
+    }
   }
 
   Write-Host ""
@@ -266,29 +484,44 @@ function Setup-Azure {
 
   if ($azAuth.ok) {
     Write-Host "  Auth: $($azAuth.user)" -ForegroundColor Green
-    Write-Host "  Subscription: $($azAuth.sub)" -ForegroundColor Green
+    Write-Host "  Active subscription: $($azAuth.sub)" -ForegroundColor Green
   } else {
     Write-Host "  Auth: not authenticated" -ForegroundColor Yellow
     Write-Host "  Run: az login" -ForegroundColor Yellow
+    return $false
   }
 
-  # Check subscription config
-  $cfg = Get-SubsConfig
-  if (-not $cfg -or -not $cfg.subscriptions -or @($cfg.subscriptions.PSObject.Properties).Count -eq 0) {
+  # Check subscription config - run wizard if missing or unconfigured
+  if (-not (Test-SubsConfigValid)) {
     Write-Host ""
-    Write-Host "  No subscriptions configured in .data/subs.json" -ForegroundColor Yellow
-    Write-Host "  Edit .data/subs.json with your subscription IDs" -ForegroundColor Yellow
+    Write-Host "  No valid subscriptions configured in .data/subs.json" -ForegroundColor Yellow
+    Write-Host "  Starting subscription configuration wizard..." -ForegroundColor Cyan
+    Write-Host ""
+    $wizardOk = Invoke-SubsWizard -FriendlyName $SubscriptionName
+    if (-not $wizardOk) {
+      Write-Host ""
+      Write-Host "  Subscription not configured. Re-run: .\setup.ps1 -ConfigureSubs" -ForegroundColor Yellow
+      return $false
+    }
+  } else {
+    $cfg = Get-SubsConfig
+    $count = @($cfg.subscriptions.PSObject.Properties).Count
+    Write-Host "  Config: $count subscription(s), default: $($cfg.default)" -ForegroundColor Green
   }
 
   Write-Host ""
-  return $azAuth.ok
+  return $true
 }
 
 # --- AWS Setup ---
 function Setup-Aws {
   Write-Host ""
-  Write-Host "AWS Setup" -ForegroundColor Cyan
-  Write-Host "---------" -ForegroundColor Cyan
+  Write-Host "AWS Setup (lab-003 only)" -ForegroundColor Cyan
+  Write-Host "------------------------" -ForegroundColor Cyan
+  Write-Host ""
+  Write-Host "  AWS is only required for lab-003 (Azure vWAN to AWS VPN)." -ForegroundColor DarkGray
+  Write-Host "  Skip this section for all other labs." -ForegroundColor DarkGray
+  Write-Host ""
 
   # Check CLI
   $awsCli = Test-AwsCli
@@ -336,7 +569,7 @@ function Setup-Aws {
     Write-Host ""
     Write-Host "  AWS profile '$AwsProfile' not authenticated." -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  To authenticate, run one of these in a separate terminal:" -ForegroundColor Cyan
+    Write-Host "  To authenticate, run one of these:" -ForegroundColor Cyan
     Write-Host "    aws sso login --profile $AwsProfile     # If SSO is configured" -ForegroundColor Gray
     Write-Host "    aws configure sso --profile $AwsProfile # To set up SSO" -ForegroundColor Gray
     Write-Host "    aws configure --profile $AwsProfile     # For IAM access keys" -ForegroundColor Gray
@@ -350,13 +583,29 @@ function Setup-Aws {
   return $awsAuth.ok
 }
 
-# --- Main ---
+# =============================================================================
+# MAIN
+# =============================================================================
+
 Clear-Host
 Write-Host ""
 Write-Host "Azure Labs Setup" -ForegroundColor Cyan
 Write-Host "================" -ForegroundColor Cyan
 
 Ensure-DataDir
+
+# -ConfigureSubs: run the guided wizard and exit
+if ($ConfigureSubs -or $SubscriptionId -ne "") {
+  Write-Host ""
+  if ($SubscriptionId -ne "") {
+    Write-Host "Writing subscription ID directly to config..." -ForegroundColor Gray
+    $ok = Invoke-SubsWizard -PreselectedId $SubscriptionId -FriendlyName $SubscriptionName
+  } else {
+    $ok = Invoke-SubsWizard -FriendlyName $SubscriptionName
+  }
+  Show-Status
+  exit $(if ($ok) { 0 } else { 1 })
+}
 
 # Check for updates (skip in -Status mode or if -SkipUpdate)
 if (-not $Status -and -not $SkipUpdate) {
@@ -379,19 +628,30 @@ if ($Azure -and -not $Aws) {
 }
 
 if ($Aws -and -not $Azure) {
-  # AWS only
+  # AWS only (lab-003 prerequisite)
   $ok = Setup-Aws
   Show-Status
   exit $(if ($ok) { 0 } else { 1 })
 }
 
-# Default: Interactive mode - check both
+if ($Aws -and $Azure) {
+  # Both explicitly requested
+  $azOk = Setup-Azure
+  $awsOk = Setup-Aws
+  Show-Status
+  exit $(if ($azOk) { 0 } else { 1 })
+}
+
+# Default: Azure-only interactive mode
+# AWS is NOT checked by default - it is only needed for lab-003.
 $azOk = Setup-Azure
-$awsOk = Setup-Aws
 
 Show-Status
 
 Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "  Deploy a lab:  .\labs\lab-003-...\scripts\deploy.ps1" -ForegroundColor Gray
-Write-Host "  Check status:  .\setup.ps1 -Status" -ForegroundColor Gray
+Write-Host "  First lab (free): cd labs\lab-000_resource-group && .\deploy.ps1" -ForegroundColor Gray
+Write-Host "  Check status:     .\setup.ps1 -Status" -ForegroundColor Gray
+Write-Host "  AWS (lab-003):    .\setup.ps1 -Aws" -ForegroundColor DarkGray
 Write-Host ""
+
+exit $(if ($azOk) { 0 } else { 1 })

@@ -147,6 +147,12 @@ See [docs/validation.md](docs/validation.md) for comprehensive validation comman
 ./destroy.ps1
 ```
 
+Run the cost audit tool to confirm no billable resources remain:
+
+```powershell
+.\tools\cost-check.ps1
+```
+
 ## Files
 
 ```

@@ -220,6 +220,12 @@ See [docs/experiments.md](docs/experiments.md) for step-by-step procedures, FRR 
 
 Cleanup takes 5-10 minutes. Deletes the entire resource group and local `.data/lab-006/` directory.
 
+Run the cost audit tool to confirm no billable resources remain:
+
+```powershell
+.\tools\cost-check.ps1
+```
+
 ## File Structure
 
 ```
