@@ -45,14 +45,13 @@ Prove correct Azure vWAN S2S VPN Gateway dual-instance behavior with determinist
 - Azure subscription with Contributor access
 - Azure CLI installed and authenticated
 - PowerShell 7+ (Windows/Linux/macOS)
-- Repository configured (run `scripts/setup.ps1` first)
+- Repository configured: run `.\setup.ps1 -Azure` from repo root
 
 ## Quick Start
 
 ```powershell
 # 1. First-time setup (if not done already)
-cd azure-labs
-.\scripts\setup.ps1 -DoLogin
+.\setup.ps1 -Azure
 
 # 2. Navigate to lab directory
 cd labs/lab-005-vwan-s2s-bgp-apipa

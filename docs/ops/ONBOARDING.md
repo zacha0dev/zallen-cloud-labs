@@ -134,7 +134,7 @@ aws sso login --profile aws-labs
 .\setup.ps1 -Aws
 ```
 
-See [docs/aws-setup.md](../aws-setup.md) for detailed instructions.
+See [docs/DOMAINS/aws-hybrid.md](../DOMAINS/aws-hybrid.md) for detailed instructions.
 
 ---
 

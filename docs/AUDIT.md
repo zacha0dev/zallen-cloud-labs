@@ -15,6 +15,7 @@
 | Lab scripts (PS 5.1) | PASS - no breaking syntax found | 2026-03-02 |
 | Cost-check references | PASS - all billable lab READMEs updated | 2026-03-02 |
 | Doc structure | PASS - canonical tree established | 2026-03-02 |
+| Stale links / stub docs | PASS - all stubs deleted, links fixed | 2026-03-02 |
 | Lab outputs.json | PARTIAL - schema defined; older labs partial | 2026-03-02 |
 | inspect.ps1 coverage | PARTIAL - labs 001, 006 only | 2026-03-02 |
 
@@ -45,9 +46,9 @@
 
 | ID | Finding | File(s) | Status |
 |----|---------|---------|--------|
-| L-001 | `git-&-github.md` is minimal / low-value | `docs/git-&-github.md` | MERGED to REFERENCE.md (2026-03-02) |
-| L-002 | `setup-overview.md` duplicates ONBOARDING.md after update | `docs/setup-overview.md` | STUBBED (2026-03-02) |
-| L-003 | `labs-config.md` duplicates ONBOARDING.md content | `docs/labs-config.md` | STUBBED (2026-03-02) |
+| L-001 | `git-&-github.md` is minimal / low-value | `docs/git-&-github.md` | DELETED (2026-03-02) |
+| L-002 | `setup-overview.md` duplicates ONBOARDING.md after update | `docs/setup-overview.md` | DELETED (2026-03-02) |
+| L-003 | `labs-config.md` duplicates ONBOARDING.md content | `docs/labs-config.md` | DELETED (2026-03-02) |
 | L-004 | Lab READMEs repeat vWAN concepts inline | `labs/lab-001,004,005,006/README.md` | PARTIAL - links added |
 
 ---
@@ -65,6 +66,17 @@
 - Added `.\tools\cost-check.ps1` to cleanup sections of labs 001-006
 - Updated `.data/subs.example.json` with `_schema_version` and `_instructions`
 - Updated root `README.md` - 3-command quick start, Azure-only emphasis
+
+### 2026-03-02 - Cleanup, Rename + CONTRIBUTING.md (PR: claude/azure-lab-setup-uKSi2)
+
+- Renamed project from "Zallen Cloud Labs" to "AI-Driven Cloud Labs" (`README.md`, `docs/README.md`)
+- Deleted 9 stale/stub files: `docs/aws-*.md` (5), `docs/setup-overview.md`, `docs/labs-config.md`, `docs/observability-index.md`, `docs/git-&-github.md`
+- Fixed remaining `.\scripts\setup.ps1 -DoLogin` refs in `lab-000/README.md`, `lab-005/README.md`, `lab-004/docs/walkthrough.md`
+- Fixed stale doc refs in `scripts/aws/aws-common.ps1` (6 paths → `docs/DOMAINS/aws-hybrid.md`)
+- Fixed stale `docs/labs-config.md` refs in `scripts/labs-common.ps1` → `docs/REFERENCE.md`
+- Fixed `docs/ops/ONBOARDING.md` line 137 link (`aws-setup.md` → `DOMAINS/aws-hybrid.md`)
+- Added `CONTRIBUTING.md` - AI-driven IaC workflow story, prompting patterns, CLAUDE.md guide
+- Bumped `VERSION` to `0.7.0`
 
 ### 2026-03-02 - Docs Reorganization (PR: claude/azure-lab-setup-uKSi2)
 

@@ -113,6 +113,6 @@ az account set --subscription "your-subscription-id"
 
 **Config not found:**
 ```powershell
-# Run setup from repo root
-.\scripts\setup.ps1 -DoLogin
+# Run the guided subscription wizard from repo root
+.\setup.ps1 -ConfigureSubs
 ```

@@ -139,7 +139,7 @@ function Ensure-AwsAuth {
     Write-Host ""
     Write-Host "(Or for IAM access keys: aws configure --profile $Profile)" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "See: docs/aws-cli-profile-setup.md" -ForegroundColor DarkGray
+    Write-Host "See: docs/DOMAINS/aws-hybrid.md" -ForegroundColor DarkGray
 
     if ($DoLogin) {
       Write-Host ""
@@ -176,9 +176,9 @@ function Ensure-AwsAuth {
     Write-Host ""
     Write-Host "If you see 'No AWS accounts are available to you':" -ForegroundColor Gray
     Write-Host "  Your user is not assigned to an AWS account in Identity Center." -ForegroundColor Gray
-    Write-Host "  See: docs/aws-identity-center-sso.md" -ForegroundColor DarkGray
+    Write-Host "  See: docs/DOMAINS/aws-hybrid.md" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "For other errors: docs/aws-troubleshooting.md" -ForegroundColor DarkGray
+    Write-Host "For other errors: docs/DOMAINS/aws-hybrid.md" -ForegroundColor DarkGray
 
     if ($DoLogin) {
       Write-Host ""
@@ -198,7 +198,7 @@ function Ensure-AwsAuth {
       Write-Host "  2. Go to IAM Identity Center > AWS accounts" -ForegroundColor White
       Write-Host "  3. Assign your user to an account with a permission set" -ForegroundColor White
       Write-Host ""
-      Write-Host "See: docs/aws-identity-center-sso.md" -ForegroundColor DarkGray
+      Write-Host "See: docs/DOMAINS/aws-hybrid.md" -ForegroundColor DarkGray
     }
     throw "AWS profile '$Profile' SSO login required. Run: aws sso login --profile $Profile"
   }
@@ -211,7 +211,7 @@ function Ensure-AwsAuth {
   Write-Host "  aws configure sso --profile $Profile    # recommended (browser login)" -ForegroundColor Cyan
   Write-Host "  aws configure --profile $Profile         # IAM access key" -ForegroundColor Cyan
   Write-Host ""
-  Write-Host "See: docs/aws-troubleshooting.md" -ForegroundColor DarkGray
+  Write-Host "See: docs/DOMAINS/aws-hybrid.md" -ForegroundColor DarkGray
 
   if ($DoLogin) {
     Write-Host ""
@@ -224,7 +224,7 @@ function Ensure-AwsAuth {
       return
     }
   }
-  throw "AWS profile '$Profile' not authenticated. See docs/aws-troubleshooting.md"
+  throw "AWS profile '$Profile' not authenticated. See docs/DOMAINS/aws-hybrid.md"
 }
 
 function Confirm-AwsBudgetWarning {

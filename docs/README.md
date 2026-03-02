@@ -1,6 +1,6 @@
 # Documentation Hub
 
-> Navigation root for the `zallen-cloud-labs` repository.
+> Navigation root for the **AI-Driven Cloud Labs** repository.
 > Everything lives here or links from here.
 
 ---
