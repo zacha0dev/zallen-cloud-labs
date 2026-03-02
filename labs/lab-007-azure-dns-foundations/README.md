@@ -185,6 +185,12 @@ Removes:
 - Local `.data/lab-007/` directory
 - Log files (unless `-KeepLogs`)
 
+After destroying, run the cost audit to confirm no billable resources remain:
+
+```powershell
+.\..\..\tools\cost-check.ps1 -Lab lab-007
+```
+
 ---
 
 ## Troubleshooting
@@ -255,9 +261,19 @@ lab-007-azure-dns-foundations/
 
 ---
 
+## Next Labs (DNS Series)
+
+| Lab | What you build next |
+|-----|-------------------|
+| [lab-008](../lab-008-azure-dns-private-resolver/README.md) | Add a DNS Private Resolver to a hub VNet; forward `internal.lab` from a spoke without linking the zone to every VNet |
+
+After completing lab-008 you will understand the full Azure DNS stack: zones → VNet links → resolver → forwarding rulesets.
+
+---
+
 ## References
 
 - [Azure Private DNS Zones overview](https://docs.microsoft.com/azure/dns/private-dns-overview)
 - [Private DNS auto-registration](https://docs.microsoft.com/azure/dns/private-dns-autoregistration)
 - [Azure DNS 168.63.129.16](https://docs.microsoft.com/azure/virtual-network/what-is-ip-address-168-63-129-16)
-- Domain guide: `docs/DOMAINS/observability.md`
+- Domain guide: [docs/DOMAINS/dns.md](../../docs/DOMAINS/dns.md)

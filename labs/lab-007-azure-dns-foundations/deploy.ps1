@@ -241,7 +241,24 @@ $bicepResult = az deployment group create `
   --output json 2>&1
 
 if ($LASTEXITCODE -ne 0) {
-  Write-Host $bicepResult -ForegroundColor Red
+  $bicepOutput = $bicepResult -join "`n"
+  Write-Host $bicepOutput -ForegroundColor Red
+  Write-Host ""
+  # Emit targeted error guidance for common DNS lab failures
+  if ($bicepOutput -match "PrivateDnsZone.*Conflict|ZoneName.*already exist") {
+    Write-Host "[ERROR] DNS zone conflict: '$DnsZoneName' already exists or has a conflicting link." -ForegroundColor Red
+    Write-Host "        Check:  az network private-dns zone show -g $ResourceGroup -n $DnsZoneName" -ForegroundColor Yellow
+    Write-Host "        Fix:    Delete conflicting zone/link, then re-run deploy." -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "VirtualNetworkLink.*Conflict|LinkAlreadyExists") {
+    Write-Host "[ERROR] VNet link conflict: A link for this zone/VNet combination already exists." -ForegroundColor Red
+    Write-Host "        Check:  az network private-dns link vnet list -g $ResourceGroup --zone-name $DnsZoneName -o table" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "AuthorizationFailed|does not have authorization|Forbidden") {
+    Write-Host "[ERROR] Authorization failure: current principal lacks required RBAC permissions." -ForegroundColor Red
+    Write-Host "        Required: Contributor or Network Contributor on the subscription/RG." -ForegroundColor Red
+    Write-Host "        Principal: $(az account show --query user.name -o tsv 2>$null)" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "InvalidTemplate|schema|BicepCompile") {
+    Write-Host "[ERROR] Bicep template error. Check infra/main.bicep for syntax issues." -ForegroundColor Red
+  }
   throw "Bicep deployment failed. See output above."
 }
 
@@ -341,6 +358,76 @@ Write-Host "                nslookup $VmName.$DnsZoneName" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  To test, connect via Azure Bastion or Serial Console:" -ForegroundColor DarkGray
 Write-Host "  az serial-console connect -g $ResourceGroup --name $VmName" -ForegroundColor DarkGray
+
+# Attempt DNS data-plane test via Run-Command and write test-results.json
+Write-Host ""
+Write-Host "Attempting DNS data-plane validation via Run-Command..." -ForegroundColor Yellow
+Write-Host "  (Runs nslookup inside the VM to confirm actual resolution)" -ForegroundColor DarkGray
+
+$TestResultsPath = Join-Path $RepoRoot ".data/lab-007/test-results.json"
+$testResults = [pscustomobject]@{
+  lab       = "lab-007"
+  testedAt  = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+  method    = "az vm run-command"
+  tests     = @()
+  summary   = "PENDING"
+}
+
+$testScript = "nslookup $ARecordName.$DnsZoneName 168.63.129.16 ; echo '###'; nslookup $VmName.$DnsZoneName 168.63.129.16 ; echo '###'; cat /etc/resolv.conf"
+
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$runCmdResult = az vm run-command invoke `
+  -g $ResourceGroup -n $VmName `
+  --command-id RunShellScript `
+  --scripts $testScript `
+  -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+
+if ($runCmdResult -and $runCmdResult.value -and $runCmdResult.value.Count -gt 0) {
+  $rawOutput = $runCmdResult.value[0].message
+  $sections  = $rawOutput -split '###'
+
+  $webserverOutput = if ($sections.Count -ge 1) { $sections[0].Trim() } else { "" }
+  $vmHostOutput    = if ($sections.Count -ge 2) { $sections[1].Trim() } else { "" }
+  $resolvOutput    = if ($sections.Count -ge 3) { $sections[2].Trim() } else { "" }
+
+  $webserverResolved  = ($webserverOutput -match "10\.70\.1\.4")
+  $platformResolver   = ($resolvOutput    -match "168\.63\.129\.16")
+
+  $testResults.tests = @(
+    [pscustomobject]@{
+      name     = "$ARecordName.$DnsZoneName (static A record)"
+      command  = "nslookup $ARecordName.$DnsZoneName 168.63.129.16"
+      expected = "10.70.1.4"
+      passed   = $webserverResolved
+      output   = $webserverOutput
+    },
+    [pscustomobject]@{
+      name     = "Azure platform resolver present"
+      command  = "cat /etc/resolv.conf"
+      expected = "nameserver 168.63.129.16"
+      passed   = $platformResolver
+      output   = $resolvOutput
+    }
+  )
+
+  $allTestsPassed = $webserverResolved -and $platformResolver
+  $testResults.summary = if ($allTestsPassed) { "PASS" } else { "PARTIAL" }
+
+  Write-Validation -Check "DNS: $ARecordName.$DnsZoneName resolves to 10.70.1.4" -Passed $webserverResolved
+  Write-Validation -Check "DNS: Platform resolver 168.63.129.16 present in resolv.conf" -Passed $platformResolver
+
+  if (-not $allTestsPassed) { $allValid = $false }
+} else {
+  Write-Host "  [WARN] Run-Command did not return output (VM may still be booting)." -ForegroundColor Yellow
+  Write-Host "         Re-run manually: az vm run-command invoke -g $ResourceGroup -n $VmName --command-id RunShellScript --scripts 'nslookup $ARecordName.$DnsZoneName'" -ForegroundColor DarkGray
+  $testResults.summary = "SKIPPED"
+  $testResults.note    = "VM not ready at deploy time. Run manually after VM boots."
+}
+
+Ensure-Directory (Split-Path -Parent $TestResultsPath)
+$testResults | ConvertTo-Json -Depth 10 | Set-Content -Path $TestResultsPath -Encoding UTF8
+Write-Host "  Test results written to: $TestResultsPath" -ForegroundColor DarkGray
 
 $phase5Elapsed = Get-ElapsedTime -StartTime $phase5Start
 Write-Log "Phase 5 completed in $phase5Elapsed" "SUCCESS"

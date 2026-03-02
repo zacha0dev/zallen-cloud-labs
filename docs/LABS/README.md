@@ -17,6 +17,8 @@
 | [lab-004](../../labs/lab-004-vwan-default-route-propagation/README.md) | Prove 0/0 route propagation behavior in custom vs. Default RTs | Azure | ~$0.60/hr | lab-001 passing | Stable |
 | [lab-005](../../labs/lab-005-vwan-s2s-bgp-apipa/README.md) | Gold reference: dual-instance vWAN VPN with deterministic APIPA | Azure | ~$0.61/hr | lab-001 passing | Stable |
 | [lab-006](../../labs/lab-006-vwan-spoke-bgp-router-loopback/README.md) | vWAN hub learns BGP from FRR router VM; loopback propagation | Azure | ~$0.37/hr | lab-001 + familiarity with BGP | Stable |
+| [lab-007](../../labs/lab-007-azure-dns-foundations/README.md) | Azure Private DNS Zone, VNet link, auto-registration, static A record | Azure | ~$0.02/hr | lab-000 passing | Stable |
+| [lab-008](../../labs/lab-008-azure-dns-private-resolver/README.md) | DNS Private Resolver in hub; forwarding ruleset to spoke; cross-VNet resolution | Azure | ~$0.03/hr | lab-007 recommended | Stable |
 
 ---
 
@@ -43,6 +45,7 @@ Full contract details: [docs/ops/LAB-STANDARD.md](../ops/LAB-STANDARD.md)
 | lab-001, 003, 004, 005, 006 | [vWAN](../DOMAINS/vwan.md) |
 | lab-002 | App Gateway + Front Door |
 | lab-003 | [AWS Hybrid](../DOMAINS/aws-hybrid.md) |
+| lab-007, lab-008 | [Azure DNS](../DOMAINS/dns.md) |
 
 ---
 
@@ -54,6 +57,8 @@ Full contract details: [docs/ops/LAB-STANDARD.md](../ops/LAB-STANDARD.md)
 4. **lab-004** or **lab-005** - Route propagation deep-dives.
 5. **lab-002** - L7 LB if App Gateway is relevant to you.
 6. **lab-003** - Only when you have AWS configured and need hybrid VPN.
+7. **lab-007** - Azure DNS fundamentals. Private zones, VNet links, auto-registration. ~5-8 min.
+8. **lab-008** - DNS Private Resolver. Cross-VNet forwarding, ruleset isolation. ~8-12 min.
 
 **Always run `.\destroy.ps1` after each lab session.**
 

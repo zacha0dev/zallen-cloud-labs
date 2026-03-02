@@ -65,6 +65,8 @@ Everything is organized at: **[docs/README.md](docs/README.md)**
 | [lab-004](labs/lab-004-vwan-default-route-propagation/) | vWAN default route propagation | Azure | ~$0.60/hr |
 | [lab-005](labs/lab-005-vwan-s2s-bgp-apipa/) | vWAN S2S BGP/APIPA reference | Azure | ~$0.61/hr |
 | [lab-006](labs/lab-006-vwan-spoke-bgp-router-loopback/) | vWAN spoke BGP router + loopback | Azure | ~$0.37/hr |
+| [lab-007](labs/lab-007-azure-dns-foundations/) | Azure Private DNS Zones + auto-registration | Azure | ~$0.02/hr |
+| [lab-008](labs/lab-008-azure-dns-private-resolver/) | Azure DNS Private Resolver + forwarding ruleset | Azure | ~$0.03/hr |
 
 ---
 
