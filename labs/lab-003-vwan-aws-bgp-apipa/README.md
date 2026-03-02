@@ -53,6 +53,12 @@ cd labs/lab-003-vwan-aws-bgp-apipa
 ./destroy.ps1 -AwsProfile aws-labs
 ```
 
+Run the cost audit tool to confirm no billable resources remain in Azure or AWS:
+
+```powershell
+.\tools\cost-check.ps1 -AwsProfile aws-labs
+```
+
 ## Parameters
 
 | Parameter | Default | Description |

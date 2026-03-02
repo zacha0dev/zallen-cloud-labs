@@ -205,6 +205,12 @@ Or just go to: **Portal → Resource Groups → rg-lab-005-vwan-s2s → Deployme
 
 Cleanup takes 5-10 minutes.
 
+Run the cost audit tool to confirm no billable resources remain:
+
+```powershell
+.\tools\cost-check.ps1
+```
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) - Detailed architecture explanation

@@ -51,10 +51,13 @@ function Get-LabConfig {
     Write-Host ""
     Write-Host "Lab config file not found: $subsPath" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Run the setup first:" -ForegroundColor Yellow
-    Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
+    Write-Host "Run the guided setup to create it:" -ForegroundColor Yellow
+    Write-Host "  .\setup.ps1 -ConfigureSubs" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "See: docs/labs-config.md" -ForegroundColor DarkGray
+    Write-Host "Or pass your subscription ID directly:" -ForegroundColor Yellow
+    Write-Host "  .\setup.ps1 -SubscriptionId <your-subscription-id>" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "See: docs/ops/ONBOARDING.md" -ForegroundColor DarkGray
     throw "Missing config file: $subsPath"
   }
 
@@ -135,9 +138,9 @@ function Get-SubscriptionId {
         Write-Host ""
         Write-Host "No subscriptions configured in: $subsPath" -ForegroundColor Red
         Write-Host ""
-        Write-Host "Run setup to add a subscription:" -ForegroundColor Yellow
-        Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
-        throw "No subscriptions configured. Run scripts\setup.ps1 first."
+        Write-Host "Run the guided wizard to configure a subscription:" -ForegroundColor Yellow
+        Write-Host "  .\setup.ps1 -ConfigureSubs" -ForegroundColor Cyan
+        throw "No subscriptions configured. Run .\setup.ps1 -ConfigureSubs first."
       }
     }
   }
@@ -165,7 +168,7 @@ function Get-SubscriptionId {
     Write-Host ""
     Write-Host "Try running with: -SubscriptionKey $suggestion" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Or add '$Key' to your config. See: docs/labs-config.md" -ForegroundColor DarkGray
+    Write-Host "Or add '$Key' to your config. See: docs/ops/ONBOARDING.md" -ForegroundColor DarkGray
     throw "Subscription key '$Key' not found. Available: $($availableKeys -join ', ')"
   }
 
@@ -194,9 +197,9 @@ function Get-SubscriptionId {
     Write-Host "  2. Copy your subscription ID" -ForegroundColor Cyan
     Write-Host "  3. Edit $subsPath" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Or run setup to configure automatically:" -ForegroundColor Yellow
-    Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
-    throw "Subscription '$Key' has placeholder ID. Update $subsPath with real values."
+    Write-Host "Or run the guided wizard to configure automatically:" -ForegroundColor Yellow
+    Write-Host "  .\setup.ps1 -ConfigureSubs" -ForegroundColor Cyan
+    throw "Subscription '$Key' has placeholder ID. Run .\setup.ps1 -ConfigureSubs to fix."
   }
 
   return $sub.id
@@ -289,10 +292,10 @@ function Ensure-AzureAuth {
     Write-Host "Azure CLI (az) is not installed." -ForegroundColor Red
     Write-Host ""
     Write-Host "Next step:" -ForegroundColor White
-    Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
+    Write-Host "  .\setup.ps1 -Azure" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Or install manually: https://aka.ms/installazurecli" -ForegroundColor DarkGray
-    throw "Azure CLI not installed. Run: .\scripts\setup.ps1"
+    throw "Azure CLI not installed. Run: .\setup.ps1 -Azure"
   }
 
   # Fast path: already authenticated with fresh token (>5 min remaining)
@@ -340,7 +343,7 @@ function Ensure-AzureAuth {
   Write-Host "  az login" -ForegroundColor Cyan
   Write-Host ""
   Write-Host "Or run full setup:" -ForegroundColor Gray
-  Write-Host "  .\scripts\setup.ps1 -DoLogin" -ForegroundColor Cyan
+  Write-Host "  .\setup.ps1 -Azure" -ForegroundColor Cyan
   Write-Host ""
   throw "Azure CLI not authenticated. Run: az login"
 }
