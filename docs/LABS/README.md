@@ -18,7 +18,7 @@
 | [lab-005](../../labs/lab-005-vwan-s2s-bgp-apipa/README.md) | Gold reference: dual-instance vWAN VPN with deterministic APIPA | Azure | ~$0.61/hr | lab-001 passing | Stable |
 | [lab-006](../../labs/lab-006-vwan-spoke-bgp-router-loopback/README.md) | vWAN hub learns BGP from FRR router VM; loopback propagation | Azure | ~$0.37/hr | lab-001 + familiarity with BGP | Stable |
 | [lab-007](../../labs/lab-007-azure-dns-foundations/README.md) | Azure Private DNS Zone, VNet link, auto-registration, static A record | Azure | ~$0.02/hr | lab-000 passing | Stable |
-| [lab-008](../../labs/lab-008-azure-dns-private-resolver/README.md) | DNS Private Resolver in hub; forwarding ruleset to spoke; cross-VNet resolution | Azure | ~$0.03/hr | lab-007 recommended | Stable |
+| [lab-008](../../labs/lab-008-azure-dns-private-resolver/README.md) | DNS Private Resolver in hub; forwarding ruleset to spoke; cross-VNet resolution; supports `-Mode Base\|StickyBlock\|ForwardingVariants` | Azure | ~$0.03/hr | lab-007 recommended | Stable |
 
 ---
 
