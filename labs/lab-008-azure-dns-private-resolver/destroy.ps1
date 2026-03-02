@@ -18,9 +18,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $LabRoot  = $PSScriptRoot
-$RepoRoot = Resolve-Path (Join-Path $LabRoot "../..") | Select-Object -ExpandProperty Path
+$RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandProperty Path
 
-. (Join-Path $RepoRoot "scripts/labs-common.ps1")
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
 
 $ResourceGroup    = "rg-lab-008-dns-resolver"
 $RulesetName      = "ruleset-008"
@@ -195,7 +195,7 @@ if (Test-Path $dataDir) {
 if (-not $KeepLogs) {
   $logsDir  = Join-Path $LabRoot "logs"
   if (Test-Path $logsDir) {
-    $logFiles = Get-ChildItem -Path $logsDir -Filter "lab-008-*.log" -ErrorAction SilentlyContinue
+    $logFiles = @(Get-ChildItem -Path $logsDir -Filter "lab-008-*.log" -ErrorAction SilentlyContinue)
     if ($logFiles.Count -gt 0) {
       Write-Host "  Removing $($logFiles.Count) log file(s)..." -ForegroundColor DarkGray
       $logFiles | Remove-Item -Force

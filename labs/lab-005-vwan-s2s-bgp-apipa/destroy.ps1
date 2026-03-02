@@ -112,7 +112,7 @@ if (Test-Path $dataDir) {
 if (-not $KeepLogs) {
   $logsDir = Join-Path $LabRoot "logs"
   if (Test-Path $logsDir) {
-    $logFiles = Get-ChildItem -Path $logsDir -Filter "lab-005-*.log"
+    $logFiles = @(Get-ChildItem -Path $logsDir -Filter "lab-005-*.log")
     if ($logFiles.Count -gt 0) {
       Write-Host "Cleaning up $($logFiles.Count) log file(s)..." -ForegroundColor Gray
       $logFiles | Remove-Item -Force

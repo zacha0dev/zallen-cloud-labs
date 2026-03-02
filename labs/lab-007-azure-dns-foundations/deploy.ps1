@@ -30,13 +30,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $LabRoot   = $PSScriptRoot
-$RepoRoot  = Resolve-Path (Join-Path $LabRoot "../..") | Select-Object -ExpandProperty Path
+$RepoRoot  = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandProperty Path
 $LogsDir   = Join-Path $LabRoot "logs"
 $InfraDir  = Join-Path $LabRoot "infra"
-$OutputsPath = Join-Path $RepoRoot ".data/lab-007/outputs.json"
+$OutputsPath = Join-Path $RepoRoot ".data\lab-007\outputs.json"
 
 # Load shared helpers
-. (Join-Path $RepoRoot "scripts/labs-common.ps1")
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
 
 # Lab configuration
 $ResourceGroup   = "rg-lab-007-dns-foundations"

@@ -54,15 +54,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $LabRoot    = $PSScriptRoot
-$RepoRoot   = Resolve-Path (Join-Path $LabRoot "../..") | Select-Object -ExpandProperty Path
+$RepoRoot   = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandProperty Path
 $LogsDir    = Join-Path $LabRoot "logs"
 $InfraDir   = Join-Path $LabRoot "infra"
 $ScriptsDir = Join-Path $LabRoot "scripts"
-$DataDir    = Join-Path $RepoRoot ".data/lab-008"
+$DataDir    = Join-Path $RepoRoot ".data\lab-008"
 $OutputsPath     = Join-Path $DataDir "outputs.json"
 $TestResultsPath = Join-Path $DataDir "test-results.json"
 
-. (Join-Path $RepoRoot "scripts/labs-common.ps1")
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
 
 # Lab configuration
 $ResourceGroup    = "rg-lab-008-dns-resolver"

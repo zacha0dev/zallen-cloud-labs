@@ -1,7 +1,7 @@
 # labs/lab-001-virtual-wan-hub-routing/inspect.ps1
 param(
   [string]$Sub,
-  [string]$RgName = "rg-azure-labs-lab-001",
+  [string]$RgName = "rg-lab-001-vwan-routing",
   [string]$VmName = "vm-lab-001"
 )
 
