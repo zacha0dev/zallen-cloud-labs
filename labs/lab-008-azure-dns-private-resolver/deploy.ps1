@@ -264,7 +264,34 @@ $bicepResult = az deployment group create `
   --output json 2>&1
 
 if ($LASTEXITCODE -ne 0) {
-  Write-Host $bicepResult -ForegroundColor Red
+  $bicepOutput = $bicepResult -join "`n"
+  Write-Host $bicepOutput -ForegroundColor Red
+  Write-Host ""
+  # Emit targeted error guidance for common DNS Private Resolver failures
+  if ($bicepOutput -match "DnsResolverLimitExceeded|resolver.*limit|quota.*dnsResolver") {
+    Write-Host "[ERROR] DNS Private Resolver limit exceeded." -ForegroundColor Red
+    Write-Host "        Azure allows 1 resolver per VNet. Check for existing resolvers:" -ForegroundColor Red
+    Write-Host "        az dns-resolver list --query '[].{name:name,vnet:virtualNetwork.id}' -o table" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "SubnetNotDelegated|delegation.*Microsoft.Network/dnsResolvers") {
+    Write-Host "[ERROR] Resolver subnet delegation missing." -ForegroundColor Red
+    Write-Host "        Endpoint subnets must be delegated to 'Microsoft.Network/dnsResolvers'." -ForegroundColor Red
+    Write-Host "        This is set in main.bicep — check subnet delegation config." -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "NetworkSecurityGroup.*not.*allowed|NSG.*resolver|subnet.*nsg") {
+    Write-Host "[ERROR] NSG attached to resolver subnet." -ForegroundColor Red
+    Write-Host "        Resolver endpoint subnets must NOT have an NSG." -ForegroundColor Red
+    Write-Host "        Remove the NSG from snet-dns-inbound and snet-dns-outbound." -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "PrivateDnsZone.*Conflict|ZoneName.*already exist") {
+    Write-Host "[ERROR] DNS zone conflict: '$DnsZoneName' already exists or has a conflicting link." -ForegroundColor Red
+    Write-Host "        Check:  az network private-dns zone show -g $ResourceGroup -n $DnsZoneName" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "AuthorizationFailed|does not have authorization|Forbidden") {
+    Write-Host "[ERROR] Authorization failure: current principal lacks required RBAC permissions." -ForegroundColor Red
+    Write-Host "        Required: Contributor or Network Contributor on the subscription/RG." -ForegroundColor Red
+    Write-Host "        Principal: $(az account show --query user.name -o tsv 2>$null)" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "locationNotAvailableForResourceType|feature.*not.*supported.*region") {
+    Write-Host "[ERROR] DNS Private Resolver is not available in '$Location'." -ForegroundColor Red
+    Write-Host "        Supported regions: eastus, eastus2, westus2, centralus, northeurope, westeurope" -ForegroundColor Yellow
+    Write-Host "        Re-run with: -Location eastus2" -ForegroundColor Yellow
+  }
   throw "Bicep deployment failed. See output above."
 }
 
@@ -347,17 +374,40 @@ $rulesetValid = ($null -ne $ruleset -and $ruleset.provisioningState -eq "Succeed
 Write-Validation -Check "Forwarding ruleset provisioned" -Passed $rulesetValid -Details $RulesetName
 if (-not $rulesetValid) { $allValid = $false }
 
-# Forwarding rules
+# Forwarding rules — validate rule exists AND target IP matches inbound endpoint
 if ($rulesetValid) {
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rules = az dns-resolver forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
-  $ruleInternalLabExists = ($rules | Where-Object { $_.name -eq "rule-internal-lab" }) -ne $null
-  $ruleOnpremExists      = ($rules | Where-Object { $_.name -eq "rule-onprem-example" }) -ne $null
-  Write-Validation -Check "Forwarding rule: internal.lab. -> inbound EP" -Passed $ruleInternalLabExists
+  $ruleInternalLab = $rules | Where-Object { $_.name -eq "rule-internal-lab" }
+  $ruleOnprem      = $rules | Where-Object { $_.name -eq "rule-onprem-example" }
+
+  $ruleInternalLabExists = ($null -ne $ruleInternalLab)
+  $ruleOnpremExists      = ($null -ne $ruleOnprem)
+
+  # Validate that internal.lab rule target IP matches the actual inbound endpoint IP
+  $ruleTargetIp = if ($ruleInternalLab) { $ruleInternalLab.targetDnsServers[0].ipAddress } else { "unknown" }
+  $ruleTargetMatches = ($ruleTargetIp -eq $resolvedInboundIp) -and ($resolvedInboundIp -ne "unknown")
+
+  Write-Validation -Check "Forwarding rule: internal.lab. -> inbound EP" -Passed $ruleInternalLabExists `
+    -Details "domain: $($ruleInternalLab.domainName)"
+  Write-Validation -Check "Rule target IP matches inbound endpoint" -Passed $ruleTargetMatches `
+    -Details "rule target=$ruleTargetIp  inbound EP=$resolvedInboundIp"
   Write-Validation -Check "Forwarding rule: onprem.example.com. -> 10.0.0.1" -Passed $ruleOnpremExists
+
   if (-not $ruleInternalLabExists) { $allValid = $false }
+  if (-not $ruleTargetMatches)     { $allValid = $false }
   if (-not $ruleOnpremExists)      { $allValid = $false }
+
+  # Warn if a wildcard '.' rule exists (would break Azure DNS)
+  $wildcardRule = $rules | Where-Object { $_.domainName -eq "." -or $_.domainName -eq "'.'"}
+  if ($wildcardRule) {
+    Write-Host ""
+    Write-Host "  [WARN] Wildcard '.' forwarding rule detected in ruleset!" -ForegroundColor Red
+    Write-Host "         This will break Azure platform DNS for all VMs linked to this ruleset." -ForegroundColor Red
+    Write-Host "         Remove it: az dns-resolver forwarding-rule delete -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n '$($wildcardRule.name)'" -ForegroundColor Yellow
+    $allValid = $false
+  }
 }
 
 # Ruleset linked to spoke
@@ -412,10 +462,46 @@ Write-Host "  2. Azure DNS sees ruleset linked to spoke VNet" -ForegroundColor G
 Write-Host "  3. Rule matches 'internal.lab.' -> forwards to inbound EP ($resolvedInboundIp:53)" -ForegroundColor Gray
 Write-Host "  4. Inbound EP -> Azure resolves against private zone" -ForegroundColor Gray
 Write-Host "  5. Returns: 10.80.1.10" -ForegroundColor Gray
+
+# Attempt cross-VNet DNS test via Run-Command from spoke VM
 Write-Host ""
-Write-Host "  Test from VM via Run-Command:" -ForegroundColor Yellow
-Write-Host "  az vm run-command invoke -g $ResourceGroup -n $VmSpokeName \" -ForegroundColor DarkGray
-Write-Host "    --command-id RunShellScript --scripts 'nslookup app.internal.lab'" -ForegroundColor DarkGray
+Write-Host "Attempting cross-VNet DNS validation from spoke VM via Run-Command..." -ForegroundColor Yellow
+Write-Host "  (Validates the full forwarding path: spoke -> ruleset -> inbound EP -> zone)" -ForegroundColor DarkGray
+
+$testScript008 = "nslookup app.$DnsZoneName 168.63.129.16 ; echo '###' ; nslookup azure.microsoft.com ; echo '###' ; cat /etc/resolv.conf"
+
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$runCmdResult = az vm run-command invoke `
+  -g $ResourceGroup -n $VmSpokeName `
+  --command-id RunShellScript `
+  --scripts $testScript008 `
+  -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+
+if ($runCmdResult -and $runCmdResult.value -and $runCmdResult.value.Count -gt 0) {
+  $rawOutput = $runCmdResult.value[0].message
+  $sections  = $rawOutput -split '###'
+
+  $appOutput     = if ($sections.Count -ge 1) { $sections[0].Trim() } else { "" }
+  $publicOutput  = if ($sections.Count -ge 2) { $sections[1].Trim() } else { "" }
+  $resolvOutput  = if ($sections.Count -ge 3) { $sections[2].Trim() } else { "" }
+
+  $appResolved      = ($appOutput    -match "10\.80\.1\.10")
+  $publicResolved   = ($publicOutput -match "Address" -and $publicOutput -notmatch "SERVFAIL")
+  $platformResolver = ($resolvOutput -match "168\.63\.129\.16")
+
+  Write-Validation -Check "Cross-VNet: app.internal.lab resolves to 10.80.1.10" -Passed $appResolved `
+    -Details "via ruleset -> inbound EP -> private zone"
+  Write-Validation -Check "Azure DNS unbroken: azure.microsoft.com resolves (no wildcard deny)" -Passed $publicResolved
+  Write-Validation -Check "Platform resolver 168.63.129.16 present in resolv.conf" -Passed $platformResolver
+
+  if (-not $appResolved)    { $allValid = $false }
+  if (-not $publicResolved) { $allValid = $false }
+} else {
+  Write-Host "  [WARN] Run-Command did not return output (VM may still be booting or peering settling)." -ForegroundColor Yellow
+  Write-Host "         Re-run manually after ~2 min:" -ForegroundColor DarkGray
+  Write-Host "         az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'nslookup app.internal.lab'" -ForegroundColor DarkGray
+}
 
 $phase5Elapsed = Get-ElapsedTime -StartTime $phase5Start
 Write-Log "Phase 5 completed in $phase5Elapsed" "SUCCESS"

@@ -92,6 +92,14 @@ while ($attempt -lt $maxAttempts) {
 
 $deleteElapsed = Get-ElapsedTime -StartTime $deleteStartTime
 
+$rgStillExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
+if (-not $rgStillExists) {
+  Write-Host "  [PASS] Resource group deleted: $ResourceGroup" -ForegroundColor Green
+} else {
+  Write-Host "  [FAIL] Resource group may still exist — check Azure Portal" -ForegroundColor Yellow
+  Write-Host "         az group show -n $ResourceGroup" -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "Cleaning up local data..." -ForegroundColor Gray
 
@@ -121,4 +129,7 @@ Write-Host ("=" * 60) -ForegroundColor Green
 Write-Host ""
 Write-Host "Deletion time:  $deleteElapsed" -ForegroundColor Gray
 Write-Host "Total time:     $totalElapsed" -ForegroundColor Gray
+Write-Host ""
+Write-Host "Cost check (confirm no billable resources remain):" -ForegroundColor Yellow
+Write-Host "  .\..\..\tools\cost-check.ps1 -Lab lab-008" -ForegroundColor Gray
 Write-Host ""

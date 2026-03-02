@@ -234,6 +234,12 @@ Removes:
 
 Note: DNS Private Resolver teardown can take 3-5 minutes. The script waits up to 12 minutes.
 
+After destroying, run the cost audit to confirm no billable resources remain:
+
+```powershell
+.\..\..\tools\cost-check.ps1 -Lab lab-008
+```
+
 ---
 
 ## Troubleshooting
@@ -317,9 +323,21 @@ lab-008-azure-dns-private-resolver/
 
 ---
 
+## Next Labs (DNS Series)
+
+| Lab | What you explored before | Where to go next |
+|-----|--------------------------|-----------------|
+| [lab-007](../lab-007-azure-dns-foundations/README.md) | Single-VNet private zone + auto-registration | ← prerequisite |
+| lab-008 | Hub resolver + spoke forwarding ruleset | ← you are here |
+
+With lab-007 and lab-008 complete you have covered the full Azure DNS private resolution stack. Apply these patterns in your own hub-spoke or multi-VNet designs.
+
+---
+
 ## References
 
 - [Azure DNS Private Resolver overview](https://docs.microsoft.com/azure/dns/dns-private-resolver-overview)
 - [Resolver endpoint subnet requirements](https://docs.microsoft.com/azure/dns/dns-private-resolver-overview#subnet-restrictions)
 - [DNS Forwarding Rulesets](https://docs.microsoft.com/azure/dns/private-resolver-endpoints-rulesets)
 - [Bicep DNS Resolver reference](https://docs.microsoft.com/azure/templates/microsoft.network/dnsresolvers)
+- Domain guide: [docs/DOMAINS/dns.md](../../docs/DOMAINS/dns.md)
