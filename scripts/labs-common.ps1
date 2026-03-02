@@ -90,8 +90,8 @@ function Get-LabConfig {
     Write-Host '    "default": "lab"' -ForegroundColor Gray
     Write-Host '  }' -ForegroundColor Gray
     Write-Host ""
-    Write-Host "See: docs/labs-config.md" -ForegroundColor DarkGray
-    throw "Lab config missing 'subscriptions' block. See docs/labs-config.md"
+    Write-Host "See: docs/REFERENCE.md" -ForegroundColor DarkGray
+    throw "Lab config missing 'subscriptions' block. See docs/REFERENCE.md"
   }
 
   return $cfg
@@ -183,7 +183,7 @@ function Get-SubscriptionId {
     Write-Host ""
     Write-Host "Subscription '$Key' is missing 'id' field." -ForegroundColor Red
     Write-Host "File: $subsPath" -ForegroundColor Yellow
-    throw "Subscription '$Key' missing 'id'. See docs/labs-config.md"
+    throw "Subscription '$Key' missing 'id'. See docs/REFERENCE.md"
   }
 
   $placeholderId = "00000000-0000-0000-0000-000000000000"

@@ -11,6 +11,35 @@ See [AUDIT.md](AUDIT.md) for current next actions.
 
 ---
 
+## v0.7.1 - 2026-03-02 - Cleanup, Rename + CONTRIBUTING.md
+
+### Added
+
+- `CONTRIBUTING.md` - AI-driven IaC workflow story: 6-step cycle, prompting patterns, CLAUDE.md guide, two paths (fork vs. fresh repo)
+
+### Changed
+
+- Project renamed from "Zallen Cloud Labs" to **AI-Driven Cloud Labs** (`README.md`, `docs/README.md`)
+- Root `README.md` - Added "Why This Exists" and "Want to Build Your Own Labs?" sections for public contributors
+- `scripts/aws/aws-common.ps1` - Fixed 6 stale doc refs → `docs/DOMAINS/aws-hybrid.md`
+- `scripts/labs-common.ps1` - Fixed stale `docs/labs-config.md` refs → `docs/REFERENCE.md`
+- `docs/ops/ONBOARDING.md` - Fixed `aws-setup.md` link → `docs/DOMAINS/aws-hybrid.md`
+- `labs/lab-000,004,005` READMEs / walkthrough - Fixed `.\scripts\setup.ps1 -DoLogin` → `.\setup.ps1 -ConfigureSubs`
+
+### Removed
+
+- `docs/aws-setup.md` (stub deleted; canonical content in `docs/DOMAINS/aws-hybrid.md`)
+- `docs/aws-account-setup.md` (stub deleted)
+- `docs/aws-cli-profile-setup.md` (stub deleted)
+- `docs/aws-identity-center-sso.md` (stub deleted)
+- `docs/aws-troubleshooting.md` (stub deleted)
+- `docs/setup-overview.md` (stub deleted; canonical content in `docs/ops/ONBOARDING.md`)
+- `docs/labs-config.md` (stub deleted; canonical content in `docs/ops/ONBOARDING.md`)
+- `docs/observability-index.md` (stub deleted; canonical content in `docs/DOMAINS/observability.md`)
+- `docs/git-&-github.md` (low-value; content merged into `docs/REFERENCE.md`)
+
+---
+
 ## v0.7.0 - 2026-03-02 - Docs Reorganization + UX Improvements
 
 ### Added
@@ -29,14 +58,10 @@ See [AUDIT.md](AUDIT.md) for current next actions.
 ### Changed
 
 - Root `README.md` - Updated Quick Start links to point to `docs/README.md`
-- `docs/setup-overview.md` - Stubbed; content superseded by `docs/ops/ONBOARDING.md`
-- `docs/labs-config.md` - Stubbed; content superseded by `docs/ops/ONBOARDING.md`
-- `docs/observability-index.md` - Stubbed; content moved to `docs/DOMAINS/observability.md`
-- `docs/aws-setup.md` - Stubbed; content merged into `docs/DOMAINS/aws-hybrid.md`
-- `docs/aws-account-setup.md` - Stubbed; content merged into `docs/DOMAINS/aws-hybrid.md`
-- `docs/aws-cli-profile-setup.md` - Stubbed; content merged into `docs/DOMAINS/aws-hybrid.md`
-- `docs/aws-identity-center-sso.md` - Stubbed; content merged into `docs/DOMAINS/aws-hybrid.md`
-- `docs/aws-troubleshooting.md` - Stubbed; content merged into `docs/DOMAINS/aws-hybrid.md`
+- `docs/setup-overview.md` - Stubbed (removed in v0.7.1)
+- `docs/labs-config.md` - Stubbed (removed in v0.7.1)
+- `docs/observability-index.md` - Stubbed (removed in v0.7.1)
+- `docs/aws-*.md` (5 files) - Stubbed; content merged into `docs/DOMAINS/aws-hybrid.md` (removed in v0.7.1)
 - `labs/lab-001,003,004,006/README.md` - Added links to domain docs (vWAN, observability)
 
 ---

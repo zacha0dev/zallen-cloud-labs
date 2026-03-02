@@ -1,8 +1,18 @@
-# Zallen Cloud Labs
+# AI-Driven Cloud Labs
 
-Personal lab collection for cloud networking and hybrid connectivity. Mostly Azure vWAN, some AWS.
+> Azure networking labs built with [Claude Code](https://claude.ai/code) — from infrastructure design to deployment scripts, generated and refined through AI-assisted workflows.
 
-> Independent project. Not affiliated with Microsoft or Amazon.
+A personal lab collection focused on Azure Virtual WAN, hybrid connectivity, and cloud networking patterns. Built using an AI-driven approach: every lab, script, and doc in this repository was designed and iterated with Claude Code as a coding partner.
+
+---
+
+## Why This Exists
+
+Two goals:
+
+**1. Learn by building.** Real Azure infrastructure, real costs, real BGP sessions. No sandboxes, no simulations.
+
+**2. Show the AI-driven IaC workflow.** Every commit in this repo reflects a human-AI collaboration — prompting, reviewing, refining. If you want to build your own labs using Claude Code, this is a working reference for how to do it.
 
 ---
 
@@ -15,24 +25,22 @@ Three commands from clone to first lab:
 git clone https://github.com/zacha0dev/zallen-cloud-labs.git
 cd zallen-cloud-labs
 
-# 2. Set up Azure tools + pick your subscription (guided)
+# 2. Set up Azure tools + pick your subscription (guided wizard)
 .\setup.ps1 -Azure
 
-# 3. Run the free baseline lab
+# 3. Run the free baseline lab to verify everything works
 cd labs\lab-000_resource-group
 .\deploy.ps1
 .\destroy.ps1    # Always clean up!
 ```
 
-No AWS account needed. No manual JSON editing required.
-
-Full onboarding guide: [docs/ops/ONBOARDING.md](docs/ops/ONBOARDING.md)
+No AWS account needed. No manual JSON editing. The setup wizard auto-detects your Azure subscriptions.
 
 ---
 
 ## Documentation
 
-All documentation is at: **[docs/README.md](docs/README.md)**
+Everything is organized at: **[docs/README.md](docs/README.md)**
 
 | I want to... | Go to |
 |-------------|-------|
@@ -41,7 +49,8 @@ All documentation is at: **[docs/README.md](docs/README.md)**
 | Learn vWAN concepts | [docs/DOMAINS/vwan.md](docs/DOMAINS/vwan.md) |
 | Set up AWS (lab-003 only) | [docs/DOMAINS/aws-hybrid.md](docs/DOMAINS/aws-hybrid.md) |
 | Validate / troubleshoot | [docs/DOMAINS/observability.md](docs/DOMAINS/observability.md) |
-| Check current status / known issues | [docs/AUDIT.md](docs/AUDIT.md) |
+| Check current known issues | [docs/AUDIT.md](docs/AUDIT.md) |
+| Build your own labs with AI | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ---
 
@@ -61,14 +70,20 @@ All documentation is at: **[docs/README.md](docs/README.md)**
 
 ## Cost Safety
 
-**Always run `.\destroy.ps1`** when done. Run `.\tools\cost-check.ps1` to find leftover resources.
+**Always run `.\destroy.ps1`** when done. Run `.\tools\cost-check.ps1` to find leftover billable resources.
 
 ---
 
 ## Advanced: AWS Setup (lab-003 Only)
 
-See [docs/DOMAINS/aws-hybrid.md](docs/DOMAINS/aws-hybrid.md).
+See [docs/DOMAINS/aws-hybrid.md](docs/DOMAINS/aws-hybrid.md) for complete AWS account, SSO, and CLI setup instructions.
 
 ---
 
-Zachary Allen - 2026
+## Want to Build Your Own Labs?
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the AI-driven workflow that built this repo — prompting patterns, lab structure conventions, and how to fork or start fresh with Claude Code.
+
+---
+
+> Built with [Claude Code](https://claude.ai/code) by [Zachary Allen](https://github.com/zacha0dev) - 2026

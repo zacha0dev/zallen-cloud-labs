@@ -7,8 +7,8 @@ Complete step-by-step guide for deploying vWAN default route propagation lab.
 From the **repo root**, run setup first:
 
 ```powershell
-# Run setup (first time only)
-.\scripts\setup.ps1 -DoLogin
+# Run setup (first time only) - from repo root
+.\setup.ps1 -Azure
 
 # Verify Azure CLI is installed
 az --version
@@ -93,4 +93,4 @@ az network nic show-effective-route-table -g rg-lab-004-vwan-route-prop -n nic-v
 
 **Routes not appearing:** Wait 5-10 min after deployment for propagation.
 
-**Auth error:** Run `az login` or re-run `scripts\setup.ps1 -DoLogin`.
+**Auth error:** Run `az login` or re-run `.\setup.ps1 -Azure` from the repo root.
