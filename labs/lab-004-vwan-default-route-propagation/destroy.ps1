@@ -115,7 +115,7 @@ if (Test-Path $dataDir) {
 
 $outputsDir = Join-Path $LabRoot "outputs"
 if (Test-Path $outputsDir) {
-  $outputFiles = Get-ChildItem -Path $outputsDir -Filter "*.json" -ErrorAction SilentlyContinue
+  $outputFiles = @(Get-ChildItem -Path $outputsDir -Filter "*.json" -ErrorAction SilentlyContinue)
   if ($outputFiles.Count -gt 0) {
     Write-Host "  Removing $($outputFiles.Count) output file(s)..." -ForegroundColor DarkGray
     $outputFiles | Remove-Item -Force
@@ -126,7 +126,7 @@ if (Test-Path $outputsDir) {
 if (-not $KeepLogs) {
   $logsDir = Join-Path $LabRoot "logs"
   if (Test-Path $logsDir) {
-    $logFiles = Get-ChildItem -Path $logsDir -Filter "lab-004-*.log" -ErrorAction SilentlyContinue
+    $logFiles = @(Get-ChildItem -Path $logsDir -Filter "lab-004-*.log" -ErrorAction SilentlyContinue)
     if ($logFiles.Count -gt 0) {
       Write-Host "  Removing $($logFiles.Count) log file(s)..." -ForegroundColor DarkGray
       $logFiles | Remove-Item -Force
