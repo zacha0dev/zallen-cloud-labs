@@ -81,6 +81,50 @@ Use this when private zones live in a hub VNet and spokes need controlled access
 
 ---
 
+## DNS Security Policy + Cache Persistence
+
+Azure DNS Security Policy allows you to enforce domain-level access controls at the resolver — for example, blocking resolution of a specific FQDN or returning a custom response (NXDOMAIN, CNAME sinkhole).
+
+### How it works
+
+A DNS Security Policy is applied to a forwarding ruleset. When a matching query arrives at the resolver, the policy evaluation happens **before** the query is forwarded. If the policy blocks the domain, the resolver returns the configured response immediately.
+
+```
+VM query → Azure DNS → ruleset evaluation → [policy check] → block/pass
+```
+
+### Cache persistence (sticky block behavior)
+
+Even when a policy blocks a domain, cached responses at the resolver or client may persist for their TTL. This leads to what practitioners call **sticky block behavior**:
+
+1. Client resolves `app.internal.lab` → answer cached with TTL = 30s
+2. Policy is applied: block `app.internal.lab`
+3. Client queries again within TTL window → **still gets cached answer** (policy not evaluated for cached response)
+4. Policy is removed
+5. Client queries again → cached response (from step 3) may still be NXDOMAIN until its TTL expires
+
+Key distinction:
+- **Policy evaluation** happens at the resolver, on cache miss
+- **Cache serving** bypasses policy evaluation entirely
+
+### Proving the cache, not the policy
+
+To isolate cache behavior:
+- Use a **fresh random subdomain** each test run (guarantees a cache miss on first query)
+- Use a **fresh VM** (no prior queries = no client-side cache)
+- Watch the TTL window — Azure Private DNS default TTL is 10-300s depending on record type
+- Ensure all queries go through the **same resolver path** (same inbound endpoint IP)
+
+### Lab reference
+
+[lab-008 StickyBlock mode](../../labs/lab-008-azure-dns-private-resolver/README.md#dns-security-policy--sticky-block) runs this test automatically:
+- Seeds a test DNS record
+- Applies a block (DNS Security Policy or forwarding rule redirect to RFC 5737 TEST-NET)
+- Queries before/after/post-removal in a loop
+- Emits structured evidence JSON to `.data/lab-008/test-results.json`
+
+---
+
 ## Security Model: No Wildcard Deny
 
 A common mistake when deploying DNS Private Resolver is adding a `'.'` (dot) forwarding rule to intercept all DNS traffic. **Do not do this.**

@@ -85,6 +85,34 @@ Resolution flow (spoke VM → app.internal.lab):
 
 ---
 
+## Modes
+
+Lab 008 supports parameterized deployment modes via `-Mode`:
+
+| Mode | Description |
+|------|-------------|
+| `Base` (default) | Deploy base infra only — always stable and reliable |
+| `StickyBlock` | Base + DNS Security Policy (or forwarding rule redirect) cache persistence test |
+| `ForwardingVariants` | Base + forwarding rule variation tests (safe, generic) |
+
+```powershell
+# Base deploy (default)
+.\deploy.ps1 -Mode Base -AdminPassword "YourLabPass123!"
+
+# StickyBlock — test DNS cache persistence after policy apply/remove
+.\deploy.ps1 -Mode StickyBlock -AdminPassword "YourLabPass123!"
+
+# ForwardingVariants — test adding/removing rules and VNet links
+.\deploy.ps1 -Mode ForwardingVariants -AdminPassword "YourLabPass123!"
+
+# StickyBlock infra only (skip tests, just wire up base infra)
+.\deploy.ps1 -Mode StickyBlock -SkipTests -AdminPassword "YourLabPass123!"
+```
+
+> **Note:** Base mode must succeed before running StickyBlock or ForwardingVariants. All modes use the same base infrastructure. If the `-SkipTests` flag is set, Phase 2 (validation) and Phase 3 (mode-specific tests) are skipped regardless of the mode chosen.
+
+---
+
 ## Deploy
 
 ```powershell
@@ -103,6 +131,8 @@ Optional flags:
 | `-AdminUser` | azureuser | VM OS username |
 | `-Owner` | `$env:USERNAME` | tag value |
 | `-Force` | off | skip confirmations |
+| `-Mode` | `Base` | `Base`, `StickyBlock`, or `ForwardingVariants` |
+| `-SkipTests` | off | infra-only; skip Phase 2 and Phase 3 |
 
 Deployment time: **~8-12 minutes** (resolver endpoint provisioning takes the most time).
 
@@ -111,10 +141,10 @@ Deployment time: **~8-12 minutes** (resolver endpoint provisioning takes the mos
 | Phase | What happens | ~Time |
 |---|---|---|
 | 0 — Preflight | auth, config, cost warning | <1 min |
-| 1 — Resource Group | create RG | <1 min |
-| 2 — Bicep deploy | VNets, peerings, resolver, endpoints, ruleset, zone, VM | 7-10 min |
-| 5 — Validation | verify all resources + rules + record | <1 min |
-| 6 — Summary | write outputs.json | <1 min |
+| 1 — Deploy Base Infra | resource group + Bicep (VNets, resolver, endpoints, ruleset, zone, VM) | 7-10 min |
+| 2 — Base Validation | verify all resources + rules + record (skipped with `-SkipTests`) | <1 min |
+| 3 — Mode Execution | StickyBlock or ForwardingVariants test harness (Base: no-op) | varies |
+| 4 — Outputs + Evidence | write outputs.json + test-results.json | <1 min |
 
 ---
 
@@ -188,13 +218,69 @@ onprem.example.com       → SERVFAIL     (forwarded to 10.0.0.1, no real server
 
 ---
 
+## DNS Security Policy – Sticky Block
+
+The `StickyBlock` mode tests **cache persistence** behavior in Azure DNS Private Resolver. This matters when enforcement policies are applied at the DNS layer.
+
+### What you're testing
+
+When a DNS Security Policy (or a forwarding rule redirect) is applied, it changes what a resolver returns for a given domain. But DNS clients and intermediate resolvers **cache responses for their TTL**. The sticky block test answers:
+
+> *If I block a domain at the resolver level after a client already resolved it — how long does the cached answer persist?*
+
+### How the test works
+
+1. **Before policy:** A test A record (`sticky.internal.lab → 10.80.1.99`) is created and queried from the spoke VM — establishing a baseline resolved answer in the resolver's cache.
+2. **Apply block:** The test tries to create a native [Azure DNS Security Policy](https://docs.microsoft.com/azure/dns/). If that feature isn't available in your region/subscription, it falls back to redirecting the zone's forwarding rule to `192.0.2.1` (RFC 5737 TEST-NET — an address that never routes). Either way, subsequent queries should fail.
+3. **After policy:** Queries run again. You expect `SERVFAIL` or `NXDOMAIN` — the block is enforced.
+4. **Remove block:** The policy or redirecting rule is removed.
+5. **Post-removal loop:** Repeated queries run at intervals. If responses still fail after removal, it is evidence the **resolver is serving from cache** rather than re-querying upstream.
+
+### What you should see
+
+| Phase | Expected result |
+|-------|----------------|
+| Before policy | `10.80.1.99` resolved |
+| After policy | `SERVFAIL` or `NXDOMAIN` |
+| After removal (immediately) | May still return error (cached NXDOMAIN or cached redirect failure) |
+| After removal (30-60s later) | Should resolve again once TTL expires |
+
+> If you see the same failure response immediately after removal, that **is the cache** — not the policy. This is the key learning.
+
+### Proving it's cache, not the policy
+
+Use a **new random subdomain** for each run to bypass any existing cache:
+```powershell
+# Each run uses a unique subdomain — guaranteed cache miss on first query
+.\deploy.ps1 -Mode StickyBlock -AdminPassword "YourLabPass123!"
+```
+
+The test script uses `sticky.internal.lab` which is seeded fresh each run. For maximum isolation:
+- Use a fresh VM (no prior queries)
+- Wait for the TTL window (typically 30 seconds for Azure Private DNS)
+- Ensure all queries go through the same resolver path (inbound EP IP, not a bypass)
+
+### Policy eval vs caching — key distinction
+
+| Mechanism | What it controls |
+|-----------|-----------------|
+| DNS Security Policy | What the **resolver returns** for matching queries |
+| DNS response cache | How long that answer is **stored at the resolver** |
+
+The policy can be applied or removed in seconds. The cached answer persists until its TTL expires. This is why you can remove a block and still see "blocked" behavior for 30–300 seconds afterward.
+
+See also: [docs/DOMAINS/dns.md — DNS Security Policy + cache persistence](../../docs/DOMAINS/dns.md#dns-security-policy--cache-persistence)
+
+---
+
 ## Outputs
 
-After deployment, `.data/lab-008/outputs.json` contains:
+After deployment, two files are written to `.data/lab-008/`:
 
+**`outputs.json`** — base infrastructure snapshot:
 ```json
 {
-  "metadata": { "lab": "lab-008", "status": "PASS", ... },
+  "metadata": { "lab": "lab-008", "mode": "Base", "status": "PASS", ... },
   "azure": {
     "resourceGroup": "rg-lab-008-dns-resolver",
     "hubVnet": { "name": "vnet-hub-008", "cidr": "10.80.0.0/16" },
@@ -215,6 +301,26 @@ After deployment, `.data/lab-008/outputs.json` contains:
       "aRecord": { "fqdn": "app.internal.lab", "ip": "10.80.1.10" }
     }
   }
+}
+```
+
+**`test-results.json`** — mode-specific test evidence:
+```json
+{
+  "mode": "StickyBlock",
+  "base": { "status": "PASS", "allChecks": true },
+  "modeResults": {
+    "testDomain": "sticky.internal.lab",
+    "dnsPolicyMethod": "forwarding-rule-redirect",
+    "persistenceDetected": true,
+    "phases": {
+      "before_policy": { "summary": { "resolved": true } },
+      "after_policy":  { "summary": { "resolved": false } },
+      "post_removal":  [ ... ]
+    }
+  },
+  "notes": "...",
+  "timestamps": { "started": "...", "completed": "...", "elapsed": "..." }
 }
 ```
 
@@ -301,13 +407,24 @@ az dns-resolver forwarding-rule list -g rg-lab-008-dns-resolver \
 
 ```
 lab-008-azure-dns-private-resolver/
-├── deploy.ps1          # Phased deployment (phases 0,1,2,5,6)
-├── destroy.ps1         # Idempotent cleanup
-├── README.md           # This file
+├── deploy.ps1                          # Phased deployment (phases 0-4); supports -Mode and -SkipTests
+├── destroy.ps1                         # Idempotent cleanup (all modes)
+├── README.md                           # This file
 ├── infra/
-│   ├── main.bicep      # All resources in one template
+│   ├── main.bicep                      # Base infrastructure (Bicep)
 │   └── main.parameters.json
-└── logs/               # Deployment logs (gitignored)
+├── scripts/
+│   ├── test-dns.ps1                    # Generic DNS query harness (outputs structured JSON)
+│   ├── test-stickyblock.ps1            # StickyBlock mode: policy + cache persistence test
+│   └── test-forwarding-variants.ps1   # ForwardingVariants mode: rule/link variation tests
+└── logs/                               # Deployment logs (gitignored)
+```
+
+Evidence artifacts written to `.data/lab-008/`:
+```
+.data/lab-008/
+├── outputs.json        # Base infrastructure snapshot
+└── test-results.json   # Mode-specific test evidence (base + modeResults)
 ```
 
 ---
