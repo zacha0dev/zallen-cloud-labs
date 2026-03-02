@@ -200,7 +200,9 @@ labs/lab-003-vwan-aws-bgp-apipa/
 
 ## Troubleshooting
 
-See [docs/troubleshooting.md](docs/troubleshooting.md) for common issues and solutions.
+See [docs/troubleshooting.md](docs/troubleshooting.md) for lab-specific issues.
+For AWS auth errors: [docs/DOMAINS/aws-hybrid.md - Troubleshooting](../../docs/DOMAINS/aws-hybrid.md#6-troubleshooting)
+For vWAN/VPN validation: [docs/DOMAINS/observability.md](../../docs/DOMAINS/observability.md)
 
 ## Related Labs
 

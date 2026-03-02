@@ -218,6 +218,8 @@ Summary: 6 passed, 0 failed
 
 ## References
 
+- [vWAN Domain Guide](../../docs/DOMAINS/vwan.md) - Route propagation patterns, custom route table concepts
+- [Observability Guide](../../docs/DOMAINS/observability.md) - How to validate effective routes
 - [Azure Virtual WAN routing](https://learn.microsoft.com/azure/virtual-wan/about-virtual-hub-routing)
 - [Custom route tables](https://learn.microsoft.com/azure/virtual-wan/how-to-virtual-hub-routing)
 - [Default route propagation](https://learn.microsoft.com/azure/virtual-wan/virtual-wan-about#basicstandard)
