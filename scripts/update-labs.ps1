@@ -96,21 +96,74 @@ try {
 Push-Location $RepoRoot
 try {
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $branch = (git rev-parse --abbrev-ref HEAD 2>&1)
-  $localHash = (git rev-parse HEAD 2>&1)
+  $branch    = (git rev-parse --abbrev-ref HEAD 2>&1).ToString().Trim()
+  $localHash = (git rev-parse HEAD 2>&1).ToString().Trim()
   $ErrorActionPreference = $oldErrPref
-  $branch = "$branch".Trim()
-  $localHash = "$localHash".Trim()
-  $remoteRef = "origin/$branch"
 
-  # Check if remote branch exists
-  $remoteHash = git rev-parse $remoteRef 2>$null
-  if ($LASTEXITCODE -ne 0) {
+  # ── Determine which remote ref to compare against ───────────────────────────
+  # Problem: a user may have cloned when the default branch was 'master', but
+  # the repo has since moved to 'main'.  If we blindly use origin/$branch we
+  # compare against origin/master (which is stale / identical) and always say
+  # "up to date" even though origin/main has new commits.
+  #
+  # Resolution order:
+  #   1. Use the configured upstream tracking branch for the current branch.
+  #   2. Fall back to origin's symbolic HEAD (the repo default branch).
+  #   3. Try origin/main then origin/master as last-resort candidates.
+  # ────────────────────────────────────────────────────────────────────────────
+  $remoteRef  = ""
+  $updateNote = ""  # shown when pulling from a different branch than the local one
+
+  # 1. Does the current branch track a remote branch?
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $trackingRef = git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>$null
+  $trackingExit = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrPref
+  if ($trackingExit -eq 0 -and $trackingRef) {
+    $remoteRef = $trackingRef.ToString().Trim()
+  }
+
+  # 2. No tracking branch — resolve origin's symbolic HEAD
+  if (-not $remoteRef) {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $symHead = git symbolic-ref refs/remotes/origin/HEAD 2>$null
+    $symExit = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrPref
+    if ($symExit -eq 0 -and $symHead) {
+      $remoteRef  = $symHead.ToString().Trim() -replace '^refs/remotes/', ''
+      $updateNote = " (from $remoteRef)"
+    }
+  }
+
+  # 3. Last resort — try origin/main then origin/master
+  if (-not $remoteRef) {
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    foreach ($candidate in @("origin/main", "origin/master")) {
+      git rev-parse $candidate 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        $remoteRef  = $candidate
+        $updateNote = " (from $remoteRef)"
+        break
+      }
+    }
+    $ErrorActionPreference = $oldErrPref
+  }
+
+  if (-not $remoteRef) {
     Write-Host "  [ok] No remote branch to compare - skipping" -ForegroundColor DarkGray
     Write-Host ""
     return
   }
-  $remoteHash = $remoteHash.Trim()
+
+  # Resolve hashes
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $remoteHash = (git rev-parse $remoteRef 2>$null).ToString().Trim()
+  $ErrorActionPreference = $oldErrPref
+  if (-not $remoteHash) {
+    Write-Host "  [ok] Could not resolve $remoteRef - skipping" -ForegroundColor DarkGray
+    Write-Host ""
+    return
+  }
 
   if ($localHash -eq $remoteHash) {
     Write-Host "  [ok] Labs are up to date" -ForegroundColor Green
@@ -122,8 +175,8 @@ try {
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $behind = git rev-list --count "HEAD..$remoteRef" 2>$null
   $ErrorActionPreference = $oldErrPref
-  if (-not $behind) { $behind = "some" }
-  Write-Host "  Updates available ($behind new commit$(if ($behind -ne '1') { 's' }))" -ForegroundColor Yellow
+  if (-not $behind -or $behind -eq "0") { $behind = "some" }
+  Write-Host "  Updates available ($behind new commit$(if ($behind -ne '1') { 's' }))$updateNote" -ForegroundColor Yellow
 } finally {
   Pop-Location
 }
@@ -216,16 +269,20 @@ if ($hasLocalChanges) {
 }
 
 # Pull latest
-Write-Host "  Pulling latest from GitHub..." -ForegroundColor Gray
+# $remoteRef is e.g. "origin/main" or "origin/master" — split into remote + branch
+$remoteName   = ($remoteRef -split '/')[0]
+$remoteBranch = ($remoteRef -split '/', 2)[1]
+
+Write-Host "  Pulling latest from $remoteRef..." -ForegroundColor Gray
 Push-Location $RepoRoot
 try {
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $pullOutput = git pull --ff-only 2>&1
+  $pullOutput = git pull --ff-only $remoteName $remoteBranch 2>&1
   $pullOk = ($LASTEXITCODE -eq 0)
 
   if (-not $pullOk) {
-    # Try rebase as fallback
-    $pullOutput = git pull --rebase 2>&1
+    # ff-only failed (diverged history) — try rebase
+    $pullOutput = git pull --rebase $remoteName $remoteBranch 2>&1
     $pullOk = ($LASTEXITCODE -eq 0)
   }
   $ErrorActionPreference = $oldErrPref
@@ -238,7 +295,8 @@ try {
       Write-Host "  [ok] Updated successfully" -ForegroundColor Green
     }
   } else {
-    Write-Host "  [--] Pull failed: $pullOutput" -ForegroundColor Yellow
+    Write-Host "  [--] Pull failed. Run manually:" -ForegroundColor Yellow
+    Write-Host "       git pull $remoteName $remoteBranch" -ForegroundColor Gray
     Write-Host "       Setup will continue with current version." -ForegroundColor Gray
   }
 } finally {
