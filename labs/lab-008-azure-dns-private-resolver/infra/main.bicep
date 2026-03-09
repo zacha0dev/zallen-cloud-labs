@@ -13,6 +13,8 @@
 //     - Rule: internal.lab         → inbound endpoint IP
 //     - Rule: onprem.example.com   → 10.0.0.1 (simulated external DNS)
 //   Test VM (spoke, Standard_B1s, no public IP)
+//     - Boot diagnostics enabled  → serial console accessible via Azure Portal
+//     - cloud-init pre-installs: bind9-dnsutils (dig/nslookup), iputils-ping
 
 @description('Azure region for all resources')
 param location string = 'eastus2'
@@ -60,6 +62,32 @@ var spokeWorkloadSubnet  = '10.81.1.0/24'
 
 // Static DNS A record target (simulated app server)
 var appRecordIp          = '10.80.1.10'
+
+// ─── Subnet IDs — computed from known names to avoid fragile index references ─
+// These are constructed after the VNet is declared using resourceId() so that
+// subnet ordering changes in the array never silently break endpoint deployments.
+var inboundSubnetId  = resourceId('Microsoft.Network/virtualNetworks/subnets', hubVnetName,   'snet-dns-inbound')
+var outboundSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', hubVnetName,   'snet-dns-outbound')
+var spokeWorkloadSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', spokeVnetName, 'snet-workload-spoke')
+
+// ─── Cloud-init: pre-install DNS tools for serial-console testing ─────────────
+// bind9-dnsutils   → dig, nslookup, nsupdate
+// iputils-ping     → ping
+// dnsmasq-base     → local resolver inspection
+// Encoded as base64 for the customData field (Azure decodes and runs at first boot).
+var cloudInitScript = '''
+#cloud-config
+package_update: true
+packages:
+  - bind9-dnsutils
+  - iputils-ping
+  - dnsmasq-base
+runcmd:
+  - echo "=== DNS lab tools ready ===" > /etc/motd
+  - echo "Try: dig app.internal.lab" >> /etc/motd
+  - echo "Try: nslookup app.internal.lab" >> /etc/motd
+  - echo "Try: resolvectl status" >> /etc/motd
+'''
 
 // ─── NSG: Hub (no rules needed for resolver subnets — delegated, NSG not supported) ──
 resource hubNsg 'Microsoft.Network/networkSecurityGroups@2023-05-01' = {
@@ -215,7 +243,7 @@ resource inboundEndpoint 'Microsoft.Network/dnsResolvers/inboundEndpoints@2022-0
       {
         privateIpAllocationMethod: 'Dynamic'
         subnet: {
-          id: hubVnet.properties.subnets[1].id   // snet-dns-inbound (index 1)
+          id: inboundSubnetId
         }
       }
     ]
@@ -230,7 +258,7 @@ resource outboundEndpoint 'Microsoft.Network/dnsResolvers/outboundEndpoints@2022
   tags: tags
   properties: {
     subnet: {
-      id: hubVnet.properties.subnets[2].id   // snet-dns-outbound (index 2)
+      id: outboundSubnetId
     }
   }
 }
@@ -335,7 +363,7 @@ resource nicSpoke 'Microsoft.Network/networkInterfaces@2023-05-01' = {
         properties: {
           privateIPAllocationMethod: 'Dynamic'
           subnet: {
-            id: spokeVnet.properties.subnets[0].id
+            id: spokeWorkloadSubnetId
           }
         }
       }
@@ -348,6 +376,10 @@ resource nicSpoke 'Microsoft.Network/networkInterfaces@2023-05-01' = {
 }
 
 // ─── Spoke Test VM ────────────────────────────────────────────────────────────
+// Serial console access:
+//   Azure Portal → Virtual machines → vm-spoke-008 → Help → Serial console
+//   No NSG rules or public IP needed — serial console is an out-of-band channel.
+//   Login with the adminUser/adminPassword supplied at deploy time.
 resource vmSpoke 'Microsoft.Compute/virtualMachines@2023-07-01' = {
   name: vmSpokeName
   location: location
@@ -359,6 +391,8 @@ resource vmSpoke 'Microsoft.Compute/virtualMachines@2023-07-01' = {
       adminUsername: adminUser
       adminPassword: adminPassword
       linuxConfiguration: { disablePasswordAuthentication: false }
+      // cloud-init runs at first boot: installs dig/nslookup/ping and sets MOTD
+      customData: base64(cloudInitScript)
     }
     storageProfile: {
       imageReference: {
@@ -381,6 +415,13 @@ resource vmSpoke 'Microsoft.Compute/virtualMachines@2023-07-01' = {
         }
       ]
     }
+    // Boot diagnostics — required for Azure Serial Console access.
+    // Managed storage (no storageUri) is free and needs no storage account.
+    diagnosticsProfile: {
+      bootDiagnostics: {
+        enabled: true
+      }
+    }
   }
 }
 
@@ -397,3 +438,5 @@ output dnsZoneId string = dnsZone.id
 output vmSpokeId string = vmSpoke.id
 output vmSpokeName string = vmSpoke.name
 output appRecordFqdn string = 'app.${dnsZoneName}'
+// Direct portal link to serial console (requires Azure AD login with VM Contributor+ role)
+output vmSpokeSerialConsoleUrl string = 'https://portal.azure.com/#resource${vmSpoke.id}/serialConsole'

@@ -26,6 +26,7 @@ param(
   [Parameter(Mandatory)][string]$VmName,
   [Parameter(Mandatory)][string]$RulesetName,
   [Parameter(Mandatory)][string]$InboundIp,
+  [Parameter(Mandatory)][string]$Location,             # Must match the lab's Azure region — DNS Security Policy is regional, not global
   [string]$PolicyName       = "dnspolicy-lab-008-stickyblock",
   [string]$TestDomain       = "sticky.internal.lab",    # A random-ish subdomain to minimize cross-test pollution
   [string]$ZoneName         = "internal.lab",
@@ -142,7 +143,7 @@ if ($policyTest -match "dns-security-policy|Commands") {
   $policyCreate = az network dns-security-policy create `
     --name $PolicyName `
     --resource-group $ResourceGroup `
-    --location global `
+    --location $Location `
     --output json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
 

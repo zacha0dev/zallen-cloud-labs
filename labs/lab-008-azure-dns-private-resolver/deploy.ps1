@@ -331,6 +331,9 @@ Write-Host "  Inbound endpoint IP: $inboundIp" -ForegroundColor Green
 # Capture hub VNet ID for mode scripts
 $hubVnetId = $deployOutput.properties.outputs.hubVnetId.value
 
+# Capture serial console URL for test VM
+$vmSerialConsoleUrl = $deployOutput.properties.outputs.vmSpokeSerialConsoleUrl.value
+
 $phase1Elapsed = Get-ElapsedTime -StartTime $phase1Start
 Write-Log "Phase 1 completed in $phase1Elapsed" "SUCCESS"
 
@@ -575,6 +578,7 @@ if ($SkipTests) {
         -VmName $VmSpokeName `
         -RulesetName $RulesetName `
         -InboundIp $effectiveInboundIp `
+        -Location $Location `
         -ZoneName $DnsZoneName `
         -OutputPath ""
     } catch {
@@ -639,6 +643,8 @@ $ErrorActionPreference = $oldEP
 
 # Ensure we have resolvedInboundIp even if validation was skipped
 if (-not $resolvedInboundIp) { $resolvedInboundIp = $inboundIp }
+# Ensure serial console URL is always defined (set from Bicep output in Phase 1)
+if (-not $vmSerialConsoleUrl) { $vmSerialConsoleUrl = "" }
 
 Ensure-Directory $DataDir
 
@@ -699,10 +705,13 @@ $outputs = [pscustomobject]@{
       }
     }
     vm = [pscustomobject]@{
-      name      = $VmSpokeName
-      vnet      = $SpokeVnetName
-      privateIp = $vmPrivateIp
-      noPublicIp = $true
+      name             = $VmSpokeName
+      vnet             = $SpokeVnetName
+      privateIp        = $vmPrivateIp
+      noPublicIp       = $true
+      serialConsoleUrl = $vmSerialConsoleUrl
+      loginUser        = $AdminUser
+      dnsToolsInstalled = @("dig", "nslookup", "ping")
     }
   }
   validationTests = [pscustomobject]@{
@@ -770,6 +779,17 @@ Write-Host "Forwarding Ruleset:     $RulesetName (linked to spoke)" -ForegroundC
 Write-Host "Private DNS Zone:       $DnsZoneName -> hub" -ForegroundColor Gray
 Write-Host "A record:               app.internal.lab -> 10.80.1.10" -ForegroundColor Gray
 Write-Host "Test VM (spoke):        $VmSpokeName (IP: $vmPrivateIp)" -ForegroundColor Gray
+Write-Host ""
+Write-Host "Serial Console access (no NSG/public IP needed):" -ForegroundColor Yellow
+Write-Host "  Portal: $vmSerialConsoleUrl" -ForegroundColor Cyan
+Write-Host "  Login:  $AdminUser / <password you provided>" -ForegroundColor Gray
+Write-Host "  DNS tools pre-installed: dig, nslookup, ping" -ForegroundColor Gray
+Write-Host ""
+Write-Host "Quick DNS tests from serial console:" -ForegroundColor Yellow
+Write-Host "  dig app.internal.lab                    # resolves via ruleset -> inbound EP -> zone" -ForegroundColor Gray
+Write-Host "  nslookup app.internal.lab               # same, alternate tool" -ForegroundColor Gray
+Write-Host "  dig app.internal.lab $inboundIp         # query inbound endpoint directly" -ForegroundColor Gray
+Write-Host "  resolvectl status                       # show which DNS server the VM is using" -ForegroundColor Gray
 Write-Host ""
 
 if ($SkipTests) {
