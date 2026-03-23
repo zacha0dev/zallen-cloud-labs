@@ -19,6 +19,7 @@
 | [lab-006](../../labs/lab-006-vwan-spoke-bgp-router-loopback/README.md) | vWAN hub learns BGP from FRR router VM; loopback propagation | Azure | ~$0.37/hr | lab-001 + familiarity with BGP | Stable |
 | [lab-007](../../labs/lab-007-azure-dns-foundations/README.md) | Azure Private DNS Zone, VNet link, auto-registration, static A record | Azure | ~$0.02/hr | lab-000 passing | Stable |
 | [lab-008](../../labs/lab-008-azure-dns-private-resolver/README.md) | DNS Private Resolver in hub; forwarding ruleset to spoke; cross-VNet resolution; supports `-Mode Base\|StickyBlock\|ForwardingVariants` | Azure | ~$0.03/hr | lab-007 recommended | Stable |
+| [lab-009](../../labs/lab-009-avnm-hub-spoke-global-mesh/README.md) | AVNM dual-region hub-spoke; script deploys two isolated hub-spoke topologies; Global Mesh enabled manually via portal | Azure | ~$0.01/hr | Azure CLI 2.51+ | Stable |
 
 ---
 
@@ -59,6 +60,7 @@ Full contract details: [docs/ops/LAB-STANDARD.md](../ops/LAB-STANDARD.md)
 6. **lab-003** - Only when you have AWS configured and need hybrid VPN.
 7. **lab-007** - Azure DNS fundamentals. Private zones, VNet links, auto-registration. ~5-8 min.
 8. **lab-008** - DNS Private Resolver. Cross-VNet forwarding, ruleset isolation. ~8-12 min.
+9. **lab-009** - AVNM hub-spoke + Global Mesh. Near-free, CLI deploys infra, portal step enables cross-region mesh. ~8-12 min.
 
 **Always run `.\destroy.ps1` after each lab session.**
 

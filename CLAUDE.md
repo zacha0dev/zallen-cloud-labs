@@ -91,3 +91,4 @@ labs/lab-NNN-<name>/
 | lab-006 | vWAN spoke BGP router + loopback | ~$0.37/hr |
 | lab-007 | Azure Private DNS Zones + auto-registration | ~$0.02/hr |
 | lab-008 | Azure DNS Private Resolver + forwarding ruleset | ~$0.03/hr |
+| lab-009 | AVNM dual-region hub-spoke + portal Global Mesh | ~$0.01/hr |
