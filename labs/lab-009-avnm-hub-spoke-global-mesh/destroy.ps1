@@ -137,7 +137,7 @@ if ($avnmExists) {
   Write-Host "  [PASS] Undeploy committed. Waiting 30s for peerings to be removed..." -ForegroundColor Green
   Start-Sleep -Seconds 30
 } else {
-  Write-Host "  [SKIP] AVNM instance not found — skipping undeploy." -ForegroundColor DarkGray
+  Write-Host "  [SKIP] AVNM instance not found - skipping undeploy." -ForegroundColor DarkGray
 }
 
 # ============================================
@@ -170,7 +170,7 @@ $rgStillExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
 if (-not $rgStillExists) {
   Write-Host "  [PASS] Resource group deleted: $ResourceGroup" -ForegroundColor Green
 } else {
-  Write-Host "  [FAIL] Resource group may still exist — check Azure Portal" -ForegroundColor Yellow
+  Write-Host "  [FAIL] Resource group may still exist - check Azure Portal" -ForegroundColor Yellow
   Write-Host "         az group show -n $ResourceGroup" -ForegroundColor DarkGray
 }
 

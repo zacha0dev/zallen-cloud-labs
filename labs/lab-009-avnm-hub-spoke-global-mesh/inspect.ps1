@@ -124,7 +124,7 @@ if ($ngMesh) {
   }
 } else {
   Write-Info "  Global Mesh group (ng-global-mesh) not yet created."
-  Write-Info "  Create it via the portal — see README.md Section 4."
+  Write-Info "  Create it via the portal - see README.md Section 4."
 }
 
 # ============================================
@@ -259,9 +259,9 @@ if ($meshConfig) {
     }
   }
   if ($isGlobal) {
-    Write-Pass "isGlobal = true  — cross-region mesh is configured"
+    Write-Pass "isGlobal = true  - cross-region mesh is configured"
   } else {
-    Write-Warn "isGlobal = false — mesh exists but is NOT cross-region"
+    Write-Warn "isGlobal = false - mesh exists but is NOT cross-region"
     Write-Info "  Edit the config in the portal and enable 'Global Mesh'."
   }
 
@@ -288,7 +288,7 @@ if ($meshConfig) {
   }
 } else {
   Write-Info "No Global Mesh configuration found."
-  Write-Info "This is expected — Global Mesh is the manual portal step."
+  Write-Info "This is expected - Global Mesh is the manual portal step."
   Write-Host ""
   Write-Host "  To enable Global Mesh (portal walkthrough):" -ForegroundColor Yellow
   Write-Host "    1. Open Azure Portal > Virtual Network Managers > $AvnmName" -ForegroundColor Gray
