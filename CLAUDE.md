@@ -87,7 +87,52 @@ Not just `subscriptions=$SubscriptionId`.
 
 ---
 
-## Do Not
+## Security & Multi-User Portability
+
+These labs are designed so **any user can clone this repo and deploy to their own Azure subscription** without modifying any checked-in code. The following rules enforce that guarantee and protect users from accidentally leaking credentials.
+
+### No secrets or identifiers in committed code
+
+| What | Rule |
+|------|------|
+| Subscription IDs | Never hardcode. Always load via `Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot` |
+| Tenant IDs | Never appear in `.ps1` or `.json` files. Resolved at runtime via `az account show` |
+| Account / UPN / email | Never hardcode. Read with `az account show --query "user.name"` if needed for tags |
+| Client IDs / secrets | Never appear anywhere in the repo |
+| Access tokens / API keys | Never appear anywhere in the repo |
+| AWS credentials | Never appear in `.ps1` files. Must come from user's local AWS CLI profile |
+| `.data/` directory | Gitignored. Contains `subs.json`, outputs, and any runtime-generated identifiers |
+
+If you find yourself about to write a GUID, email address, account name, or secret into a `.ps1` or `.json` file that is not inside `.data/`, stop and load it from the runtime environment instead.
+
+### Self-contained per-user setup
+
+Every lab must work end-to-end for a new user who has only:
+1. Cloned the repo
+2. Logged in with `az login`
+3. Created `.data/subs.json` with their own subscription key (see `docs/ops/ONBOARDING.md`)
+
+No lab should require manual Azure portal pre-configuration, custom role assignments, or out-of-band steps beyond what its own `README.md` documents in the **Prereqs** section.
+
+### Automated Azure-side setup (within lab scope)
+
+Scripts may and should automate any Azure configuration that is within the lab's own resource group and subscription scope:
+
+- **Allowed**: creating resource groups, VNets, peerings, NSGs, route tables, policy assignments scoped to the lab RG, RBAC role assignments scoped to the lab RG, enabling required resource providers
+- **Not allowed**: modifying subscription-level policies, changing AAD/Entra directory settings, assigning Owner/Contributor at subscription scope, modifying other users' resources, creating service principals with broad permissions
+
+If a lab requires a subscription-level prerequisite (e.g., a resource provider registration), Phase 0 must check for it and print a clear actionable message rather than failing silently or attempting unauthorized changes.
+
+### Secrets scanning awareness
+
+When writing or reviewing scripts, actively check for:
+- Any string that looks like a GUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) — must be a variable, not a literal
+- Any string containing `@` that could be an email/UPN — must come from `az account show`
+- Any string that looks like a key, token, password, or connection string — must never appear in source
+
+---
+
+
 
 - **Deploy resources** unless explicitly asked — describe and plan only by default
 - **Commit `.data/` files** — they contain real subscription IDs and outputs
