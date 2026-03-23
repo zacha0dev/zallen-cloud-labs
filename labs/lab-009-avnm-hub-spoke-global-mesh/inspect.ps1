@@ -51,10 +51,12 @@ az account set --subscription $SubscriptionId | Out-Null
 # ============================================
 Write-Section "1. AVNM Instance"
 
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $avnm = az network manager show `
   --name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($avnm) {
   Write-Pass "AVNM found: $AvnmName"
@@ -75,21 +77,25 @@ if ($avnm) {
 Write-Section "2. Network Groups"
 
 foreach ($ngName in @($NgR1, $NgR2)) {
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $ng = az network manager group show `
     --name $ngName `
     --network-manager-name $AvnmName `
     --resource-group $ResourceGroup `
     -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
 
   if ($ng) {
     Write-Pass "Network group: $ngName"
     Write-Info "  Description: $($ng.description)"
 
+    $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $members = az network manager group static-member list `
       --network-group-name $ngName `
       --network-manager-name $AvnmName `
       --resource-group $ResourceGroup `
       -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldEap
 
     if ($members -and $members.Count -gt 0) {
       Write-Info "  Static members ($($members.Count)):"
@@ -106,19 +112,23 @@ foreach ($ngName in @($NgR1, $NgR2)) {
 }
 
 # Check for Global Mesh group (may have been created via portal)
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $ngMesh = az network manager group show `
   --name "ng-global-mesh" `
   --network-manager-name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($ngMesh) {
   Write-Pass "Global Mesh network group found: ng-global-mesh"
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $meshMembers = az network manager group static-member list `
     --network-group-name "ng-global-mesh" `
     --network-manager-name $AvnmName `
     --resource-group $ResourceGroup `
     -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
   if ($meshMembers -and $meshMembers.Count -gt 0) {
     Write-Info "  Members: $($meshMembers.Count)"
   }
@@ -132,10 +142,12 @@ if ($ngMesh) {
 # ============================================
 Write-Section "3. Connectivity Configurations"
 
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $configs = az network manager connect-config list `
   --network-manager-name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($configs -and $configs.Count -gt 0) {
   Write-Pass "Found $($configs.Count) connectivity configuration(s)"
@@ -168,11 +180,13 @@ if ($configs -and $configs.Count -gt 0) {
 # ============================================
 Write-Section "4. Active AVNM Deployments"
 
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $activeDeps = az network manager list-active-connectivity-config `
   --name $AvnmName `
   --resource-group $ResourceGroup `
   --regions $Location $Location2 `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($activeDeps -and $activeDeps.value -and $activeDeps.value.Count -gt 0) {
   Write-Pass "Active deployment(s): $($activeDeps.value.Count)"
@@ -202,10 +216,12 @@ $connectedCount = 0
 $totalCount     = 0
 
 foreach ($v in $allVnets) {
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $peerings = az network vnet peering list `
     --resource-group $ResourceGroup `
     --vnet-name $v.Name `
     -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
 
   if ($peerings -and $peerings.Count -gt 0) {
     foreach ($p in $peerings) {
@@ -266,10 +282,12 @@ if ($meshConfig) {
   }
 
   # Cross-region peerings (hub-r1 to hub-r2) indicate mesh is active
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $hubR1Peerings = az network vnet peering list `
     --resource-group $ResourceGroup `
     --vnet-name $HubVnetR1 `
     -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
 
   $crossRegionPeering = $null
   if ($hubR1Peerings) {

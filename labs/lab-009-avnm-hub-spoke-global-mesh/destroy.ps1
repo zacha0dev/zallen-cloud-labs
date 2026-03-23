@@ -200,7 +200,9 @@ Write-Host "  Deletion time : $deleteElapsed" -ForegroundColor Gray
 Write-Host "  Total time    : $totalElapsed" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Cleanup verification:" -ForegroundColor Yellow
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $rgCheck = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
 if ($rgCheck) {
   Write-Host "  [WARN] Resource group still exists: $ResourceGroup" -ForegroundColor Yellow
   Write-Host "         Check Azure Portal for remaining resources." -ForegroundColor Gray

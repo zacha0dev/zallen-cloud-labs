@@ -55,6 +55,38 @@ param(
 
 ---
 
+## PS5.1 + Azure CLI Patterns (Learned Rules)
+
+### Az CLI existence checks — ALWAYS wrap with EAP toggle
+
+When `$ErrorActionPreference = "Stop"` is set (required in all lab scripts), any `az` command that exits non-zero (e.g., `az ... show` on a resource that doesn't exist yet) will throw a **terminating error** in PS5.1, even with `2>$null`. The `2>$null` redirect suppresses display but does **not** prevent the error record from being created.
+
+**Required pattern for every `az ... show` / `az ... list` existence check:**
+
+```powershell
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existing = az resource show ... -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
+```
+
+Actual deployment commands (`az ... create`, `az ... delete`) should NOT be wrapped — failures there should terminate the script.
+
+### Em-dashes are forbidden in .ps1 files
+
+Never use `—` (U+2014) inside PowerShell strings. PS5.1 misparses the line, causing the parser to misread subsequent tokens as bare commands. Use ` - ` (hyphen with spaces) instead. Em-dashes are fine in `.md` files.
+
+### AVNM subscription scope format
+
+`az network manager create --network-manager-scopes` requires the full ARM path:
+
+```powershell
+--network-manager-scopes subscriptions="/subscriptions/$SubscriptionId"
+```
+
+Not just `subscriptions=$SubscriptionId`.
+
+---
+
 ## Do Not
 
 - **Deploy resources** unless explicitly asked — describe and plan only by default
@@ -62,6 +94,7 @@ param(
 - **Hardcode subscription IDs** in scripts — always load from `Get-SubscriptionId`
 - **Use PS 7-only syntax** — all scripts must work on PS 5.1
 - **Leave billable resources running** — always end examples with `.\destroy.ps1`
+- **Use em-dashes in .ps1 files** — use ` - ` (hyphen) instead
 
 ---
 
