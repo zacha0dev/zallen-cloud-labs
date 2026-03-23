@@ -6,7 +6,7 @@
 #   Region 2 (westus2):  vnet-hub-lab-009-r2 + vnet-spoke-lab-009-r2
 #
 # AVNM manages all peerings. No manual VNet peerings are created.
-# Global Mesh is NOT enabled by this script — enable it manually via the
+# Global Mesh is NOT enabled by this script - enable it manually via the
 # Azure Portal after deployment (see README.md Step 4).
 #
 # Phases:
@@ -114,7 +114,7 @@ Write-Host ""
 Write-Host "Cost estimate: ~`$0.01/hr while deployed" -ForegroundColor Yellow
 Write-Host "  - Azure VNET Manager: billed per connected VNet-hour (~`$0.001/hr each)" -ForegroundColor Gray
 Write-Host "  - 4 VNets + hub-spoke peerings = ~`$0.004-0.008/hr" -ForegroundColor Gray
-Write-Host "  - No VMs, gateways, or VPN tunnels — near free" -ForegroundColor Gray
+Write-Host "  - No VMs, gateways, or VPN tunnels - near free" -ForegroundColor Gray
 Write-Host "  Always run .\destroy.ps1 when done!" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  NOTE: Global Mesh is NOT deployed by this script." -ForegroundColor Cyan
@@ -153,7 +153,7 @@ if ($existingRg) {
   Write-Pass "Created: $ResourceGroup ($Location)"
 }
 
-# VNets — PS5.1 compatible: no ternary, define as array of hashtables
+# VNets - PS5.1 compatible: no ternary, define as array of hashtables
 $vnets = @(
   @{ Name=$HubVnetR1;   Loc=$Location;  Prefix="10.10.0.0/16"; Subnet="10.10.0.0/24"; Role="hub-r1"   },
   @{ Name=$SpokeVnetR1; Loc=$Location;  Prefix="10.11.0.0/16"; Subnet="10.11.0.0/24"; Role="spoke-r1" },
@@ -204,7 +204,7 @@ if ($existingAvnm) {
     --resource-group $ResourceGroup `
     --location $Location `
     --scope-accesses Connectivity `
-    --network-manager-scopes subscriptions=$SubscriptionId | Out-Null
+    --network-manager-scopes subscriptions="/subscriptions/$SubscriptionId" | Out-Null
   Write-Pass "Created AVNM: $AvnmName (scope: $subscriptionScope)"
 }
 
