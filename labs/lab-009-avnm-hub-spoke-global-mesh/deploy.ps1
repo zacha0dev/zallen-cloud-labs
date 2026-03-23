@@ -141,7 +141,9 @@ if (-not $Owner) {
 $Tags = "project=azure-labs lab=lab-009 owner=$Owner environment=lab cost-center=learning"
 
 # Resource Group
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 if ($existingRg) {
   Write-Skip "Resource group already exists: $ResourceGroup"
 } else {
@@ -162,7 +164,9 @@ $vnets = @(
 )
 
 foreach ($v in $vnets) {
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $existing = az network vnet show -g $ResourceGroup -n $v.Name -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
   if ($existing) {
     Write-Skip "VNet already exists: $($v.Name)"
   } else {
@@ -189,10 +193,12 @@ Write-Info "Phase 1 complete in $phase1Time"
 Write-Phase "Phase 2: Azure Virtual Network Manager"
 $phase2Start = Get-Date
 
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingAvnm = az network manager show `
   --name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($existingAvnm) {
   Write-Skip "AVNM already exists: $AvnmName"
@@ -224,11 +230,13 @@ $HubVnetR2Id   = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/p
 $SpokeVnetR2Id = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualNetworks/$SpokeVnetR2"
 
 # Create group ng-hub-spoke-r1
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingNgR1 = az network manager group show `
   --name $NgR1 `
   --network-manager-name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($existingNgR1) {
   Write-Skip "Network group already exists: $NgR1"
@@ -243,11 +251,13 @@ if ($existingNgR1) {
 }
 
 # Create group ng-hub-spoke-r2
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingNgR2 = az network manager group show `
   --name $NgR2 `
   --network-manager-name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($existingNgR2) {
   Write-Skip "Network group already exists: $NgR2"
@@ -270,12 +280,14 @@ $staticMembers = @(
 )
 
 foreach ($sm in $staticMembers) {
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $existingSm = az network manager group static-member show `
     --name $sm.MemberName `
     --network-group-name $sm.Group `
     --network-manager-name $AvnmName `
     --resource-group $ResourceGroup `
     -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
 
   if ($existingSm) {
     Write-Skip "Static member already exists: $($sm.Label) in $($sm.Group)"
@@ -312,11 +324,13 @@ $hubsR2Json = '[{"resourceId":"' + $HubVnetR2Id + '","resourceType":"Microsoft.N
 $appGroupR2Json = '[{"networkGroupId":"' + $NgR2Id + '","groupConnectivity":"None","isGlobal":false,"useHubGateway":false}]'
 
 # Connectivity config cc-hub-spoke-r1
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingCcR1 = az network manager connect-config show `
   --configuration-name $CcR1 `
   --network-manager-name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($existingCcR1) {
   Write-Skip "Connectivity config already exists: $CcR1"
@@ -334,11 +348,13 @@ if ($existingCcR1) {
 }
 
 # Connectivity config cc-hub-spoke-r2
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingCcR2 = az network manager connect-config show `
   --configuration-name $CcR2 `
   --network-manager-name $AvnmName `
   --resource-group $ResourceGroup `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($existingCcR2) {
   Write-Skip "Connectivity config already exists: $CcR2"
@@ -390,11 +406,13 @@ Start-Sleep -Seconds 60
 # Check AVNM deployment status
 Write-Host ""
 Write-Info "Checking AVNM active deployments..."
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $activeDeployments = az network manager list-active-connectivity-config `
   --name $AvnmName `
   --resource-group $ResourceGroup `
   --regions $Location $Location2 `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 
 if ($activeDeployments -and $activeDeployments.value -and $activeDeployments.value.Count -gt 0) {
   Write-Pass "AVNM reports $($activeDeployments.value.Count) active deployment(s)"
@@ -413,10 +431,12 @@ $allVnets = @($HubVnetR1, $SpokeVnetR1, $HubVnetR2, $SpokeVnetR2)
 $totalPeerings = 0
 
 foreach ($vnetName in $allVnets) {
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $peerings = az network vnet peering list `
     --resource-group $ResourceGroup `
     --vnet-name $vnetName `
     -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
 
   if ($peerings -and $peerings.Count -gt 0) {
     $totalPeerings = $totalPeerings + $peerings.Count
