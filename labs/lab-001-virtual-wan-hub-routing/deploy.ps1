@@ -429,37 +429,49 @@ Write-Host ""
 $allValid = $true
 
 # Validate vWAN
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vwan = az network vwan show -g $ResourceGroup -n $VwanName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 $vwanValid = ($vwan -ne $null -and $vwan.type -eq "Standard")
 Write-Validation -Check "vWAN exists (Standard)" -Passed $vwanValid -Details $VwanName
 if (-not $vwanValid) { $allValid = $false }
 
 # Validate vHub
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vhub = az network vhub show -g $ResourceGroup -n $VhubName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 $vhubValid = ($vhub -ne $null -and $vhub.provisioningState -eq "Succeeded")
 Write-Validation -Check "vHub provisioned" -Passed $vhubValid -Details "$VhubName ($VhubCidr)"
 if (-not $vhubValid) { $allValid = $false }
 
 # Validate VNet
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vnet = az network vnet show -g $ResourceGroup -n $VnetName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 $vnetValid = ($vnet -ne $null)
 Write-Validation -Check "Spoke VNet exists" -Passed $vnetValid -Details "$VnetName ($VnetCidr)"
 if (-not $vnetValid) { $allValid = $false }
 
 # Validate Hub Connection
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $conn = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $connectionName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 $connValid = ($conn -ne $null -and $conn.provisioningState -eq "Succeeded")
 Write-Validation -Check "Hub connection active" -Passed $connValid -Details $connectionName
 if (-not $connValid) { $allValid = $false }
 
 # Validate VM
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vm = az vm show -g $ResourceGroup -n $VmName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 $vmValid = ($vm -ne $null)
 Write-Validation -Check "Test VM exists" -Passed $vmValid -Details $VmName
 if (-not $vmValid) { $allValid = $false }
 
 # Validate tags
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $rg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 $rgTags = $rg.tags
 $tagsValid = ($rgTags.project -eq "azure-labs" -and $rgTags.lab -eq "lab-001")
 Write-Validation -Check "Tags applied correctly" -Passed $tagsValid -Details "project=azure-labs, lab=lab-001"
@@ -468,6 +480,7 @@ if (-not $tagsValid) { $allValid = $false }
 # Get effective routes
 Write-Host ""
 Write-Host "Hub Effective Routes:" -ForegroundColor Yellow
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $effectiveRoutes = az network vhub get-effective-routes `
   --resource-group $ResourceGroup `
   --name $VhubName `
@@ -475,6 +488,7 @@ $effectiveRoutes = az network vhub get-effective-routes `
   --resource-id "$($vhub.id)/hubVirtualNetworkConnections/$connectionName" `
   --query "value[].{prefix:addressPrefixes[0], nextHop:nextHopType, asPath:asPath}" `
   -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 
 if ($effectiveRoutes) {
   foreach ($route in $effectiveRoutes) {
@@ -496,7 +510,9 @@ $phase6Start = Get-Date
 $totalElapsed = Get-ElapsedTime -StartTime $deploymentStartTime
 
 # Get VM private IP
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vmPrivateIp = az vm list-ip-addresses -g $ResourceGroup -n $VmName --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv 2>$null
+$ErrorActionPreference = $oldErrPref
 
 # Save outputs
 Ensure-Directory (Split-Path -Parent $OutputsPath)
