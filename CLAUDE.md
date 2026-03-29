@@ -29,6 +29,7 @@ A personal collection of Azure cloud labs focused on Virtual WAN, hybrid connect
 
 | File | Purpose |
 |------|---------|
+| `lab.ps1` | Unified CLI entry point — all lab operations via one command |
 | `docs/ops/LAB-STANDARD.md` | Lab interface contract — required files, phases, parameter interface |
 | `docs/ops/ONBOARDING.md` | User onboarding guide |
 | `docs/REFERENCE.md` | BGP ASNs, APIPA ranges, cost safety pattern |
@@ -132,14 +133,39 @@ When writing or reviewing scripts, actively check for:
 
 ---
 
-
+## DO NOT
 
 - **Deploy resources** unless explicitly asked — describe and plan only by default
 - **Commit `.data/` files** — they contain real subscription IDs and outputs
 - **Hardcode subscription IDs** in scripts — always load from `Get-SubscriptionId`
 - **Use PS 7-only syntax** — all scripts must work on PS 5.1
-- **Leave billable resources running** — always end examples with `.\destroy.ps1`
+- **Leave billable resources running** — always end examples with `.\lab.ps1 -Destroy <lab-id>`
 - **Use em-dashes in .ps1 files** — use ` - ` (hyphen) instead
+
+---
+
+## Lab CLI (`lab.ps1`)
+
+`lab.ps1` at the repo root is the single entry point for all lab operations. It is a dispatcher — it delegates to existing scripts and contains no deployment logic of its own.
+
+| Command | Delegates to |
+|---------|-------------|
+| `.\lab.ps1 -Setup [-Aws]` | `setup.ps1 -Azure` or `setup.ps1 -Aws` |
+| `.\lab.ps1 -Status` | `setup.ps1 -Status` |
+| `.\lab.ps1 -Login` | `az login` directly |
+| `.\lab.ps1 -List` | Scans `labs/` dir + `az group list` for live status |
+| `.\lab.ps1 -Deploy <lab>` | `labs/<lab>/deploy.ps1` |
+| `.\lab.ps1 -Destroy <lab>` | `labs/<lab>/destroy.ps1` |
+| `.\lab.ps1 -Inspect <lab>` | `labs/<lab>/inspect.ps1` |
+| `.\lab.ps1 -Cost [-Lab] [-AwsProfile]` | `tools/cost-check.ps1` |
+| `.\lab.ps1 -Settings` | Reads `az account show` + `.data/subs.json` + git state |
+| `.\lab.ps1 -Update` | `scripts/update-labs.ps1` |
+
+**Pass-through parameters** forwarded to deploy/destroy scripts: `-SubscriptionKey`, `-Location`, `-Force`.
+
+**Lab ID resolution**: `-Deploy lab-001`, `-Deploy 001`, and `-Deploy 1` all resolve to the same lab directory. Matching is prefix-based against the `labs/` directory.
+
+**DO NOT** duplicate logic from `lab.ps1` into individual lab scripts or new tooling. If a new repo-level operation is needed, add it to `lab.ps1` as a new action switch.
 
 ---
 
