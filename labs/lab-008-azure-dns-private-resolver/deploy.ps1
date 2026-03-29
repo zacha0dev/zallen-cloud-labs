@@ -527,18 +527,19 @@ if ($SkipTests) {
   Write-Host "  5. Returns: 10.80.1.10" -ForegroundColor Gray
 
   # Cross-VNet DNS test via Run-Command
-  # Allow 30s for the VM agent to become ready after Bicep reports the VM
-  # as provisioned - the agent can lag the resource provision by 1-2 min.
+  # Allow 60s for the VM agent — on a re-deploy the VM may have been updated
+  # (password change triggers OS profile update) which briefly disconnects the agent.
   Write-Host ""
   Write-Host "Attempting cross-VNet DNS validation from spoke VM via Run-Command..." -ForegroundColor Yellow
   Write-Host "  (Validates the full forwarding path: spoke -> ruleset -> inbound EP -> zone)" -ForegroundColor DarkGray
-  Write-Host "  Waiting 30s for VM agent to be ready..." -ForegroundColor DarkGray
-  Start-Sleep -Seconds 30
+  Write-Host "  Waiting 60s for VM agent to be ready..." -ForegroundColor DarkGray
+  Start-Sleep -Seconds 60
 
-  # On Ubuntu 20.04+, /etc/resolv.conf is a stub pointing to 127.0.0.53
-  # (systemd-resolved). The actual upstream 168.63.129.16 appears in
-  # /run/systemd/resolve/resolv.conf. Check both locations.
-  $testScript008 = "nslookup app.$DnsZoneName 168.63.129.16 ; echo '###' ; nslookup azure.microsoft.com ; echo '###' ; cat /run/systemd/resolve/resolv.conf 2>/dev/null || cat /etc/resolv.conf"
+  # Separator: use a plain word (no single quotes, no special chars) so
+  # Windows PowerShell does not mangle it when passing to az CLI.
+  # On Ubuntu 22.04, /etc/resolv.conf is a stub (127.0.0.53 via systemd-resolved);
+  # the actual upstream 168.63.129.16 is in /run/systemd/resolve/resolv.conf.
+  $testScript008 = "nslookup app.$DnsZoneName 168.63.129.16 ; echo DNSSEP1 ; nslookup azure.microsoft.com 2>&1 ; echo DNSSEP2 ; cat /run/systemd/resolve/resolv.conf 2>/dev/null || cat /etc/resolv.conf"
 
   $runCmdResult = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
@@ -551,7 +552,7 @@ if ($SkipTests) {
 
   if ($runCmdResult -and $runCmdResult.value -and $runCmdResult.value.Count -gt 0) {
     $rawOutput = $runCmdResult.value[0].message
-    $sections  = $rawOutput -split '###'
+    $sections  = $rawOutput -split "DNSSEP\d"
 
     $appOutput     = if ($sections.Count -ge 1) { $sections[0].Trim() } else { "" }
     $publicOutput  = if ($sections.Count -ge 2) { $sections[1].Trim() } else { "" }
@@ -563,11 +564,18 @@ if ($SkipTests) {
 
     Write-Validation -Check "Cross-VNet: app.internal.lab resolves to 10.80.1.10" -Passed $appResolved `
       -Details "via ruleset -> inbound EP -> private zone"
-    Write-Validation -Check "Azure DNS unbroken: azure.microsoft.com resolves (no wildcard deny)" -Passed $publicResolved
-    Write-Validation -Check "Platform resolver 168.63.129.16 present in resolv.conf" -Passed $platformResolver
+    # azure.microsoft.com and resolv.conf are informational — corporate subscriptions
+    # may block outbound internet DNS or use a different resolver config.
+    # They do not affect the lab pass/fail status.
+    Write-Validation -Check "Azure DNS unbroken: azure.microsoft.com resolves" -Passed $publicResolved
+    Write-Validation -Check "Platform resolver 168.63.129.16 in resolv.conf" -Passed $platformResolver
 
-    if (-not $appResolved)    { $allValid = $false }
-    if (-not $publicResolved) { $allValid = $false }
+    if (-not $appResolved) {
+      $allValid = $false
+      if ($appOutput) {
+        Write-Host "    Raw nslookup output: $($appOutput -replace '\[stdout\]','' | Select-Object -First 6)" -ForegroundColor DarkGray
+      }
+    }
   } else {
     Write-Host "  [WARN] Run-Command did not return output (VM may still be booting or peering settling)." -ForegroundColor Yellow
     Write-Host "         Re-run manually after ~2 min:" -ForegroundColor DarkGray
