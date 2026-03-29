@@ -20,6 +20,8 @@ Usage:
   .\lab.ps1 -Cost                        # Scan for billable resources (all labs)
   .\lab.ps1 -Cost -Lab lab-003           # Cost check for a specific lab
   .\lab.ps1 -Cost -AwsProfile aws-labs   # Include AWS in cost check
+  .\lab.ps1 -Settings                    # Show account, subscriptions, repo version
+  .\lab.ps1 -Update                      # Pull latest lab updates from GitHub
 #>
 
 [CmdletBinding()]
@@ -34,6 +36,8 @@ param(
   [switch]$Destroy,
   [switch]$Inspect,
   [switch]$Cost,
+  [switch]$Settings,
+  [switch]$Update,
 
   # Lab selector (used with -Deploy, -Destroy, -Inspect, -Cost)
   [string]$Lab,
@@ -199,6 +203,10 @@ function Show-Help {
   Write-Host "  -Cost                       Scan subscription for billable lab resources"
   Write-Host "  -Cost -Lab <lab-id>         Cost check for a specific lab only"
   Write-Host "  -Cost -AwsProfile <name>    Include AWS account in scan"
+  Write-Host ""
+  Write-Host "CONFIG" -ForegroundColor White
+  Write-Host "  -Settings                   Show account, subscriptions, and repo version"
+  Write-Host "  -Update                     Pull latest lab updates from GitHub"
   Write-Host ""
   Write-Host "OPTIONS (for -Deploy / -Destroy)" -ForegroundColor White
   Write-Host "  -Lab <lab-id>               Lab identifier (e.g. lab-001, 001, or 1)"
@@ -557,6 +565,112 @@ function Invoke-Cost {
 }
 
 # =============================================================================
+# Action: Settings
+# =============================================================================
+
+function Invoke-Settings {
+  Write-Header "Lab Settings"
+
+  # --- Repo info ---
+  Write-Host ""
+  Write-Host "  Repository" -ForegroundColor White
+
+  $versionFile = Join-Path $RepoRoot "VERSION"
+  $version = if (Test-Path $versionFile) { (Get-Content $versionFile -Raw).Trim() } else { "unknown" }
+  Write-Host "    Version:   $version" -ForegroundColor Gray
+
+  $hasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
+  if ($hasGit -and (Test-Path (Join-Path $RepoRoot ".git"))) {
+    $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $branch  = (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null)
+    $remote  = (git -C $RepoRoot remote get-url origin 2>$null)
+    $ahead   = (git -C $RepoRoot rev-list --count "origin/$branch..HEAD" 2>$null)
+    $behind  = (git -C $RepoRoot rev-list --count "HEAD..origin/$branch" 2>$null)
+    $ErrorActionPreference = $oldEap
+    if ($branch) { Write-Host "    Branch:    $branch" -ForegroundColor Gray }
+    if ($remote) { Write-Host "    Remote:    $remote" -ForegroundColor Gray }
+    if ($behind -and [int]$behind -gt 0) {
+      Write-Host "    Updates:   $behind commit(s) available - run .\lab.ps1 -Update" -ForegroundColor Yellow
+    } elseif ($ahead -and [int]$ahead -gt 0) {
+      Write-Host "    Sync:      $ahead local commit(s) ahead of remote" -ForegroundColor DarkGray
+    } else {
+      Write-Host "    Sync:      up to date" -ForegroundColor Green
+    }
+  }
+
+  # --- Azure account ---
+  Write-Host ""
+  Write-Host "  Azure Account" -ForegroundColor White
+
+  $hasAz = [bool](Get-Command az -ErrorAction SilentlyContinue)
+  if (-not $hasAz) {
+    Write-Host "    Azure CLI not installed - run .\lab.ps1 -Setup" -ForegroundColor Yellow
+  } else {
+    $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $acctJson = az account show -o json 2>$null
+    $ErrorActionPreference = $oldEap
+    if ($acctJson) {
+      $acct = $acctJson | ConvertFrom-Json
+      Write-Host "    Signed in: $($acct.user.name)" -ForegroundColor Gray
+      Write-Host "    Active sub: $($acct.name)" -ForegroundColor Gray
+      Write-Host "    Tenant:    $($acct.tenantId)" -ForegroundColor DarkGray
+    } else {
+      Write-Host "    Not authenticated - run .\lab.ps1 -Login" -ForegroundColor Yellow
+    }
+  }
+
+  # --- Configured subscriptions ---
+  Write-Host ""
+  Write-Host "  Configured Subscriptions  (.data/subs.json)" -ForegroundColor White
+
+  $subsPath = Join-Path $RepoRoot ".data" "subs.json"
+  if (-not (Test-Path $subsPath)) {
+    Write-Host "    Not configured - run .\lab.ps1 -Setup to create" -ForegroundColor Yellow
+  } else {
+    $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $cfg = Get-Content $subsPath -Raw | ConvertFrom-Json
+    $ErrorActionPreference = $oldEap
+    if ($cfg -and $cfg.subscriptions -and $cfg.subscriptions.PSObject.Properties) {
+      $defaultKey = if ($cfg.default) { $cfg.default } else { "" }
+      foreach ($prop in $cfg.subscriptions.PSObject.Properties) {
+        $k   = $prop.Name
+        $sub = $prop.Value
+        $isDefault = ($k -eq $defaultKey)
+        $marker = if ($isDefault) { " (default)" } else { "" }
+        $color  = if ($isDefault) { "Green" } else { "Gray" }
+        Write-Host "    [$k]$marker" -ForegroundColor $color
+        if ($sub.name) { Write-Host "      Name:   $($sub.name)" -ForegroundColor DarkGray }
+        Write-Host "      ID:     $($sub.id)" -ForegroundColor DarkGray
+      }
+    } else {
+      Write-Host "    No subscriptions found in config" -ForegroundColor Yellow
+    }
+  }
+
+  # --- Action hints ---
+  Write-Host ""
+  Write-Host "  Actions" -ForegroundColor White
+  Write-Host "    Add / change subscription:  .\lab.ps1 -Setup" -ForegroundColor DarkGray
+  Write-Host "    Re-authenticate:            .\lab.ps1 -Login" -ForegroundColor DarkGray
+  Write-Host "    Pull latest lab updates:    .\lab.ps1 -Update" -ForegroundColor DarkGray
+  Write-Host ""
+}
+
+# =============================================================================
+# Action: Update
+# =============================================================================
+
+function Invoke-Update {
+  $updateScript = Join-Path $RepoRoot "scripts" "update-labs.ps1"
+  if (-not (Test-Path $updateScript)) {
+    Write-Err "update-labs.ps1 not found at scripts/update-labs.ps1"
+    exit 1
+  }
+  & $updateScript -RepoRoot $RepoRoot
+  exit $LASTEXITCODE
+}
+
+# =============================================================================
 # MAIN - Dispatch
 # =============================================================================
 
@@ -565,18 +679,20 @@ function Invoke-Cost {
 $LabTarget = $Lab
 
 # If no action switch is set, show help
-$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost
+$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost -or $Settings -or $Update
 if (-not $anyAction) {
   Show-Help
   exit 0
 }
 
-if ($Help)    { Show-Help; exit 0 }
-if ($Status)  { Invoke-Status; exit $LASTEXITCODE }
-if ($Login)   { Invoke-Login }
-if ($Setup)   { Invoke-Setup }
-if ($List)    { Invoke-List }
-if ($Deploy)  { Invoke-Deploy -LabId $LabTarget }
-if ($Destroy) { Invoke-Destroy -LabId $LabTarget }
-if ($Inspect) { Invoke-Inspect -LabId $LabTarget }
-if ($Cost)    { Invoke-Cost }
+if ($Help)     { Show-Help; exit 0 }
+if ($Status)   { Invoke-Status; exit $LASTEXITCODE }
+if ($Login)    { Invoke-Login }
+if ($Setup)    { Invoke-Setup }
+if ($List)     { Invoke-List }
+if ($Deploy)   { Invoke-Deploy -LabId $LabTarget }
+if ($Destroy)  { Invoke-Destroy -LabId $LabTarget }
+if ($Inspect)  { Invoke-Inspect -LabId $LabTarget }
+if ($Cost)     { Invoke-Cost }
+if ($Settings) { Invoke-Settings }
+if ($Update)   { Invoke-Update }
