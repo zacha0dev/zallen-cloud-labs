@@ -499,24 +499,25 @@ function Invoke-Deploy {
     Write-Host ""
   }
 
-  # Build argument list dynamically (PS5.1-compatible - no splatting with hashtable)
-  $scriptArgs = @()
-  if ($SubscriptionKey)   { $scriptArgs += "-SubscriptionKey"; $scriptArgs += $SubscriptionKey }
-  if ($Location)          { $scriptArgs += "-Location";        $scriptArgs += $Location }
-  if ($Force)             { $scriptArgs += "-Force" }
+  # Build argument hashtable (hashtable splatting binds values directly - no token
+  # parsing - so special chars like # and $ in passwords are passed safely)
+  $scriptArgs = @{}
+  if ($SubscriptionKey) { $scriptArgs['SubscriptionKey'] = $SubscriptionKey }
+  if ($Location)        { $scriptArgs['Location']        = $Location }
+  if ($Force)           { $scriptArgs['Force']           = $true }
 
   # Pass optional lab-specific params only if the script accepts them
   if ($resolvedPassword -and $deployParams.ContainsKey('adminpassword')) {
-    $scriptArgs += "-AdminPassword"; $scriptArgs += $resolvedPassword
+    $scriptArgs['AdminPassword'] = $resolvedPassword
   }
   if ($AdminUser -and $deployParams.ContainsKey('adminuser')) {
-    $scriptArgs += "-AdminUser"; $scriptArgs += $AdminUser
+    $scriptArgs['AdminUser'] = $AdminUser
   }
   if ($Location2 -and $deployParams.ContainsKey('location2')) {
-    $scriptArgs += "-Location2"; $scriptArgs += $Location2
+    $scriptArgs['Location2'] = $Location2
   }
   if ($Mode -and $deployParams.ContainsKey('mode')) {
-    $scriptArgs += "-Mode"; $scriptArgs += $Mode
+    $scriptArgs['Mode'] = $Mode
   }
 
   & $script @scriptArgs

@@ -76,6 +76,47 @@ Actual deployment commands (`az ... create`, `az ... delete`) should NOT be wrap
 
 Never use `—` (U+2014) inside PowerShell strings. PS5.1 misparses the line, causing the parser to misread subsequent tokens as bare commands. Use ` - ` (hyphen with spaces) instead. Em-dashes are fine in `.md` files.
 
+### Passing user-supplied values to scripts — ALWAYS use hashtable splatting
+
+When calling a script and passing a value that came from user input (e.g. a password entered via `Read-Host`), **never use array splatting** (`@("-ParamName", $value)`). PS5.1 re-parses array elements as shell tokens, so special characters like `#` and `$` in the value can cause it to slip past the intended named parameter and bind positionally to the wrong one.
+
+**Required pattern — hashtable splatting:**
+
+```powershell
+$scriptArgs = @{}
+if ($Location)        { $scriptArgs['Location']      = $Location }
+if ($resolvedPassword){ $scriptArgs['AdminPassword'] = $resolvedPassword }
+& $script @scriptArgs
+```
+
+Hashtable splatting binds names to values as objects — no token parsing, no special-char surprises. Use this pattern any time you build argument sets dynamically, not just for passwords.
+
+### `Join-Path` only accepts 2 path segments in PS5.1
+
+The 3-argument form `Join-Path $root "dir" "file"` throws `A positional parameter cannot be found that accepts argument 'file'` in PS5.1. Always nest two calls:
+
+```powershell
+# Wrong (PS7 only):
+$path = Join-Path $RepoRoot "scripts" "labs-common.ps1"
+
+# Correct (PS5.1 + PS7):
+$path = Join-Path (Join-Path $RepoRoot "scripts") "labs-common.ps1"
+```
+
+### `Get-ChildItem` `.Count` is unreliable in PS5.1 without `@()`
+
+In PS5.1, if `Get-ChildItem` returns a single object (not an array), calling `.Count` on the result returns `$null`, not `1`. Wrap all `Get-ChildItem` results in `@()` before using `.Count`:
+
+```powershell
+# Wrong - silently skips cleanup when exactly 1 file exists:
+$files = Get-ChildItem $dir -Filter "*.json"
+if ($files.Count -gt 0) { ... }
+
+# Correct:
+$files = @(Get-ChildItem $dir -Filter "*.json")
+if ($files.Count -gt 0) { ... }
+```
+
 ### AVNM subscription scope format
 
 `az network manager create --network-manager-scopes` requires the full ARM path:
