@@ -292,7 +292,7 @@ if ($LASTEXITCODE -ne 0) {
   } elseif ($bicepOutput -match "SubnetNotDelegated|delegation.*Microsoft.Network/dnsResolvers") {
     Write-Host "[ERROR] Resolver subnet delegation missing." -ForegroundColor Red
     Write-Host "        Endpoint subnets must be delegated to 'Microsoft.Network/dnsResolvers'." -ForegroundColor Red
-    Write-Host "        This is set in main.bicep — check subnet delegation config." -ForegroundColor Yellow
+    Write-Host "        This is set in main.bicep - check subnet delegation config." -ForegroundColor Yellow
   } elseif ($bicepOutput -match "NetworkSecurityGroup.*not.*allowed|NSG.*resolver|subnet.*nsg") {
     Write-Host "[ERROR] NSG attached to resolver subnet." -ForegroundColor Red
     Write-Host "        Resolver endpoint subnets must NOT have an NSG." -ForegroundColor Red
@@ -345,7 +345,7 @@ Write-Phase -Number 2 -Title "Base Validation"
 $allValid = $true
 
 if ($SkipTests) {
-  Write-Host "  [SKIP] -SkipTests flag set — skipping all validation checks." -ForegroundColor Yellow
+  Write-Host "  [SKIP] -SkipTests flag set - skipping all validation checks." -ForegroundColor Yellow
   Write-Log "Phase 2 skipped (-SkipTests)" "WARN"
 } else {
   $phase2Start = Get-Date
@@ -540,7 +540,7 @@ if ($SkipTests) {
   $baseStatus = if ($allValid) { "PASS" } else { "PARTIAL" }
   Write-Host ""
   Write-Host "  Base validation status: $baseStatus" -ForegroundColor $(if ($allValid) { "Green" } else { "Yellow" })
-  Write-Log "Phase 2 completed in $phase2Elapsed — Base: $baseStatus" "SUCCESS"
+  Write-Log "Phase 2 completed in $phase2Elapsed - Base: $baseStatus" "SUCCESS"
 }
 
 # ============================================
@@ -551,7 +551,7 @@ Write-Phase -Number 3 -Title "Mode: $Mode"
 $modeResults = $null
 
 if ($SkipTests) {
-  Write-Host "  [SKIP] -SkipTests flag set — skipping mode phase." -ForegroundColor Yellow
+  Write-Host "  [SKIP] -SkipTests flag set - skipping mode phase." -ForegroundColor Yellow
   Write-Log "Phase 3 skipped (-SkipTests)" "WARN"
 } elseif ($Mode -eq "Base") {
   Write-Host "  Mode=Base: no additional phases to run." -ForegroundColor DarkGray
