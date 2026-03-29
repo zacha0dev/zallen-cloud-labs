@@ -26,15 +26,30 @@ git clone https://github.com/zacha0dev/zallen-cloud-labs.git
 cd zallen-cloud-labs
 
 # 2. Set up Azure tools + pick your subscription (guided wizard)
-.\setup.ps1 -Azure
+.\lab.ps1 -Setup
 
 # 3. Run the free baseline lab to verify everything works
-cd labs\lab-000_resource-group
-.\deploy.ps1
-.\destroy.ps1    # Always clean up!
+.\lab.ps1 -Deploy lab-000
+.\lab.ps1 -Destroy lab-000    # Always clean up!
 ```
 
 No AWS account needed. No manual JSON editing. The setup wizard auto-detects your Azure subscriptions.
+
+### Lab CLI (`lab.ps1`)
+
+All operations go through a single entry point at the repo root:
+
+```powershell
+.\lab.ps1 -Help                       # All commands and options
+.\lab.ps1 -Status                     # Check CLI tools, auth, and config
+.\lab.ps1 -List                       # Browse labs with cost and prereqs
+.\lab.ps1 -Deploy lab-001             # Deploy a lab
+.\lab.ps1 -Deploy lab-001 -Force      # Deploy without confirmation prompt
+.\lab.ps1 -Destroy lab-001            # Tear down cleanly
+.\lab.ps1 -Inspect lab-001            # Post-deploy validation
+.\lab.ps1 -Cost                       # Scan for leftover billable resources
+.\lab.ps1 -Setup -Aws                 # AWS setup (lab-003 only)
+```
 
 ---
 
@@ -67,12 +82,13 @@ Everything is organized at: **[docs/README.md](docs/README.md)**
 | [lab-006](labs/lab-006-vwan-spoke-bgp-router-loopback/) | vWAN spoke BGP router + loopback | Azure | ~$0.37/hr |
 | [lab-007](labs/lab-007-azure-dns-foundations/) | Azure Private DNS Zones + auto-registration | Azure | ~$0.02/hr |
 | [lab-008](labs/lab-008-azure-dns-private-resolver/) | Azure DNS Private Resolver + forwarding ruleset | Azure | ~$0.03/hr |
+| [lab-009](labs/lab-009-avnm-hub-spoke-global-mesh/) | AVNM dual-region hub-spoke + Global Mesh | Azure | ~$0.01/hr |
 
 ---
 
 ## Cost Safety
 
-**Always run `.\destroy.ps1`** when done. Run `.\tools\cost-check.ps1` to find leftover billable resources.
+**Always run `.\lab.ps1 -Destroy <lab-id>`** when done. Run `.\lab.ps1 -Cost` to scan for leftover billable resources.
 
 ---
 
