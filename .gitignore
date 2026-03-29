@@ -57,6 +57,7 @@ ServicePrincipal.json
 **/*.trace
 **/*.sarif
 reports/
+outputs/
 artifacts/
 dist/
 

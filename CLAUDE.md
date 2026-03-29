@@ -218,6 +218,39 @@ When writing or reviewing scripts, actively check for:
 - **Use PS 7-only syntax** — all scripts must work on PS 5.1
 - **Leave billable resources running** — always end examples with `.\lab.ps1 -Destroy <lab-id>`
 - **Use em-dashes in .ps1 files** — use ` - ` (hyphen) instead
+- **Let README.md fall behind** — update it in the same commit whenever `lab.ps1` commands, flags, or labs change
+- **Let VERSION fall behind** — bump it in the same commit/PR that introduces the change
+
+---
+
+## README.md Maintenance (REQUIRED)
+
+The root `README.md` is the public face of the repo. It must stay in sync with the actual state of `lab.ps1` and the lab catalog. **Whenever any of the following change, update README.md in the same commit:**
+
+| Change | What to update in README |
+|--------|--------------------------|
+| New `lab.ps1` command or flag | Add to the CLI reference block |
+| New lab added | Add row to the Labs table |
+| Lab removed or renamed | Update or remove the row |
+| New framework capability (e.g. research mode) | Add a named section with usage examples |
+| Cost estimate changes | Update the Labs table cost column |
+
+---
+
+## Versioning (`VERSION` file)
+
+The `VERSION` file at the repo root uses **semantic versioning** (`MAJOR.MINOR.PATCH`). It is read by `lab.ps1 -Settings` and should always reflect what is currently in `main`.
+
+| Increment | When |
+|-----------|------|
+| **PATCH** (`0.7.x`) | Bug fixes, doc corrections, refactors with no user-visible behavior change |
+| **MINOR** (`0.x.0`) | New user-visible feature: new `lab.ps1` command, new lab, new framework capability |
+| **MAJOR** (`x.0.0`) | Breaking changes: renamed/removed commands, incompatible parameter interface |
+
+**Rules:**
+- Bump `VERSION` in the same commit that introduces the change.
+- MINOR bump when a PR adds a new feature; PATCH bump for fixes and docs.
+- `0.x` = pre-1.0 active development. Reach `1.0.0` when the CLI and lab catalog are stable.
 
 ---
 
@@ -234,6 +267,7 @@ When writing or reviewing scripts, actively check for:
 | `.\lab.ps1 -Deploy <lab>` | `labs/<lab>/deploy.ps1` |
 | `.\lab.ps1 -Destroy <lab>` | `labs/<lab>/destroy.ps1` |
 | `.\lab.ps1 -Inspect <lab>` | `labs/<lab>/inspect.ps1` |
+| `.\lab.ps1 -Research <lab> [-Scenario <name>] [-Background]` | `labs/<lab>/research/<name>.ps1` |
 | `.\lab.ps1 -Cost [-Lab] [-AwsProfile]` | `tools/cost-check.ps1` |
 | `.\lab.ps1 -Settings` | Reads `az account show` + `.data/subs.json` + git state |
 | `.\lab.ps1 -Update` | `scripts/update-labs.ps1` |
@@ -255,7 +289,60 @@ labs/lab-NNN-<name>/
   inspect.ps1        # Post-deploy validation (recommended)
   README.md          # Goal, Architecture, Cost, Prereqs, Deploy, Validate, Destroy, Troubleshooting
   lab.config.example.json   # If lab needs config overrides
+  research/          # Research scenarios (optional)
+    <scenario>.ps1   # One file per scenario
 ```
+
+---
+
+## Research Framework
+
+Research scenarios are scripts that run on top of a deployed lab to investigate specific networking behaviors. They are invoked via `lab.ps1 -Research` and are completely separate from deploy/destroy.
+
+### Scenario location
+
+```
+labs/<lab-id>/research/<scenario-name>.ps1
+```
+
+### Scenario interface
+
+Every research script must accept these parameters:
+
+```powershell
+param(
+  [string]$OutputDir,        # Where to write JSON reports (set by lab.ps1 to outputs/<lab-id>/)
+  [string]$StatusFile,       # Progress file path for background polling
+  [string]$LabOutputsPath,   # Path to .data/<lab-id>/outputs.json (lab context)
+  [string]$SubscriptionKey,  # Passed through from lab.ps1
+  ...                        # Scenario-specific params with defaults
+)
+```
+
+### Output conventions
+
+- Reports go to `outputs/<lab-id>/` at the repo root (NOT `.data/`)
+- `outputs/` is gitignored (generated, may contain IPs and resource IDs)
+- Report files are timestamped JSON: `<scenario>-<yyyyMMdd-HHmmss>.json`
+- Status file is overwritten in place for background polling: `<scenario>-status.json`
+
+### Background jobs
+
+When `-Background` is passed, `lab.ps1` launches the scenario via `Start-Job`. The scenario updates `$StatusFile` with a JSON object containing at minimum:
+
+```json
+{ "status": "running|complete|error", "phase": "CR-3", "startTime": "...", "outputDir": "..." }
+```
+
+Poll with: `Get-Content '<path>/<scenario>-status.json' | ConvertFrom-Json`
+
+### Phase naming
+
+Research phases use a scenario prefix + number, e.g. `CR-0` through `CR-8` for `cache-recovery`. This keeps them distinct from lab deploy phases (0-6).
+
+### ErrorActionPreference in scenarios
+
+Use `$ErrorActionPreference = "Continue"` in research scripts (not `"Stop"`). Scenarios should collect partial results on failure, not abort — the point is to observe behavior.
 
 ---
 
