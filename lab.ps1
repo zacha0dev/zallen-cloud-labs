@@ -13,8 +13,11 @@ Usage:
   .\lab.ps1 -Setup                       # Azure environment setup
   .\lab.ps1 -Setup -Aws                  # AWS environment setup (lab-003 only)
   .\lab.ps1 -List                        # List all labs with cost and cloud
-  .\lab.ps1 -Deploy lab-001              # Deploy a lab
-  .\lab.ps1 -Deploy lab-001 -Force       # Deploy without confirmation prompts
+  .\lab.ps1 -Deploy lab-001                         # Deploy a lab
+  .\lab.ps1 -Deploy lab-001 -Force                  # Deploy without confirmation prompts
+  .\lab.ps1 -Deploy lab-001 -AdminPassword "P@ss1"  # Supply VM password upfront
+  .\lab.ps1 -Deploy lab-009 -Location2 westeurope   # Override second region (lab-009)
+  .\lab.ps1 -Deploy lab-008 -Mode StickyBlock       # Select lab mode variant (lab-008)
   .\lab.ps1 -Destroy lab-001             # Destroy a lab
   .\lab.ps1 -Inspect lab-001             # Run post-deploy inspection
   .\lab.ps1 -Cost                        # Scan for billable resources (all labs)
@@ -46,8 +49,12 @@ param(
   [switch]$Aws,                         # Modifier for -Setup; enables AWS toolchain
   [string]$SubscriptionKey,             # Passed through to deploy/destroy scripts
   [string]$Location,                    # Azure region, passed through to deploy
+  [string]$Location2,                   # Second region (lab-009 dual-region)
+  [string]$AdminPassword,               # VM admin password (labs with VMs)
+  [string]$AdminUser,                   # VM admin username (default per-lab: azureuser)
+  [string]$Mode,                        # Lab mode variant (lab-008: Base|StickyBlock|ForwardingVariants)
   [switch]$Force,                       # Skip confirmation prompts
-  [string]$AwsProfile = "aws-labs"      # AWS CLI profile (used with -Cost)
+  [string]$AwsProfile = "aws-labs"      # AWS CLI profile (used with -Cost / lab-003)
 )
 
 Set-StrictMode -Version Latest
@@ -208,11 +215,15 @@ function Show-Help {
   Write-Host "  -Settings                   Show account, subscriptions, and repo version"
   Write-Host "  -Update                     Pull latest lab updates from GitHub"
   Write-Host ""
-  Write-Host "OPTIONS (for -Deploy / -Destroy)" -ForegroundColor White
+  Write-Host "OPTIONS" -ForegroundColor White
   Write-Host "  -Lab <lab-id>               Lab identifier (e.g. lab-001, 001, or 1)"
   Write-Host "  -SubscriptionKey <key>      Subscription key from .data/subs.json"
   Write-Host "  -Location <region>          Azure region (e.g. eastus)"
   Write-Host "  -Force                      Skip DEPLOY confirmation prompt"
+  Write-Host "  -AdminPassword <pwd>        VM admin password (prompted if needed and omitted)"
+  Write-Host "  -AdminUser <name>           VM admin username (default: azureuser)"
+  Write-Host "  -Location2 <region>         Second region for lab-009 (default: westus2)"
+  Write-Host "  -Mode <variant>             Lab mode for lab-008 (Base|StickyBlock|ForwardingVariants)"
   Write-Host ""
   Write-Host "EXAMPLES" -ForegroundColor White
   Write-Host "  .\lab.ps1 -Setup                      # First-time Azure setup"
@@ -414,6 +425,36 @@ function Invoke-List {
 # Action: Deploy
 # =============================================================================
 
+function Get-ScriptParams {
+  <#
+  .SYNOPSIS
+    Returns a hashtable of parameter names for a .ps1 script using Get-Command.
+    Keys are lowercased parameter names; value is $true if Mandatory.
+  #>
+  param([string]$ScriptPath)
+  $result = @{}
+  try {
+    $cmdInfo = Get-Command $ScriptPath -ErrorAction Stop
+    foreach ($p in $cmdInfo.Parameters.GetEnumerator()) {
+      $isMandatory = $false
+      foreach ($attr in $p.Value.Attributes) {
+        if ($attr -is [System.Management.Automation.ParameterAttribute] -and $attr.Mandatory) {
+          $isMandatory = $true
+        }
+      }
+      $result[$p.Key.ToLower()] = $isMandatory
+    }
+  } catch {
+    # If Get-Command fails (PS5.1 edge cases), fall back to content scan
+    $content = Get-Content $ScriptPath -Raw -ErrorAction SilentlyContinue
+    if ($content -match '\$AdminPassword') { $result['adminpassword'] = $false }
+    if ($content -match '\$Location2')     { $result['location2']     = $false }
+    if ($content -match '\$Mode\b')        { $result['mode']          = $false }
+    if ($content -match '\$AdminUser')     { $result['adminuser']     = $false }
+  }
+  return $result
+}
+
 function Invoke-Deploy {
   param([string]$LabId)
 
@@ -439,11 +480,44 @@ function Invoke-Deploy {
   }
   Write-Host ""
 
-  # Build argument list dynamically (PS5.1-compatible splatting)
+  # Inspect target script parameters so we can prompt for anything required
+  # before handing off - avoids users hitting cryptic mid-script failures.
+  $deployParams = Get-ScriptParams -ScriptPath $script
+
+  # AdminPassword: prompt securely if the lab needs it and none was supplied.
+  # Using Read-Host -AsSecureString keeps the password off the screen and out
+  # of shell history. Convert back to plain string for az CLI compatibility.
+  $resolvedPassword = $AdminPassword
+  if ($deployParams.ContainsKey('adminpassword') -and -not $resolvedPassword) {
+    Write-Host "  This lab deploys VMs and requires an admin password." -ForegroundColor Yellow
+    Write-Host "  Requirements: 12+ chars, uppercase, lowercase, number, special char." -ForegroundColor DarkGray
+    Write-Host ""
+    $secPwd = Read-Host "  VM Admin Password" -AsSecureString
+    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPwd)
+    $resolvedPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    Write-Host ""
+  }
+
+  # Build argument list dynamically (PS5.1-compatible - no splatting with hashtable)
   $scriptArgs = @()
-  if ($SubscriptionKey) { $scriptArgs += "-SubscriptionKey"; $scriptArgs += $SubscriptionKey }
-  if ($Location)        { $scriptArgs += "-Location";        $scriptArgs += $Location }
-  if ($Force)           { $scriptArgs += "-Force" }
+  if ($SubscriptionKey)   { $scriptArgs += "-SubscriptionKey"; $scriptArgs += $SubscriptionKey }
+  if ($Location)          { $scriptArgs += "-Location";        $scriptArgs += $Location }
+  if ($Force)             { $scriptArgs += "-Force" }
+
+  # Pass optional lab-specific params only if the script accepts them
+  if ($resolvedPassword -and $deployParams.ContainsKey('adminpassword')) {
+    $scriptArgs += "-AdminPassword"; $scriptArgs += $resolvedPassword
+  }
+  if ($AdminUser -and $deployParams.ContainsKey('adminuser')) {
+    $scriptArgs += "-AdminUser"; $scriptArgs += $AdminUser
+  }
+  if ($Location2 -and $deployParams.ContainsKey('location2')) {
+    $scriptArgs += "-Location2"; $scriptArgs += $Location2
+  }
+  if ($Mode -and $deployParams.ContainsKey('mode')) {
+    $scriptArgs += "-Mode"; $scriptArgs += $Mode
+  }
 
   & $script @scriptArgs
   $exitCode = $LASTEXITCODE
@@ -542,7 +616,7 @@ function Invoke-Inspect {
 # =============================================================================
 
 function Invoke-Cost {
-  $costScript = Join-Path $RepoRoot "tools" "cost-check.ps1"
+  $costScript = Join-Path (Join-Path $RepoRoot "tools") "cost-check.ps1"
   if (-not (Test-Path $costScript)) {
     Write-Err "cost-check.ps1 not found at tools/cost-check.ps1"
     exit 1
@@ -623,7 +697,7 @@ function Invoke-Settings {
   Write-Host ""
   Write-Host "  Configured Subscriptions  (.data/subs.json)" -ForegroundColor White
 
-  $subsPath = Join-Path $RepoRoot ".data" "subs.json"
+  $subsPath = Join-Path (Join-Path $RepoRoot ".data") "subs.json"
   if (-not (Test-Path $subsPath)) {
     Write-Host "    Not configured - run .\lab.ps1 -Setup to create" -ForegroundColor Yellow
   } else {
@@ -661,7 +735,7 @@ function Invoke-Settings {
 # =============================================================================
 
 function Invoke-Update {
-  $updateScript = Join-Path $RepoRoot "scripts" "update-labs.ps1"
+  $updateScript = Join-Path (Join-Path $RepoRoot "scripts") "update-labs.ps1"
   if (-not (Test-Path $updateScript)) {
     Write-Err "update-labs.ps1 not found at scripts/update-labs.ps1"
     exit 1
