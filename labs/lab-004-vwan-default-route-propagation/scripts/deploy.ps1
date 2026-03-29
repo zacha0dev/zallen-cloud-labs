@@ -67,7 +67,8 @@ az deployment group create `
   --template-file $TemplatePath `
   --parameters $ParametersPath `
   --parameters location=$Location adminUsername=$AdminUsername adminPassword=$AdminPassword `
-  --output table
+  --output table `
+  --only-show-errors
 
 if ($LASTEXITCODE -ne 0) { throw "Deployment failed." }
 
