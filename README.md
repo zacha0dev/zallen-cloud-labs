@@ -42,12 +42,14 @@ All operations go through a single entry point at the repo root:
 ```powershell
 .\lab.ps1 -Help                       # All commands and options
 .\lab.ps1 -Status                     # Check CLI tools, auth, and config
-.\lab.ps1 -List                       # Browse labs with cost and prereqs
+.\lab.ps1 -List                       # Browse labs with cost and live deployment status
 .\lab.ps1 -Deploy lab-001             # Deploy a lab
 .\lab.ps1 -Deploy lab-001 -Force      # Deploy without confirmation prompt
 .\lab.ps1 -Destroy lab-001            # Tear down cleanly
 .\lab.ps1 -Inspect lab-001            # Post-deploy validation
 .\lab.ps1 -Cost                       # Scan for leftover billable resources
+.\lab.ps1 -Settings                   # Account, subscriptions, and repo sync state
+.\lab.ps1 -Update                     # Pull latest lab updates from GitHub
 .\lab.ps1 -Setup -Aws                 # AWS setup (lab-003 only)
 ```
 
