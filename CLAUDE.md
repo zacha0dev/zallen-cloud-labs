@@ -72,6 +72,16 @@ $ErrorActionPreference = $oldEap
 
 Actual deployment commands (`az ... create`, `az ... delete`) should NOT be wrapped — failures there should terminate the script.
 
+For `az deployment group create` specifically, also add `--only-show-errors` to suppress advisory warnings (e.g. Bicep upgrade notices) that would otherwise write to stderr and trigger a `NativeCommandError` under `$ErrorActionPreference = "Stop"` before the `$LASTEXITCODE` check is reached:
+
+```powershell
+$bicepResult = az deployment group create `
+  --resource-group $ResourceGroup `
+  ...
+  --output json `
+  --only-show-errors 2>&1
+```
+
 ### Em-dashes are forbidden in .ps1 files
 
 Never use `—` (U+2014) inside PowerShell strings. PS5.1 misparses the line, causing the parser to misread subsequent tokens as bare commands. Use ` - ` (hyphen with spaces) instead. Em-dashes are fine in `.md` files.

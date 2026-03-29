@@ -279,7 +279,8 @@ $bicepResult = az deployment group create `
       adminUser=$AdminUser `
       adminPassword=$AdminPassword `
       owner=$Owner `
-  --output json 2>&1
+  --output json `
+  --only-show-errors 2>&1
 
 if ($LASTEXITCODE -ne 0) {
   $bicepOutput = $bicepResult -join "`n"
