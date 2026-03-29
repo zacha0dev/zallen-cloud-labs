@@ -378,6 +378,7 @@ if ($SkipTests) {
   }
 
   # DNS Resolver
+  $resolver = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $resolver = az dns-resolver show -g $ResourceGroup -n $ResolverName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
@@ -386,6 +387,7 @@ if ($SkipTests) {
   if (-not $resolverValid) { $allValid = $false }
 
   # Inbound Endpoint
+  $inboundEp = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $inboundEp = az dns-resolver inbound-endpoint show -g $ResourceGroup --dns-resolver-name $ResolverName -n $InboundEpName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
@@ -395,6 +397,7 @@ if ($SkipTests) {
   if (-not $inboundValid) { $allValid = $false }
 
   # Outbound Endpoint
+  $outboundEp = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $outboundEp = az dns-resolver outbound-endpoint show -g $ResourceGroup --dns-resolver-name $ResolverName -n $OutboundEpName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
@@ -403,6 +406,7 @@ if ($SkipTests) {
   if (-not $outboundValid) { $allValid = $false }
 
   # Forwarding Ruleset
+  $ruleset = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $ruleset = az dns-resolver forwarding-ruleset show -g $ResourceGroup -n $RulesetName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
@@ -412,6 +416,7 @@ if ($SkipTests) {
 
   # Forwarding rules
   if ($rulesetValid) {
+    $rules = $null
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $rules = az dns-resolver forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
     $ErrorActionPreference = $oldEP
@@ -424,8 +429,9 @@ if ($SkipTests) {
     $ruleTargetIp = if ($ruleInternalLab) { $ruleInternalLab.targetDnsServers[0].ipAddress } else { "unknown" }
     $ruleTargetMatches = ($ruleTargetIp -eq $resolvedInboundIp) -and ($resolvedInboundIp -ne "unknown")
 
+    $ruleInternalLabDomain = if ($ruleInternalLab) { $ruleInternalLab.domainName } else { "not found" }
     Write-Validation -Check "Forwarding rule: internal.lab. -> inbound EP" -Passed $ruleInternalLabExists `
-      -Details "domain: $($ruleInternalLab.domainName)"
+      -Details "domain: $ruleInternalLabDomain"
     Write-Validation -Check "Rule target IP matches inbound endpoint" -Passed $ruleTargetMatches `
       -Details "rule target=$ruleTargetIp  inbound EP=$resolvedInboundIp"
     Write-Validation -Check "Forwarding rule: onprem.example.com. -> 10.0.0.1" -Passed $ruleOnpremExists
@@ -446,6 +452,7 @@ if ($SkipTests) {
 
   # Ruleset linked to spoke
   if ($rulesetValid) {
+    $rulesetLinks = $null
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $rulesetLinks = az dns-resolver vnet-link list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
     $ErrorActionPreference = $oldEP
@@ -455,6 +462,7 @@ if ($SkipTests) {
   }
 
   # Private DNS Zone
+  $zone = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $zone = az network private-dns zone show -g $ResourceGroup -n $DnsZoneName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
@@ -463,15 +471,18 @@ if ($SkipTests) {
   if (-not $zoneValid) { $allValid = $false }
 
   # app A record
+  $appRecord = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $appRecord = az network private-dns record-set a show -g $ResourceGroup --zone-name $DnsZoneName -n "app" -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
   $appRecordValid = ($null -ne $appRecord -and $appRecord.aRecords.Count -gt 0)
+  $appRecordIp = if ($appRecord -and $appRecord.aRecords.Count -gt 0) { $appRecord.aRecords[0].ipv4Address } else { "not found" }
   Write-Validation -Check "A record exists (app.internal.lab)" -Passed $appRecordValid `
-    -Details "IP: $($appRecord.aRecords[0].ipv4Address)"
+    -Details "IP: $appRecordIp"
   if (-not $appRecordValid) { $allValid = $false }
 
   # Test VM
+  $vm = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $vm = az vm show -g $ResourceGroup -n $VmSpokeName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
@@ -480,6 +491,7 @@ if ($SkipTests) {
   if (-not $vmValid) { $allValid = $false }
 
   # Tags
+  $rg = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
@@ -504,6 +516,7 @@ if ($SkipTests) {
 
   $testScript008 = "nslookup app.$DnsZoneName 168.63.129.16 ; echo '###' ; nslookup azure.microsoft.com ; echo '###' ; cat /etc/resolv.conf"
 
+  $runCmdResult = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $runCmdResult = az vm run-command invoke `
     -g $ResourceGroup -n $VmSpokeName `
