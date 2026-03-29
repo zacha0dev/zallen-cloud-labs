@@ -239,7 +239,9 @@ Write-Phase -Number 1 -Title "Deploy Base Infra"
 $phase1Start = Get-Date
 
 # --- 1a: Resource Group ---
-$tagsString = "project=azure-labs lab=lab-008 owner=$Owner environment=lab cost-center=learning"
+# Pass each tag as a separate argument — avoids PS5.1/Windows quoting issues
+# where a single space-separated string can be treated as one tag by az group update.
+$tagArgs = @("project=azure-labs", "lab=lab-008", "owner=$Owner", "environment=lab", "cost-center=learning")
 
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = $null
@@ -248,9 +250,9 @@ $ErrorActionPreference = $oldEP
 
 if ($existingRg) {
   Write-Host "  Resource group already exists, updating tags..." -ForegroundColor DarkGray
-  az group update --name $ResourceGroup --tags $tagsString --output none 2>$null
+  az group update --name $ResourceGroup --tags @tagArgs --output none 2>$null
 } else {
-  az group create --name $ResourceGroup --location $Location --tags $tagsString --output none
+  az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
   Write-Log "Resource group created: $ResourceGroup"
 }
 Write-Validation -Check "Resource group exists" -Passed $true -Details $ResourceGroup
@@ -427,7 +429,7 @@ if ($SkipTests) {
     Write-Host "  Waiting for ruleset child resources to propagate (up to ${propagateMax}s)..." -ForegroundColor DarkGray
     while ($propagateElapsed -lt $propagateMax) {
       $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-      $rules = az dns-resolver forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
+      $rules = az dns-resolver forwarding-ruleset forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
       $ErrorActionPreference = $oldEP
       if ($rules -and @($rules).Count -gt 0) { break }
       Start-Sleep -Seconds $propagatePoll
@@ -460,7 +462,7 @@ if ($SkipTests) {
       Write-Host ""
       Write-Host "  [WARN] Wildcard '.' forwarding rule detected in ruleset!" -ForegroundColor Red
       Write-Host "         This will break Azure platform DNS for all VMs linked to this ruleset." -ForegroundColor Red
-      Write-Host "         Remove it: az dns-resolver forwarding-rule delete -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n '$($wildcardRule.name)'" -ForegroundColor Yellow
+      Write-Host "         Remove it: az dns-resolver forwarding-ruleset forwarding-rule delete -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n '$($wildcardRule.name)'" -ForegroundColor Yellow
       $allValid = $false
     }
   }
@@ -469,7 +471,7 @@ if ($SkipTests) {
   if ($rulesetValid) {
     $rulesetLinks = $null
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $rulesetLinks = az dns-resolver vnet-link list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
+    $rulesetLinks = az dns-resolver forwarding-ruleset vnet-link list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
     $ErrorActionPreference = $oldEP
     $rulesetLinkValid = ($rulesetLinks -and $rulesetLinks.Count -gt 0)
     Write-Validation -Check "Ruleset linked to spoke VNet" -Passed $rulesetLinkValid
@@ -848,7 +850,7 @@ Write-Host "  - DNS test (Run-Command from spoke VM):" -ForegroundColor Gray
 Write-Host "    az vm run-command invoke -g $ResourceGroup -n $VmSpokeName \" -ForegroundColor Gray
 Write-Host "      --command-id RunShellScript --scripts 'nslookup app.internal.lab'" -ForegroundColor Gray
 Write-Host "  - View forwarding rules:" -ForegroundColor Gray
-Write-Host "    az dns-resolver forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o table" -ForegroundColor Gray
+Write-Host "    az dns-resolver forwarding-ruleset forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o table" -ForegroundColor Gray
 Write-Host "  - Run StickyBlock mode:         .\deploy.ps1 -Mode StickyBlock -AdminPassword <pw>" -ForegroundColor Gray
 Write-Host "  - Run ForwardingVariants mode:  .\deploy.ps1 -Mode ForwardingVariants -AdminPassword <pw>" -ForegroundColor Gray
 Write-Host "  - Cost check:  .\..\..\tools\cost-check.ps1 -Lab lab-008" -ForegroundColor Gray
