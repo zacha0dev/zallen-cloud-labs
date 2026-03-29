@@ -87,7 +87,7 @@ $results = [ordered]@{
 # Create a matching private DNS zone record to validate resolution.
 # Then remove both.
 # ============================================
-Write-VariantPhase "Variant A — Conditional forward for additional suffix (variant-a.lab)"
+Write-VariantPhase "Variant A  -  Conditional forward for additional suffix (variant-a.lab)"
 
 $variantAResult = [ordered]@{
   description = "Add forwarding rule for variant-a.lab. -> inbound endpoint; validate resolution; remove"
@@ -186,7 +186,7 @@ $results.variants["variant_a"] = $variantAResult
 # Adding the ruleset to hub means hub VMs would use forwarding rules too.
 # We add the link, verify the baseline record still resolves, then remove it.
 # ============================================
-Write-VariantPhase "Variant B — Temporary ruleset link to hub VNet"
+Write-VariantPhase "Variant B  -  Temporary ruleset link to hub VNet"
 
 $variantBResult = [ordered]@{
   description    = "Link forwarding ruleset to hub VNet; verify app.internal.lab still resolves; unlink"

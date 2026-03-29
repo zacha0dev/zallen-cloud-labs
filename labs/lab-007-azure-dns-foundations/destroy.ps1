@@ -95,7 +95,7 @@ $rgStillExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
 if (-not $rgStillExists) {
   Write-Host "  [PASS] Resource group deleted: $ResourceGroup" -ForegroundColor Green
 } else {
-  Write-Host "  [FAIL] Resource group may still exist — check Azure Portal" -ForegroundColor Yellow
+  Write-Host "  [FAIL] Resource group may still exist  -  check Azure Portal" -ForegroundColor Yellow
   Write-Host "         az group show -n $ResourceGroup" -ForegroundColor DarkGray
 }
 

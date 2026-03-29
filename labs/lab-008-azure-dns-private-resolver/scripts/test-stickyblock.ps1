@@ -26,7 +26,7 @@ param(
   [Parameter(Mandatory)][string]$VmName,
   [Parameter(Mandatory)][string]$RulesetName,
   [Parameter(Mandatory)][string]$InboundIp,
-  [Parameter(Mandatory)][string]$Location,             # Must match the lab's Azure region — DNS Security Policy is regional, not global
+  [Parameter(Mandatory)][string]$Location,             # Must match the lab's Azure region  -  DNS Security Policy is regional, not global
   [string]$PolicyName       = "dnspolicy-lab-008-stickyblock",
   [string]$TestDomain       = "sticky.internal.lab",    # A random-ish subdomain to minimize cross-test pollution
   [string]$ZoneName         = "internal.lab",
@@ -138,7 +138,7 @@ $policyTest = az network dns-security-policy --help 2>$null
 $ErrorActionPreference = $oldEP
 
 if ($policyTest -match "dns-security-policy|Commands") {
-  Write-Host "  DNS Security Policy CLI available — attempting policy create..." -ForegroundColor DarkGray
+  Write-Host "  DNS Security Policy CLI available  -  attempting policy create..." -ForegroundColor DarkGray
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $policyCreate = az network dns-security-policy create `
     --name $PolicyName `
@@ -239,9 +239,9 @@ for ($i = 1; $i -le $PostRemovalLoops; $i++) {
 
   if (-not $iterResult.summary.resolved) {
     $persistenceDetected = $true
-    Write-Host "    [EVIDENCE] Query still blocked at iteration $i — possible cache persistence" -ForegroundColor Yellow
+    Write-Host "    [EVIDENCE] Query still blocked at iteration $i  -  possible cache persistence" -ForegroundColor Yellow
   } else {
-    Write-Host "    [CLEAR] Query resolved at iteration $i — block lifted" -ForegroundColor Green
+    Write-Host "    [CLEAR] Query resolved at iteration $i  -  block lifted" -ForegroundColor Green
     break
   }
 
