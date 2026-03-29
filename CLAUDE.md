@@ -153,20 +153,20 @@ $files = @(Get-ChildItem $dir -Filter "*.json")
 if ($files.Count -gt 0) { ... }
 ```
 
-### `az dns-resolver` forwarding rule and vnet-link commands live under `forwarding-ruleset`
+### `az dns-resolver` forwarding-rule and vnet-link use `--ruleset-name`, not `--forwarding-ruleset-name`
 
-Forwarding rules and VNet links are child resources of a `dnsForwardingRuleset`. The CLI subgroup is `az dns-resolver forwarding-ruleset`, not `az dns-resolver` directly.
+`az dns-resolver forwarding-rule` and `az dns-resolver vnet-link` ARE valid top-level subgroups (confirmed in Azure CLI docs). The parameter flag is `--ruleset-name`, not `--forwarding-ruleset-name`. Using the wrong flag causes the command to silently return nothing (error eaten by `2>$null`).
 
-**Wrong (silently returns nothing — error eaten by `2>$null`):**
+**Wrong (silently returns nothing — wrong flag):**
 ```powershell
-az dns-resolver forwarding-rule list --forwarding-ruleset-name $name
-az dns-resolver vnet-link list       --forwarding-ruleset-name $name
+az dns-resolver forwarding-rule list --forwarding-ruleset-name $name -g $rg
+az dns-resolver vnet-link list       --forwarding-ruleset-name $name -g $rg
 ```
 
 **Correct:**
 ```powershell
-az dns-resolver forwarding-ruleset forwarding-rule list --forwarding-ruleset-name $name -g $rg
-az dns-resolver forwarding-ruleset vnet-link list       --forwarding-ruleset-name $name -g $rg
+az dns-resolver forwarding-rule list --ruleset-name $name -g $rg
+az dns-resolver vnet-link list       --ruleset-name $name -g $rg
 ```
 
 ### `az group update --tags` with a space-separated string is unreliable on Windows
