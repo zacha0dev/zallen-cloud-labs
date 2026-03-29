@@ -199,16 +199,49 @@ $matched  = ($cleanOut -match "expected-pattern")
 
 `nslookup` (from `bind9-dnsutils`) may not be installed when the run-command fires — cloud-init is still running packages in the background. `getent hosts` is always available (glibc) and routes through the system resolver (systemd-resolved stub → upstream), exercising the full forwarding chain.
 
-**Pattern:**
+**Script to pass to `--scripts`:**
 
-```bash
-getent hosts app.internal.lab 2>/dev/null || nslookup app.internal.lab 2>/dev/null
+```powershell
+$dnsCmd = "getent hosts app.internal.lab"
+az vm run-command invoke ... --scripts $dnsCmd
 ```
 
-- `getent` succeeds quickly if the DNS chain is healthy
-- `nslookup` fallback covers the window where `bind9-dnsutils` just finished installing
-- `2>/dev/null` suppresses error noise if the command finds nothing (stderr goes nowhere)
+**No shell operators (`2>/dev/null`, `||`) in `--scripts`**: `az vm run-command invoke --scripts` is a space-separated list. Shell operators like `>` and `||` can be misinterpreted when passed through PowerShell 5.1 → az.exe argument encoding on Windows. Pass only a bare command + args; stderr from getent goes to `[stderr]` in the response (stripped before matching anyway).
+
 - Never use `cat /etc/resolv.conf` for DNS validation on Ubuntu 22.04 — it points to the systemd-resolved stub (`127.0.0.53`), not the actual upstream. Actual upstream config is in `/run/systemd/resolve/resolv.conf`.
+
+### `az vm run-command invoke` may return extension test output on first call
+
+The `RunShellScript` extension runs a `test.sh` health check before executing the user script. If the extension is still enabling (first install on a new VM), the response contains only:
+
+```
+Enable succeeded:
+This is a sample script
+Optional parameters: /var/lib/waagent/run-command/download/N/script.sh
+```
+
+This is test.sh's output — NOT the user script's output. The user script may not have run yet.
+
+**Required pattern — retry loop with "sample script" detection:**
+
+```powershell
+$maxTries = 3; $retryWait = 30; $cleanOut = ""; $resolved = $false
+for ($attempt = 1; $attempt -le $maxTries; $attempt++) {
+  if ($attempt -gt 1) { Start-Sleep -Seconds $retryWait }
+  $result = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $result = az vm run-command invoke -g $rg -n $vmName `
+    --command-id RunShellScript --scripts "getent hosts $target" `
+    -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if (-not ($result -and $result.value -and $result.value.Count -gt 0)) { continue }
+  $raw = $result.value[0].message
+  $cleanOut = ($raw -replace '\[stdout\]','' -replace '\[stderr\]','').Trim()
+  if ($cleanOut -match "This is a sample script") { continue }  # still enabling
+  $resolved = ($cleanOut -match "expected-ip")
+  break
+}
+```
 
 ### AVNM subscription scope format
 
