@@ -153,6 +153,36 @@ $files = @(Get-ChildItem $dir -Filter "*.json")
 if ($files.Count -gt 0) { ... }
 ```
 
+### `az dns-resolver` forwarding rule and vnet-link commands live under `forwarding-ruleset`
+
+Forwarding rules and VNet links are child resources of a `dnsForwardingRuleset`. The CLI subgroup is `az dns-resolver forwarding-ruleset`, not `az dns-resolver` directly.
+
+**Wrong (silently returns nothing — error eaten by `2>$null`):**
+```powershell
+az dns-resolver forwarding-rule list --forwarding-ruleset-name $name
+az dns-resolver vnet-link list       --forwarding-ruleset-name $name
+```
+
+**Correct:**
+```powershell
+az dns-resolver forwarding-ruleset forwarding-rule list --forwarding-ruleset-name $name -g $rg
+az dns-resolver forwarding-ruleset vnet-link list       --forwarding-ruleset-name $name -g $rg
+```
+
+### `az group update --tags` with a space-separated string is unreliable on Windows
+
+Passing a single space-separated string to `--tags` works for `az group create` but can fail silently for `az group update` on Windows (PS5.1 passes it as one arg, az parses it differently). Pass each tag as a separate argument instead:
+
+```powershell
+# Wrong - may set one giant tag or fail silently:
+$tagsString = "project=azure-labs lab=lab-008 owner=$Owner"
+az group update --name $rg --tags $tagsString
+
+# Correct - each tag is a discrete argument:
+$tagArgs = @("project=azure-labs", "lab=lab-008", "owner=$Owner", "environment=lab")
+az group update --name $rg --tags @tagArgs
+```
+
 ### AVNM subscription scope format
 
 `az network manager create --network-manager-scopes` requires the full ARM path:
