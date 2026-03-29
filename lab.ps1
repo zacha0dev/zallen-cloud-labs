@@ -57,16 +57,16 @@ $RepoRoot = $PSScriptRoot
 # =============================================================================
 
 $LabCatalog = @{
-  "lab-000" = @{ Desc = "Resource Group + VNet baseline";                Cost = "Free";       Cloud = "Azure";       Prereq = "setup.ps1 -Azure" }
-  "lab-001" = @{ Desc = "vWAN hub routing";                              Cost = "~`$0.26/hr"; Cloud = "Azure";       Prereq = "lab-000" }
-  "lab-002" = @{ Desc = "App Gateway + Front Door (L7 LB)";             Cost = "~`$0.30/hr"; Cloud = "Azure";       Prereq = "lab-000" }
-  "lab-003" = @{ Desc = "vWAN to AWS VPN - BGP/APIPA";                  Cost = "~`$0.70/hr"; Cloud = "Azure + AWS"; Prereq = "lab-001 + AWS setup" }
-  "lab-004" = @{ Desc = "vWAN default route propagation";               Cost = "~`$0.60/hr"; Cloud = "Azure";       Prereq = "lab-001" }
-  "lab-005" = @{ Desc = "vWAN S2S BGP/APIPA reference";                 Cost = "~`$0.61/hr"; Cloud = "Azure";       Prereq = "lab-001" }
-  "lab-006" = @{ Desc = "vWAN spoke BGP router + loopback";             Cost = "~`$0.37/hr"; Cloud = "Azure";       Prereq = "lab-001" }
-  "lab-007" = @{ Desc = "Azure Private DNS Zones + auto-registration";  Cost = "~`$0.02/hr"; Cloud = "Azure";       Prereq = "lab-000" }
-  "lab-008" = @{ Desc = "DNS Private Resolver + forwarding ruleset";    Cost = "~`$0.03/hr"; Cloud = "Azure";       Prereq = "lab-007 recommended" }
-  "lab-009" = @{ Desc = "AVNM dual-region hub-spoke + Global Mesh";    Cost = "~`$0.01/hr"; Cloud = "Azure";       Prereq = "Azure CLI 2.51+" }
+  "lab-000" = @{ Desc = "Resource Group + VNet baseline";                Cost = "Free";       Cloud = "Azure";       CostPerHr = 0.00 }
+  "lab-001" = @{ Desc = "vWAN hub routing";                              Cost = "~`$0.26/hr"; Cloud = "Azure";       CostPerHr = 0.26 }
+  "lab-002" = @{ Desc = "App Gateway + Front Door (L7 LB)";             Cost = "~`$0.30/hr"; Cloud = "Azure";       CostPerHr = 0.30 }
+  "lab-003" = @{ Desc = "vWAN to AWS VPN - BGP/APIPA";                  Cost = "~`$0.70/hr"; Cloud = "Azure + AWS"; CostPerHr = 0.70 }
+  "lab-004" = @{ Desc = "vWAN default route propagation";               Cost = "~`$0.60/hr"; Cloud = "Azure";       CostPerHr = 0.60 }
+  "lab-005" = @{ Desc = "vWAN S2S BGP/APIPA reference";                 Cost = "~`$0.61/hr"; Cloud = "Azure";       CostPerHr = 0.61 }
+  "lab-006" = @{ Desc = "vWAN spoke BGP router + loopback";             Cost = "~`$0.37/hr"; Cloud = "Azure";       CostPerHr = 0.37 }
+  "lab-007" = @{ Desc = "Azure Private DNS Zones + auto-registration";  Cost = "~`$0.02/hr"; Cloud = "Azure";       CostPerHr = 0.02 }
+  "lab-008" = @{ Desc = "DNS Private Resolver + forwarding ruleset";    Cost = "~`$0.03/hr"; Cloud = "Azure";       CostPerHr = 0.03 }
+  "lab-009" = @{ Desc = "AVNM dual-region hub-spoke + Global Mesh";    Cost = "~`$0.01/hr"; Cloud = "Azure";       CostPerHr = 0.01 }
 }
 
 # =============================================================================
@@ -190,7 +190,7 @@ function Show-Help {
   Write-Host "  -Setup -Aws                 AWS environment setup (lab-003 only)"
   Write-Host ""
   Write-Host "LABS" -ForegroundColor White
-  Write-Host "  -List                       Show all labs with cost, cloud, and prereqs"
+  Write-Host "  -List                       Show all labs with cost, cloud, and live status"
   Write-Host "  -Deploy <lab-id>            Deploy a lab (e.g. -Deploy lab-001)"
   Write-Host "  -Destroy <lab-id>           Tear down a lab cleanly"
   Write-Host "  -Inspect <lab-id>           Run post-deploy validation on a lab"
@@ -291,6 +291,33 @@ function Invoke-Setup {
 # Action: List
 # =============================================================================
 
+function Get-DeployedLabKeys {
+  <#
+  .SYNOPSIS
+    Returns a hashtable of lab keys (e.g. "lab-001") that have a live resource
+    group in the current Azure subscription. Single az group list call for speed.
+    Returns empty hashtable if az is not available or not authenticated.
+  #>
+  $result = @{}
+  $hasAz = [bool](Get-Command "az" -ErrorAction SilentlyContinue)
+  if (-not $hasAz) { return $result }
+
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $rgJson = az group list --query "[?starts_with(name, 'rg-lab-')].[name]" -o tsv 2>$null
+  $ErrorActionPreference = $oldEap
+
+  if (-not $rgJson) { return $result }
+
+  foreach ($rgName in ($rgJson -split "`n" | Where-Object { $_ -match "\S" })) {
+    $rgName = $rgName.Trim()
+    if ($rgName -match "rg-(lab-\d{3})") {
+      $key = $Matches[1]
+      $result[$key] = $true
+    }
+  }
+  return $result
+}
+
 function Invoke-List {
   Write-Header "Available Labs"
 
@@ -300,56 +327,78 @@ function Invoke-List {
     return
   }
 
+  # Probe Azure for live resource groups (one call, best-effort)
   Write-Host ""
-  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-12}  {4}" -f "Lab", "Description", "Cost/hr", "Cloud", "Prereq") -ForegroundColor White
-  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-12}  {4}" -f "---", "-----------", "-------", "-----", "------") -ForegroundColor DarkGray
+  Write-Host "  Checking deployed status..." -ForegroundColor DarkGray
+  $deployed = Get-DeployedLabKeys
+  $liveCount = $deployed.Keys.Count
+
+  Write-Host ""
+  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-14}  {4}" -f "Lab", "Description", "Est. Cost", "Cloud", "Status") -ForegroundColor White
+  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-14}  {4}" -f "---", "-----------", "---------", "-----", "------") -ForegroundColor DarkGray
 
   foreach ($labDir in $discovered) {
     $id = $labDir.Name
 
-    # Normalize to "lab-NNN" key for catalog lookup
     $key = ""
     if ($id -match "^(lab-\d{3})") { $key = $Matches[1] }
 
-    $desc = ""
-    $cost = ""
-    $cloud = ""
-    $prereq = ""
+    $desc  = ""
+    $cost  = "?"
+    $cloud = "Azure"
+    $costPerHr = 0.0
 
     if ($key -and $LabCatalog.ContainsKey($key)) {
-      $entry = $LabCatalog[$key]
-      $desc   = $entry.Desc
-      $cost   = $entry.Cost
-      $cloud  = $entry.Cloud
-      $prereq = $entry.Prereq
+      $entry     = $LabCatalog[$key]
+      $desc      = $entry.Desc
+      $cost      = $entry.Cost
+      $cloud     = $entry.Cloud
+      $costPerHr = $entry.CostPerHr
     } else {
-      # Fallback: humanize directory name
       $desc = ($id -replace "^lab-\d{3}[-_]?", "") -replace "[-_]", " "
-      $cost = "?"
-      $cloud = "Azure"
-      $prereq = ""
     }
 
-    # Truncate long values to fit columns
     if ($desc.Length -gt 46) { $desc = $desc.Substring(0, 43) + "..." }
 
-    $costColor = "White"
-    if ($cost -eq "Free") { $costColor = "Green" }
-    elseif ($cost -match "0\.[0-6]") { $costColor = "Yellow" }
-    elseif ($cost -match "0\.[7-9]" -or $cost -match "[1-9]\.\d") { $costColor = "Red" }
+    $isLive = $key -and $deployed.ContainsKey($key)
 
-    # Print row with color on the cost column
+    $costColor = "White"
+    if ($cost -eq "Free")                                        { $costColor = "Green" }
+    elseif ($costPerHr -gt 0 -and $costPerHr -le 0.10)          { $costColor = "Green" }
+    elseif ($costPerHr -gt 0.10 -and $costPerHr -le 0.45)       { $costColor = "Yellow" }
+    elseif ($costPerHr -gt 0.45)                                 { $costColor = "Red" }
+
+    # Status label + color
+    $statusLabel = "-"
+    $statusColor = "DarkGray"
+    if ($isLive) {
+      if ($cost -eq "Free") {
+        $statusLabel = "LIVE"
+        $statusColor = "Green"
+      } elseif ($costPerHr -le 0.10) {
+        $statusLabel = "LIVE (~$cost)"
+        $statusColor = "Yellow"
+      } else {
+        $statusLabel = "LIVE (~$cost)"
+        $statusColor = "Red"
+      }
+    }
+
     Write-Host -NoNewline ("  {0,-10}  {1,-46}  " -f $key, $desc)
     Write-Host -NoNewline ("{0,-12}" -f $cost) -ForegroundColor $costColor
-    Write-Host ("  {0,-12}  {1}" -f $cloud, $prereq)
+    Write-Host -NoNewline ("  {0,-14}  " -f $cloud)
+    Write-Host $statusLabel -ForegroundColor $statusColor
   }
 
   Write-Host ""
-  Write-Host "  Deploy a lab:     .\lab.ps1 -Deploy lab-000" -ForegroundColor DarkGray
-  Write-Host "  Check costs:      .\lab.ps1 -Cost" -ForegroundColor DarkGray
-  Write-Host "  Destroy a lab:    .\lab.ps1 -Destroy lab-001" -ForegroundColor DarkGray
-  Write-Host ""
-  Write-Host "  Always run -Destroy after each lab session to avoid charges." -ForegroundColor Yellow
+  if ($liveCount -gt 0) {
+    Write-Host "  $liveCount lab(s) currently deployed - charges accruing." -ForegroundColor Yellow
+    Write-Host "  Destroy when done:  .\lab.ps1 -Destroy <lab-id>" -ForegroundColor Yellow
+    Write-Host "  Full cost scan:     .\lab.ps1 -Cost" -ForegroundColor DarkGray
+  } else {
+    Write-Host "  No labs currently deployed." -ForegroundColor DarkGray
+    Write-Host "  Deploy a lab:  .\lab.ps1 -Deploy lab-000" -ForegroundColor DarkGray
+  }
   Write-Host ""
 }
 
