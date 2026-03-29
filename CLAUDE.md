@@ -113,6 +113,32 @@ $path = Join-Path $RepoRoot "scripts" "labs-common.ps1"
 $path = Join-Path (Join-Path $RepoRoot "scripts") "labs-common.ps1"
 ```
 
+### Pipeline-assigned variables must be pre-initialized to `$null` under `Set-StrictMode`
+
+With `Set-StrictMode -Version Latest`, if a `$var = az ... | ConvertFrom-Json` pipeline produces **no output** (because the `az` command found nothing and `ConvertFrom-Json` received an empty stream), the variable is left **unset** — not `$null`. Any subsequent access throws `VariableIsUndefined`.
+
+**Required pattern for every existence-check pipeline:**
+
+```powershell
+$resolver = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$resolver = az dns-resolver show -g $rg -n $name -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+```
+
+This applies to ALL `$var = <cmd> | ConvertFrom-Json` patterns, not just `az`. The pre-init guarantees `$var` is always defined (as `$null`) even when the pipeline produces nothing.
+
+Also guard any string interpolation that dereferences the variable before the null check completes:
+
+```powershell
+# Wrong - throws if $record is null:
+-Details "IP: $($record.aRecords[0].ipv4Address)"
+
+# Correct:
+$ip = if ($record -and $record.aRecords.Count -gt 0) { $record.aRecords[0].ipv4Address } else { "not found" }
+-Details "IP: $ip"
+```
+
 ### `Get-ChildItem` `.Count` is unreliable in PS5.1 without `@()`
 
 In PS5.1, if `Get-ChildItem` returns a single object (not an array), calling `.Count` on the result returns `$null`, not `1`. Wrap all `Get-ChildItem` results in `@()` before using `.Count`:
