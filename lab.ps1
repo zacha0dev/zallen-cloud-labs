@@ -616,7 +616,7 @@ function Invoke-Inspect {
 # =============================================================================
 
 function Invoke-Cost {
-  $costScript = Join-Path $RepoRoot "tools" "cost-check.ps1"
+  $costScript = Join-Path (Join-Path $RepoRoot "tools") "cost-check.ps1"
   if (-not (Test-Path $costScript)) {
     Write-Err "cost-check.ps1 not found at tools/cost-check.ps1"
     exit 1
@@ -697,7 +697,7 @@ function Invoke-Settings {
   Write-Host ""
   Write-Host "  Configured Subscriptions  (.data/subs.json)" -ForegroundColor White
 
-  $subsPath = Join-Path $RepoRoot ".data" "subs.json"
+  $subsPath = Join-Path (Join-Path $RepoRoot ".data") "subs.json"
   if (-not (Test-Path $subsPath)) {
     Write-Host "    Not configured - run .\lab.ps1 -Setup to create" -ForegroundColor Yellow
   } else {
@@ -735,7 +735,7 @@ function Invoke-Settings {
 # =============================================================================
 
 function Invoke-Update {
-  $updateScript = Join-Path $RepoRoot "scripts" "update-labs.ps1"
+  $updateScript = Join-Path (Join-Path $RepoRoot "scripts") "update-labs.ps1"
   if (-not (Test-Path $updateScript)) {
     Write-Err "update-labs.ps1 not found at scripts/update-labs.ps1"
     exit 1
