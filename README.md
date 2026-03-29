@@ -47,11 +47,26 @@ All operations go through a single entry point at the repo root:
 .\lab.ps1 -Deploy lab-001 -Force      # Deploy without confirmation prompt
 .\lab.ps1 -Destroy lab-001            # Tear down cleanly
 .\lab.ps1 -Inspect lab-001            # Post-deploy validation
+.\lab.ps1 -Research lab-008                              # List research scenarios for a lab
+.\lab.ps1 -Research lab-008 -Scenario cache-recovery    # Run a research scenario
+.\lab.ps1 -Research lab-008 -Scenario cache-recovery -Background  # Run in background
 .\lab.ps1 -Cost                       # Scan for leftover billable resources
 .\lab.ps1 -Settings                   # Account, subscriptions, and repo sync state
 .\lab.ps1 -Update                     # Pull latest lab updates from GitHub
 .\lab.ps1 -Setup -Aws                 # AWS setup (lab-003 only)
 ```
+
+### Research Mode
+
+Labs include **research scenarios** — scripts that run on top of a deployed lab to investigate specific networking behaviors and generate structured JSON reports.
+
+```powershell
+.\lab.ps1 -Research lab-008                                            # list scenarios
+.\lab.ps1 -Research lab-008 -Scenario cache-recovery                   # run (foreground)
+.\lab.ps1 -Research lab-008 -Scenario cache-recovery -Background       # run (background job)
+```
+
+Reports are written to `outputs/<lab-id>/` at the repo root. Background jobs write a status file you can poll with `Get-Content outputs/lab-008/cache-recovery-status.json | ConvertFrom-Json`.
 
 ---
 

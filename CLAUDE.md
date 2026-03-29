@@ -141,6 +141,39 @@ When writing or reviewing scripts, actively check for:
 - **Use PS 7-only syntax** — all scripts must work on PS 5.1
 - **Leave billable resources running** — always end examples with `.\lab.ps1 -Destroy <lab-id>`
 - **Use em-dashes in .ps1 files** — use ` - ` (hyphen) instead
+- **Let README.md fall behind** — update it in the same commit whenever `lab.ps1` commands, flags, or labs change
+- **Let VERSION fall behind** — bump it in the same commit/PR that introduces the change
+
+---
+
+## README.md Maintenance (REQUIRED)
+
+The root `README.md` is the public face of the repo. It must stay in sync with the actual state of `lab.ps1` and the lab catalog. **Whenever any of the following change, update README.md in the same commit:**
+
+| Change | What to update in README |
+|--------|--------------------------|
+| New `lab.ps1` command or flag | Add to the CLI reference block |
+| New lab added | Add row to the Labs table |
+| Lab removed or renamed | Update or remove the row |
+| New framework capability (e.g. research mode) | Add a named section with usage examples |
+| Cost estimate changes | Update the Labs table cost column |
+
+---
+
+## Versioning (`VERSION` file)
+
+The `VERSION` file at the repo root uses **semantic versioning** (`MAJOR.MINOR.PATCH`). It is read by `lab.ps1 -Settings` and should always reflect what is currently in `main`.
+
+| Increment | When |
+|-----------|------|
+| **PATCH** (`0.7.x`) | Bug fixes, doc corrections, refactors with no user-visible behavior change |
+| **MINOR** (`0.x.0`) | New user-visible feature: new `lab.ps1` command, new lab, new framework capability |
+| **MAJOR** (`x.0.0`) | Breaking changes: renamed/removed commands, incompatible parameter interface |
+
+**Rules:**
+- Bump `VERSION` in the same commit that introduces the change.
+- MINOR bump when a PR adds a new feature; PATCH bump for fixes and docs.
+- `0.x` = pre-1.0 active development. Reach `1.0.0` when the CLI and lab catalog are stable.
 
 ---
 
