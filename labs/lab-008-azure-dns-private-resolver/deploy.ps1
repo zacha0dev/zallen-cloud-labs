@@ -242,11 +242,13 @@ $phase1Start = Get-Date
 $tagsString = "project=azure-labs lab=lab-008 owner=$Owner environment=lab cost-center=learning"
 
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingRg = $null
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
 if ($existingRg) {
-  Write-Host "  Resource group already exists, skipping..." -ForegroundColor DarkGray
+  Write-Host "  Resource group already exists, updating tags..." -ForegroundColor DarkGray
+  az group update --name $ResourceGroup --tags $tagsString --output none 2>$null
 } else {
   az group create --name $ResourceGroup --location $Location --tags $tagsString --output none
   Write-Log "Resource group created: $ResourceGroup"
@@ -414,8 +416,12 @@ if ($SkipTests) {
   Write-Validation -Check "Forwarding ruleset provisioned" -Passed $rulesetValid -Details $RulesetName
   if (-not $rulesetValid) { $allValid = $false }
 
-  # Forwarding rules
+  # Forwarding rules — give the management plane a moment to index child
+  # resources after the parent ruleset reports Succeeded. Without this pause
+  # the list call can return an empty array even when rules were just created.
   if ($rulesetValid) {
+    Write-Host "  Waiting for ruleset child resources to propagate..." -ForegroundColor DarkGray
+    Start-Sleep -Seconds 20
     $rules = $null
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $rules = az dns-resolver forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
