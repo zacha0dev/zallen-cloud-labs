@@ -429,7 +429,7 @@ if ($SkipTests) {
     Write-Host "  Waiting for ruleset child resources to propagate (up to ${propagateMax}s)..." -ForegroundColor DarkGray
     while ($propagateElapsed -lt $propagateMax) {
       $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-      $rules = az dns-resolver forwarding-ruleset forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
+      $rules = az dns-resolver forwarding-rule list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
       $ErrorActionPreference = $oldEP
       if ($rules -and @($rules).Count -gt 0) { break }
       Start-Sleep -Seconds $propagatePoll
@@ -462,7 +462,7 @@ if ($SkipTests) {
       Write-Host ""
       Write-Host "  [WARN] Wildcard '.' forwarding rule detected in ruleset!" -ForegroundColor Red
       Write-Host "         This will break Azure platform DNS for all VMs linked to this ruleset." -ForegroundColor Red
-      Write-Host "         Remove it: az dns-resolver forwarding-ruleset forwarding-rule delete -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n '$($wildcardRule.name)'" -ForegroundColor Yellow
+      Write-Host "         Remove it: az dns-resolver forwarding-rule delete --ruleset-name $RulesetName -g $ResourceGroup -n '$($wildcardRule.name)'" -ForegroundColor Yellow
       $allValid = $false
     }
   }
@@ -471,7 +471,7 @@ if ($SkipTests) {
   if ($rulesetValid) {
     $rulesetLinks = $null
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $rulesetLinks = az dns-resolver forwarding-ruleset vnet-link list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
+    $rulesetLinks = az dns-resolver vnet-link list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
     $ErrorActionPreference = $oldEP
     $rulesetLinkValid = ($rulesetLinks -and $rulesetLinks.Count -gt 0)
     Write-Validation -Check "Ruleset linked to spoke VNet" -Passed $rulesetLinkValid
@@ -850,7 +850,7 @@ Write-Host "  - DNS test (Run-Command from spoke VM):" -ForegroundColor Gray
 Write-Host "    az vm run-command invoke -g $ResourceGroup -n $VmSpokeName \" -ForegroundColor Gray
 Write-Host "      --command-id RunShellScript --scripts 'nslookup app.internal.lab'" -ForegroundColor Gray
 Write-Host "  - View forwarding rules:" -ForegroundColor Gray
-Write-Host "    az dns-resolver forwarding-ruleset forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o table" -ForegroundColor Gray
+Write-Host "    az dns-resolver forwarding-rule list --ruleset-name $RulesetName -g $ResourceGroup -o table" -ForegroundColor Gray
 Write-Host "  - Run StickyBlock mode:         .\deploy.ps1 -Mode StickyBlock -AdminPassword <pw>" -ForegroundColor Gray
 Write-Host "  - Run ForwardingVariants mode:  .\deploy.ps1 -Mode ForwardingVariants -AdminPassword <pw>" -ForegroundColor Gray
 Write-Host "  - Cost check:  .\..\..\tools\cost-check.ps1 -Lab lab-008" -ForegroundColor Gray
