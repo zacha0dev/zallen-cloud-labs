@@ -242,11 +242,13 @@ $phase1Start = Get-Date
 $tagsString = "project=azure-labs lab=lab-008 owner=$Owner environment=lab cost-center=learning"
 
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$existingRg = $null
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
 if ($existingRg) {
-  Write-Host "  Resource group already exists, skipping..." -ForegroundColor DarkGray
+  Write-Host "  Resource group already exists, updating tags..." -ForegroundColor DarkGray
+  az group update --name $ResourceGroup --tags $tagsString --output none 2>$null
 } else {
   az group create --name $ResourceGroup --location $Location --tags $tagsString --output none
   Write-Log "Resource group created: $ResourceGroup"
@@ -414,11 +416,24 @@ if ($SkipTests) {
   Write-Validation -Check "Forwarding ruleset provisioned" -Passed $rulesetValid -Details $RulesetName
   if (-not $rulesetValid) { $allValid = $false }
 
-  # Forwarding rules
+  # Forwarding rules — poll until child resources are visible or 90s timeout.
+  # Azure management plane can take 30-90s to index rules after the parent
+  # ruleset reports Succeeded; a fixed sleep is not reliable enough.
   if ($rulesetValid) {
+    $propagateMax = 90
+    $propagatePoll = 10
+    $propagateElapsed = 0
     $rules = $null
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $rules = az dns-resolver forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
+    Write-Host "  Waiting for ruleset child resources to propagate (up to ${propagateMax}s)..." -ForegroundColor DarkGray
+    while ($propagateElapsed -lt $propagateMax) {
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $rules = az dns-resolver forwarding-rule list -g $ResourceGroup --forwarding-ruleset-name $RulesetName -o json 2>$null | ConvertFrom-Json
+      $ErrorActionPreference = $oldEP
+      if ($rules -and @($rules).Count -gt 0) { break }
+      Start-Sleep -Seconds $propagatePoll
+      $propagateElapsed += $propagatePoll
+      Write-Host "    still propagating... ${propagateElapsed}s elapsed" -ForegroundColor DarkGray
+    }
     $ErrorActionPreference = $oldEP
     $ruleInternalLab = $rules | Where-Object { $_.name -eq "rule-internal-lab" }
     $ruleOnprem      = $rules | Where-Object { $_.name -eq "rule-onprem-example" }
@@ -510,11 +525,18 @@ if ($SkipTests) {
   Write-Host "  5. Returns: 10.80.1.10" -ForegroundColor Gray
 
   # Cross-VNet DNS test via Run-Command
+  # Allow 30s for the VM agent to become ready after Bicep reports the VM
+  # as provisioned - the agent can lag the resource provision by 1-2 min.
   Write-Host ""
   Write-Host "Attempting cross-VNet DNS validation from spoke VM via Run-Command..." -ForegroundColor Yellow
   Write-Host "  (Validates the full forwarding path: spoke -> ruleset -> inbound EP -> zone)" -ForegroundColor DarkGray
+  Write-Host "  Waiting 30s for VM agent to be ready..." -ForegroundColor DarkGray
+  Start-Sleep -Seconds 30
 
-  $testScript008 = "nslookup app.$DnsZoneName 168.63.129.16 ; echo '###' ; nslookup azure.microsoft.com ; echo '###' ; cat /etc/resolv.conf"
+  # On Ubuntu 20.04+, /etc/resolv.conf is a stub pointing to 127.0.0.53
+  # (systemd-resolved). The actual upstream 168.63.129.16 appears in
+  # /run/systemd/resolve/resolv.conf. Check both locations.
+  $testScript008 = "nslookup app.$DnsZoneName 168.63.129.16 ; echo '###' ; nslookup azure.microsoft.com ; echo '###' ; cat /run/systemd/resolve/resolv.conf 2>/dev/null || cat /etc/resolv.conf"
 
   $runCmdResult = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
