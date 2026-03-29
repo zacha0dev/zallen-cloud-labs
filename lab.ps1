@@ -20,6 +20,8 @@ Usage:
   .\lab.ps1 -Cost                        # Scan for billable resources (all labs)
   .\lab.ps1 -Cost -Lab lab-003           # Cost check for a specific lab
   .\lab.ps1 -Cost -AwsProfile aws-labs   # Include AWS in cost check
+  .\lab.ps1 -Settings                    # Show account, subscriptions, repo version
+  .\lab.ps1 -Update                      # Pull latest lab updates from GitHub
 #>
 
 [CmdletBinding()]
@@ -34,6 +36,8 @@ param(
   [switch]$Destroy,
   [switch]$Inspect,
   [switch]$Cost,
+  [switch]$Settings,
+  [switch]$Update,
 
   # Lab selector (used with -Deploy, -Destroy, -Inspect, -Cost)
   [string]$Lab,
@@ -57,16 +61,16 @@ $RepoRoot = $PSScriptRoot
 # =============================================================================
 
 $LabCatalog = @{
-  "lab-000" = @{ Desc = "Resource Group + VNet baseline";                Cost = "Free";       Cloud = "Azure";       Prereq = "setup.ps1 -Azure" }
-  "lab-001" = @{ Desc = "vWAN hub routing";                              Cost = "~`$0.26/hr"; Cloud = "Azure";       Prereq = "lab-000" }
-  "lab-002" = @{ Desc = "App Gateway + Front Door (L7 LB)";             Cost = "~`$0.30/hr"; Cloud = "Azure";       Prereq = "lab-000" }
-  "lab-003" = @{ Desc = "vWAN to AWS VPN - BGP/APIPA";                  Cost = "~`$0.70/hr"; Cloud = "Azure + AWS"; Prereq = "lab-001 + AWS setup" }
-  "lab-004" = @{ Desc = "vWAN default route propagation";               Cost = "~`$0.60/hr"; Cloud = "Azure";       Prereq = "lab-001" }
-  "lab-005" = @{ Desc = "vWAN S2S BGP/APIPA reference";                 Cost = "~`$0.61/hr"; Cloud = "Azure";       Prereq = "lab-001" }
-  "lab-006" = @{ Desc = "vWAN spoke BGP router + loopback";             Cost = "~`$0.37/hr"; Cloud = "Azure";       Prereq = "lab-001" }
-  "lab-007" = @{ Desc = "Azure Private DNS Zones + auto-registration";  Cost = "~`$0.02/hr"; Cloud = "Azure";       Prereq = "lab-000" }
-  "lab-008" = @{ Desc = "DNS Private Resolver + forwarding ruleset";    Cost = "~`$0.03/hr"; Cloud = "Azure";       Prereq = "lab-007 recommended" }
-  "lab-009" = @{ Desc = "AVNM dual-region hub-spoke + Global Mesh";    Cost = "~`$0.01/hr"; Cloud = "Azure";       Prereq = "Azure CLI 2.51+" }
+  "lab-000" = @{ Desc = "Resource Group + VNet baseline";                Cost = "Free";       Cloud = "Azure";       CostPerHr = 0.00 }
+  "lab-001" = @{ Desc = "vWAN hub routing";                              Cost = "~`$0.26/hr"; Cloud = "Azure";       CostPerHr = 0.26 }
+  "lab-002" = @{ Desc = "App Gateway + Front Door (L7 LB)";             Cost = "~`$0.30/hr"; Cloud = "Azure";       CostPerHr = 0.30 }
+  "lab-003" = @{ Desc = "vWAN to AWS VPN - BGP/APIPA";                  Cost = "~`$0.70/hr"; Cloud = "Azure + AWS"; CostPerHr = 0.70 }
+  "lab-004" = @{ Desc = "vWAN default route propagation";               Cost = "~`$0.60/hr"; Cloud = "Azure";       CostPerHr = 0.60 }
+  "lab-005" = @{ Desc = "vWAN S2S BGP/APIPA reference";                 Cost = "~`$0.61/hr"; Cloud = "Azure";       CostPerHr = 0.61 }
+  "lab-006" = @{ Desc = "vWAN spoke BGP router + loopback";             Cost = "~`$0.37/hr"; Cloud = "Azure";       CostPerHr = 0.37 }
+  "lab-007" = @{ Desc = "Azure Private DNS Zones + auto-registration";  Cost = "~`$0.02/hr"; Cloud = "Azure";       CostPerHr = 0.02 }
+  "lab-008" = @{ Desc = "DNS Private Resolver + forwarding ruleset";    Cost = "~`$0.03/hr"; Cloud = "Azure";       CostPerHr = 0.03 }
+  "lab-009" = @{ Desc = "AVNM dual-region hub-spoke + Global Mesh";    Cost = "~`$0.01/hr"; Cloud = "Azure";       CostPerHr = 0.01 }
 }
 
 # =============================================================================
@@ -190,7 +194,7 @@ function Show-Help {
   Write-Host "  -Setup -Aws                 AWS environment setup (lab-003 only)"
   Write-Host ""
   Write-Host "LABS" -ForegroundColor White
-  Write-Host "  -List                       Show all labs with cost, cloud, and prereqs"
+  Write-Host "  -List                       Show all labs with cost, cloud, and live status"
   Write-Host "  -Deploy <lab-id>            Deploy a lab (e.g. -Deploy lab-001)"
   Write-Host "  -Destroy <lab-id>           Tear down a lab cleanly"
   Write-Host "  -Inspect <lab-id>           Run post-deploy validation on a lab"
@@ -199,6 +203,10 @@ function Show-Help {
   Write-Host "  -Cost                       Scan subscription for billable lab resources"
   Write-Host "  -Cost -Lab <lab-id>         Cost check for a specific lab only"
   Write-Host "  -Cost -AwsProfile <name>    Include AWS account in scan"
+  Write-Host ""
+  Write-Host "CONFIG" -ForegroundColor White
+  Write-Host "  -Settings                   Show account, subscriptions, and repo version"
+  Write-Host "  -Update                     Pull latest lab updates from GitHub"
   Write-Host ""
   Write-Host "OPTIONS (for -Deploy / -Destroy)" -ForegroundColor White
   Write-Host "  -Lab <lab-id>               Lab identifier (e.g. lab-001, 001, or 1)"
@@ -291,6 +299,33 @@ function Invoke-Setup {
 # Action: List
 # =============================================================================
 
+function Get-DeployedLabKeys {
+  <#
+  .SYNOPSIS
+    Returns a hashtable of lab keys (e.g. "lab-001") that have a live resource
+    group in the current Azure subscription. Single az group list call for speed.
+    Returns empty hashtable if az is not available or not authenticated.
+  #>
+  $result = @{}
+  $hasAz = [bool](Get-Command "az" -ErrorAction SilentlyContinue)
+  if (-not $hasAz) { return $result }
+
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $rgJson = az group list --query "[?starts_with(name, 'rg-lab-')].[name]" -o tsv 2>$null
+  $ErrorActionPreference = $oldEap
+
+  if (-not $rgJson) { return $result }
+
+  foreach ($rgName in ($rgJson -split "`n" | Where-Object { $_ -match "\S" })) {
+    $rgName = $rgName.Trim()
+    if ($rgName -match "rg-(lab-\d{3})") {
+      $key = $Matches[1]
+      $result[$key] = $true
+    }
+  }
+  return $result
+}
+
 function Invoke-List {
   Write-Header "Available Labs"
 
@@ -300,56 +335,78 @@ function Invoke-List {
     return
   }
 
+  # Probe Azure for live resource groups (one call, best-effort)
   Write-Host ""
-  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-12}  {4}" -f "Lab", "Description", "Cost/hr", "Cloud", "Prereq") -ForegroundColor White
-  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-12}  {4}" -f "---", "-----------", "-------", "-----", "------") -ForegroundColor DarkGray
+  Write-Host "  Checking deployed status..." -ForegroundColor DarkGray
+  $deployed = Get-DeployedLabKeys
+  $liveCount = $deployed.Keys.Count
+
+  Write-Host ""
+  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-14}  {4}" -f "Lab", "Description", "Est. Cost", "Cloud", "Status") -ForegroundColor White
+  Write-Host ("  {0,-10}  {1,-46}  {2,-12}  {3,-14}  {4}" -f "---", "-----------", "---------", "-----", "------") -ForegroundColor DarkGray
 
   foreach ($labDir in $discovered) {
     $id = $labDir.Name
 
-    # Normalize to "lab-NNN" key for catalog lookup
     $key = ""
     if ($id -match "^(lab-\d{3})") { $key = $Matches[1] }
 
-    $desc = ""
-    $cost = ""
-    $cloud = ""
-    $prereq = ""
+    $desc  = ""
+    $cost  = "?"
+    $cloud = "Azure"
+    $costPerHr = 0.0
 
     if ($key -and $LabCatalog.ContainsKey($key)) {
-      $entry = $LabCatalog[$key]
-      $desc   = $entry.Desc
-      $cost   = $entry.Cost
-      $cloud  = $entry.Cloud
-      $prereq = $entry.Prereq
+      $entry     = $LabCatalog[$key]
+      $desc      = $entry.Desc
+      $cost      = $entry.Cost
+      $cloud     = $entry.Cloud
+      $costPerHr = $entry.CostPerHr
     } else {
-      # Fallback: humanize directory name
       $desc = ($id -replace "^lab-\d{3}[-_]?", "") -replace "[-_]", " "
-      $cost = "?"
-      $cloud = "Azure"
-      $prereq = ""
     }
 
-    # Truncate long values to fit columns
     if ($desc.Length -gt 46) { $desc = $desc.Substring(0, 43) + "..." }
 
-    $costColor = "White"
-    if ($cost -eq "Free") { $costColor = "Green" }
-    elseif ($cost -match "0\.[0-6]") { $costColor = "Yellow" }
-    elseif ($cost -match "0\.[7-9]" -or $cost -match "[1-9]\.\d") { $costColor = "Red" }
+    $isLive = $key -and $deployed.ContainsKey($key)
 
-    # Print row with color on the cost column
+    $costColor = "White"
+    if ($cost -eq "Free")                                        { $costColor = "Green" }
+    elseif ($costPerHr -gt 0 -and $costPerHr -le 0.10)          { $costColor = "Green" }
+    elseif ($costPerHr -gt 0.10 -and $costPerHr -le 0.45)       { $costColor = "Yellow" }
+    elseif ($costPerHr -gt 0.45)                                 { $costColor = "Red" }
+
+    # Status label + color
+    $statusLabel = "-"
+    $statusColor = "DarkGray"
+    if ($isLive) {
+      if ($cost -eq "Free") {
+        $statusLabel = "LIVE"
+        $statusColor = "Green"
+      } elseif ($costPerHr -le 0.10) {
+        $statusLabel = "LIVE (~$cost)"
+        $statusColor = "Yellow"
+      } else {
+        $statusLabel = "LIVE (~$cost)"
+        $statusColor = "Red"
+      }
+    }
+
     Write-Host -NoNewline ("  {0,-10}  {1,-46}  " -f $key, $desc)
     Write-Host -NoNewline ("{0,-12}" -f $cost) -ForegroundColor $costColor
-    Write-Host ("  {0,-12}  {1}" -f $cloud, $prereq)
+    Write-Host -NoNewline ("  {0,-14}  " -f $cloud)
+    Write-Host $statusLabel -ForegroundColor $statusColor
   }
 
   Write-Host ""
-  Write-Host "  Deploy a lab:     .\lab.ps1 -Deploy lab-000" -ForegroundColor DarkGray
-  Write-Host "  Check costs:      .\lab.ps1 -Cost" -ForegroundColor DarkGray
-  Write-Host "  Destroy a lab:    .\lab.ps1 -Destroy lab-001" -ForegroundColor DarkGray
-  Write-Host ""
-  Write-Host "  Always run -Destroy after each lab session to avoid charges." -ForegroundColor Yellow
+  if ($liveCount -gt 0) {
+    Write-Host "  $liveCount lab(s) currently deployed - charges accruing." -ForegroundColor Yellow
+    Write-Host "  Destroy when done:  .\lab.ps1 -Destroy <lab-id>" -ForegroundColor Yellow
+    Write-Host "  Full cost scan:     .\lab.ps1 -Cost" -ForegroundColor DarkGray
+  } else {
+    Write-Host "  No labs currently deployed." -ForegroundColor DarkGray
+    Write-Host "  Deploy a lab:  .\lab.ps1 -Deploy lab-000" -ForegroundColor DarkGray
+  }
   Write-Host ""
 }
 
@@ -508,6 +565,112 @@ function Invoke-Cost {
 }
 
 # =============================================================================
+# Action: Settings
+# =============================================================================
+
+function Invoke-Settings {
+  Write-Header "Lab Settings"
+
+  # --- Repo info ---
+  Write-Host ""
+  Write-Host "  Repository" -ForegroundColor White
+
+  $versionFile = Join-Path $RepoRoot "VERSION"
+  $version = if (Test-Path $versionFile) { (Get-Content $versionFile -Raw).Trim() } else { "unknown" }
+  Write-Host "    Version:   $version" -ForegroundColor Gray
+
+  $hasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
+  if ($hasGit -and (Test-Path (Join-Path $RepoRoot ".git"))) {
+    $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $branch  = (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null)
+    $remote  = (git -C $RepoRoot remote get-url origin 2>$null)
+    $ahead   = (git -C $RepoRoot rev-list --count "origin/$branch..HEAD" 2>$null)
+    $behind  = (git -C $RepoRoot rev-list --count "HEAD..origin/$branch" 2>$null)
+    $ErrorActionPreference = $oldEap
+    if ($branch) { Write-Host "    Branch:    $branch" -ForegroundColor Gray }
+    if ($remote) { Write-Host "    Remote:    $remote" -ForegroundColor Gray }
+    if ($behind -and [int]$behind -gt 0) {
+      Write-Host "    Updates:   $behind commit(s) available - run .\lab.ps1 -Update" -ForegroundColor Yellow
+    } elseif ($ahead -and [int]$ahead -gt 0) {
+      Write-Host "    Sync:      $ahead local commit(s) ahead of remote" -ForegroundColor DarkGray
+    } else {
+      Write-Host "    Sync:      up to date" -ForegroundColor Green
+    }
+  }
+
+  # --- Azure account ---
+  Write-Host ""
+  Write-Host "  Azure Account" -ForegroundColor White
+
+  $hasAz = [bool](Get-Command az -ErrorAction SilentlyContinue)
+  if (-not $hasAz) {
+    Write-Host "    Azure CLI not installed - run .\lab.ps1 -Setup" -ForegroundColor Yellow
+  } else {
+    $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $acctJson = az account show -o json 2>$null
+    $ErrorActionPreference = $oldEap
+    if ($acctJson) {
+      $acct = $acctJson | ConvertFrom-Json
+      Write-Host "    Signed in: $($acct.user.name)" -ForegroundColor Gray
+      Write-Host "    Active sub: $($acct.name)" -ForegroundColor Gray
+      Write-Host "    Tenant:    $($acct.tenantId)" -ForegroundColor DarkGray
+    } else {
+      Write-Host "    Not authenticated - run .\lab.ps1 -Login" -ForegroundColor Yellow
+    }
+  }
+
+  # --- Configured subscriptions ---
+  Write-Host ""
+  Write-Host "  Configured Subscriptions  (.data/subs.json)" -ForegroundColor White
+
+  $subsPath = Join-Path $RepoRoot ".data" "subs.json"
+  if (-not (Test-Path $subsPath)) {
+    Write-Host "    Not configured - run .\lab.ps1 -Setup to create" -ForegroundColor Yellow
+  } else {
+    $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $cfg = Get-Content $subsPath -Raw | ConvertFrom-Json
+    $ErrorActionPreference = $oldEap
+    if ($cfg -and $cfg.subscriptions -and $cfg.subscriptions.PSObject.Properties) {
+      $defaultKey = if ($cfg.default) { $cfg.default } else { "" }
+      foreach ($prop in $cfg.subscriptions.PSObject.Properties) {
+        $k   = $prop.Name
+        $sub = $prop.Value
+        $isDefault = ($k -eq $defaultKey)
+        $marker = if ($isDefault) { " (default)" } else { "" }
+        $color  = if ($isDefault) { "Green" } else { "Gray" }
+        Write-Host "    [$k]$marker" -ForegroundColor $color
+        if ($sub.name) { Write-Host "      Name:   $($sub.name)" -ForegroundColor DarkGray }
+        Write-Host "      ID:     $($sub.id)" -ForegroundColor DarkGray
+      }
+    } else {
+      Write-Host "    No subscriptions found in config" -ForegroundColor Yellow
+    }
+  }
+
+  # --- Action hints ---
+  Write-Host ""
+  Write-Host "  Actions" -ForegroundColor White
+  Write-Host "    Add / change subscription:  .\lab.ps1 -Setup" -ForegroundColor DarkGray
+  Write-Host "    Re-authenticate:            .\lab.ps1 -Login" -ForegroundColor DarkGray
+  Write-Host "    Pull latest lab updates:    .\lab.ps1 -Update" -ForegroundColor DarkGray
+  Write-Host ""
+}
+
+# =============================================================================
+# Action: Update
+# =============================================================================
+
+function Invoke-Update {
+  $updateScript = Join-Path $RepoRoot "scripts" "update-labs.ps1"
+  if (-not (Test-Path $updateScript)) {
+    Write-Err "update-labs.ps1 not found at scripts/update-labs.ps1"
+    exit 1
+  }
+  & $updateScript -RepoRoot $RepoRoot
+  exit $LASTEXITCODE
+}
+
+# =============================================================================
 # MAIN - Dispatch
 # =============================================================================
 
@@ -516,18 +679,20 @@ function Invoke-Cost {
 $LabTarget = $Lab
 
 # If no action switch is set, show help
-$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost
+$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost -or $Settings -or $Update
 if (-not $anyAction) {
   Show-Help
   exit 0
 }
 
-if ($Help)    { Show-Help; exit 0 }
-if ($Status)  { Invoke-Status; exit $LASTEXITCODE }
-if ($Login)   { Invoke-Login }
-if ($Setup)   { Invoke-Setup }
-if ($List)    { Invoke-List }
-if ($Deploy)  { Invoke-Deploy -LabId $LabTarget }
-if ($Destroy) { Invoke-Destroy -LabId $LabTarget }
-if ($Inspect) { Invoke-Inspect -LabId $LabTarget }
-if ($Cost)    { Invoke-Cost }
+if ($Help)     { Show-Help; exit 0 }
+if ($Status)   { Invoke-Status; exit $LASTEXITCODE }
+if ($Login)    { Invoke-Login }
+if ($Setup)    { Invoke-Setup }
+if ($List)     { Invoke-List }
+if ($Deploy)   { Invoke-Deploy -LabId $LabTarget }
+if ($Destroy)  { Invoke-Destroy -LabId $LabTarget }
+if ($Inspect)  { Invoke-Inspect -LabId $LabTarget }
+if ($Cost)     { Invoke-Cost }
+if ($Settings) { Invoke-Settings }
+if ($Update)   { Invoke-Update }
