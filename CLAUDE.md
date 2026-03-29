@@ -183,6 +183,33 @@ $tagArgs = @("project=azure-labs", "lab=lab-008", "owner=$Owner", "environment=l
 az group update --name $rg --tags @tagArgs
 ```
 
+### `az vm run-command` output requires stripping Azure wrapper labels
+
+`az vm run-command invoke` wraps script stdout/stderr in `[stdout]` and `[stderr]` labels inside `value[0].message`. Pattern matching against raw output silently fails because the IP or text appears after the label prefix.
+
+**Always strip labels before matching:**
+
+```powershell
+$rawOut   = $runCmdResult.value[0].message
+$cleanOut = ($rawOut -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
+$matched  = ($cleanOut -match "expected-pattern")
+```
+
+### Use `getent hosts` not `nslookup` in VM run-commands for DNS validation
+
+`nslookup` (from `bind9-dnsutils`) may not be installed when the run-command fires — cloud-init is still running packages in the background. `getent hosts` is always available (glibc) and routes through the system resolver (systemd-resolved stub → upstream), exercising the full forwarding chain.
+
+**Pattern:**
+
+```bash
+getent hosts app.internal.lab 2>/dev/null || nslookup app.internal.lab 2>/dev/null
+```
+
+- `getent` succeeds quickly if the DNS chain is healthy
+- `nslookup` fallback covers the window where `bind9-dnsutils` just finished installing
+- `2>/dev/null` suppresses error noise if the command finds nothing (stderr goes nowhere)
+- Never use `cat /etc/resolv.conf` for DNS validation on Ubuntu 22.04 — it points to the systemd-resolved stub (`127.0.0.53`), not the actual upstream. Actual upstream config is in `/run/systemd/resolve/resolv.conf`.
+
 ### AVNM subscription scope format
 
 `az network manager create --network-manager-scopes` requires the full ARM path:

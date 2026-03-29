@@ -526,61 +526,86 @@ if ($SkipTests) {
   Write-Host "  4. Inbound EP -> Azure resolves against private zone" -ForegroundColor Gray
   Write-Host "  5. Returns: 10.80.1.10" -ForegroundColor Gray
 
-  # Cross-VNet DNS test via Run-Command
-  # Allow 60s for the VM agent — on a re-deploy the VM may have been updated
-  # (password change triggers OS profile update) which briefly disconnects the agent.
+  # ── Cross-VNet DNS validation (Run-Command from spoke VM) ───────────────────
+  #
+  # Sole blocking check: can the spoke VM resolve app.internal.lab -> 10.80.1.10
+  # via the full forwarding chain?
+  #   default resolver (systemd-resolved)
+  #     -> 168.63.129.16 (Azure DNS)
+  #       -> ruleset linked to spoke VNet
+  #         -> inbound endpoint
+  #           -> private DNS zone
+  #             -> 10.80.1.10
+  #
+  # Design decisions:
+  #   getent hosts: always present (glibc), no package install required.
+  #     Routes through the OS resolver chain, which includes the ruleset.
+  #     Falls back to nslookup if getent produces no output.
+  #   Single command: no separators, no section parsing — avoids
+  #     PowerShell/Windows/az quoting issues entirely.
+  #   Pattern match on cleaned output: strip [stdout]/[stderr] Azure
+  #     run-command prefixes before matching the IP.
+  #   60s wait: OS profile update (password change triggers a brief VM
+  #     agent disconnect; systemd-resolved may also restart).
+  #   azure.microsoft.com and resolv.conf checks removed: outbound
+  #     internet DNS is blocked in many corporate subscriptions and
+  #     Ubuntu 22.04 resolv.conf is a stub (127.0.0.53), neither proves
+  #     the lab's private DNS chain works.
+  #
   Write-Host ""
-  Write-Host "Attempting cross-VNet DNS validation from spoke VM via Run-Command..." -ForegroundColor Yellow
-  Write-Host "  (Validates the full forwarding path: spoke -> ruleset -> inbound EP -> zone)" -ForegroundColor DarkGray
+  Write-Host "Cross-VNet DNS validation (Run-Command from spoke VM)..." -ForegroundColor Yellow
   Write-Host "  Waiting 60s for VM agent to be ready..." -ForegroundColor DarkGray
   Start-Sleep -Seconds 60
 
-  # Separator: use a plain word (no single quotes, no special chars) so
-  # Windows PowerShell does not mangle it when passing to az CLI.
-  # On Ubuntu 22.04, /etc/resolv.conf is a stub (127.0.0.53 via systemd-resolved);
-  # the actual upstream 168.63.129.16 is in /run/systemd/resolve/resolv.conf.
-  $testScript008 = "nslookup app.$DnsZoneName 168.63.129.16 ; echo DNSSEP1 ; nslookup azure.microsoft.com 2>&1 ; echo DNSSEP2 ; cat /run/systemd/resolve/resolv.conf 2>/dev/null || cat /etc/resolv.conf"
+  # getent always available; nslookup fallback covers cloud-init still running.
+  # || in a double-quoted PS string is literal (not a PS operator in PS5.1).
+  # 2>/dev/null suppresses error noise if getent finds nothing.
+  $dnsCmd = "getent hosts app.$DnsZoneName 2>/dev/null || nslookup app.$DnsZoneName 2>/dev/null"
 
   $runCmdResult = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $runCmdResult = az vm run-command invoke `
     -g $ResourceGroup -n $VmSpokeName `
     --command-id RunShellScript `
-    --scripts $testScript008 `
+    --scripts $dnsCmd `
     -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
 
   if ($runCmdResult -and $runCmdResult.value -and $runCmdResult.value.Count -gt 0) {
-    $rawOutput = $runCmdResult.value[0].message
-    $sections  = $rawOutput -split "DNSSEP\d"
+    $rawOut   = $runCmdResult.value[0].message
+    # Strip the [stdout] / [stderr] labels Azure prepends to script output
+    $cleanOut = ($rawOut -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
 
-    $appOutput     = if ($sections.Count -ge 1) { $sections[0].Trim() } else { "" }
-    $publicOutput  = if ($sections.Count -ge 2) { $sections[1].Trim() } else { "" }
-    $resolvOutput  = if ($sections.Count -ge 3) { $sections[2].Trim() } else { "" }
-
-    $appResolved      = ($appOutput    -match "10\.80\.1\.10")
-    $publicResolved   = ($publicOutput -match "Address" -and $publicOutput -notmatch "SERVFAIL")
-    $platformResolver = ($resolvOutput -match "168\.63\.129\.16")
-
+    $appResolved = ($cleanOut -match "10\.80\.1\.10")
     Write-Validation -Check "Cross-VNet: app.internal.lab resolves to 10.80.1.10" -Passed $appResolved `
-      -Details "via ruleset -> inbound EP -> private zone"
-    # azure.microsoft.com and resolv.conf are informational — corporate subscriptions
-    # may block outbound internet DNS or use a different resolver config.
-    # They do not affect the lab pass/fail status.
-    Write-Validation -Check "Azure DNS unbroken: azure.microsoft.com resolves" -Passed $publicResolved
-    Write-Validation -Check "Platform resolver 168.63.129.16 in resolv.conf" -Passed $platformResolver
+      -Details "spoke VM -> system resolver -> ruleset -> inbound EP -> private zone"
 
-    if (-not $appResolved) {
+    if ($appResolved) {
+      # Show first non-empty line of the getent/nslookup output
+      $firstLine = ($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 1)
+      if ($firstLine) { Write-Host "         $($firstLine.Trim())" -ForegroundColor DarkGray }
+    } else {
       $allValid = $false
-      if ($appOutput) {
-        Write-Host "    Raw nslookup output: $($appOutput -replace '\[stdout\]','' | Select-Object -First 6)" -ForegroundColor DarkGray
+      Write-Host ""
+      Write-Host "  DNS output from spoke VM (for diagnosis):" -ForegroundColor DarkGray
+      $outLines = @($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 8)
+      foreach ($outLine in $outLines) {
+        Write-Host "    $($outLine.Trim())" -ForegroundColor DarkGray
       }
     }
   } else {
-    Write-Host "  [WARN] Run-Command did not return output (VM may still be booting or peering settling)." -ForegroundColor Yellow
-    Write-Host "         Re-run manually after ~2 min:" -ForegroundColor DarkGray
-    Write-Host "         az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'nslookup app.internal.lab'" -ForegroundColor DarkGray
+    Write-Host "  [WARN] Run-Command returned no output (VM may still be initializing)." -ForegroundColor Yellow
+    Write-Host "         Verify when ready:" -ForegroundColor DarkGray
+    Write-Host "         az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'getent hosts app.$DnsZoneName'" -ForegroundColor DarkGray
   }
+
+  # Manual verification hints (not automated — corporate subscriptions may block
+  # outbound DNS or have non-standard resolver configs)
+  Write-Host ""
+  Write-Host "  Manual checks from serial console (azureuser / your password):" -ForegroundColor DarkGray
+  Write-Host "    getent hosts app.internal.lab           # full forwarding chain" -ForegroundColor DarkGray
+  Write-Host "    dig app.internal.lab @$resolvedInboundIp   # inbound EP direct" -ForegroundColor DarkGray
+  Write-Host "    resolvectl dns                           # confirm upstream resolver" -ForegroundColor DarkGray
 
   $phase2Elapsed = Get-ElapsedTime -StartTime $phase2Start
   $baseStatus = if ($allValid) { "PASS" } else { "PARTIAL" }
