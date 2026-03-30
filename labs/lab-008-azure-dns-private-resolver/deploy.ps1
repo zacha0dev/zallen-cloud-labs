@@ -538,63 +538,79 @@ if ($SkipTests) {
   #             -> 10.80.1.10
   #
   # Design decisions:
-  #   getent hosts: always present (glibc), no package install required.
-  #     Routes through the OS resolver chain, which includes the ruleset.
-  #     Falls back to nslookup if getent produces no output.
-  #   Single command: no separators, no section parsing — avoids
-  #     PowerShell/Windows/az quoting issues entirely.
-  #   Pattern match on cleaned output: strip [stdout]/[stderr] Azure
-  #     run-command prefixes before matching the IP.
-  #   60s wait: OS profile update (password change triggers a brief VM
-  #     agent disconnect; systemd-resolved may also restart).
-  #   azure.microsoft.com and resolv.conf checks removed: outbound
-  #     internet DNS is blocked in many corporate subscriptions and
-  #     Ubuntu 22.04 resolv.conf is a stub (127.0.0.53), neither proves
-  #     the lab's private DNS chain works.
+  #   Script: bare "getent hosts <name>" — no shell operators (2>/dev/null, ||).
+  #     --scripts is a space-separated list in az CLI; operators like > and ||
+  #     can be misinterpreted when passed through PowerShell -> az.exe on Windows.
+  #     getent is always present (glibc), routes through systemd-resolved stub
+  #     -> Azure DNS -> forwarding ruleset -> inbound endpoint -> private zone.
+  #   Retry loop (3 attempts, 30s gap): the RunShellScript extension runs a
+  #     test.sh health check before our script ("This is a sample script" /
+  #     "Enable succeeded"). If the extension is still enabling, the response
+  #     contains only that test output, not our DNS result. Retrying after the
+  #     extension finishes its enable cycle returns the correct output.
+  #   Strip [stdout]/[stderr]: az run-command wraps output in these labels
+  #     inside value[0].message; must be stripped before IP pattern matching.
+  #   60s initial wait: VM agent briefly disconnects during OS profile update
+  #     (password provisioning) and systemd-resolved restarts.
   #
   Write-Host ""
   Write-Host "Cross-VNet DNS validation (Run-Command from spoke VM)..." -ForegroundColor Yellow
   Write-Host "  Waiting 60s for VM agent to be ready..." -ForegroundColor DarkGray
   Start-Sleep -Seconds 60
 
-  # getent always available; nslookup fallback covers cloud-init still running.
-  # || in a double-quoted PS string is literal (not a PS operator in PS5.1).
-  # 2>/dev/null suppresses error noise if getent finds nothing.
-  $dnsCmd = "getent hosts app.$DnsZoneName 2>/dev/null || nslookup app.$DnsZoneName 2>/dev/null"
+  # No shell operators in the script string — avoids PowerShell/az quoting issues.
+  $dnsCmd    = "getent hosts app.$DnsZoneName"
+  $maxTries  = 3
+  $retryWait = 30
+  $cleanOut  = ""
+  $appResolved = $false
 
-  $runCmdResult = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $runCmdResult = az vm run-command invoke `
-    -g $ResourceGroup -n $VmSpokeName `
-    --command-id RunShellScript `
-    --scripts $dnsCmd `
-    -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
+  for ($dnsAttempt = 1; $dnsAttempt -le $maxTries; $dnsAttempt++) {
+    if ($dnsAttempt -gt 1) {
+      Write-Host "  DNS check attempt $dnsAttempt of $maxTries (waiting ${retryWait}s for extension to finish enabling)..." -ForegroundColor DarkGray
+      Start-Sleep -Seconds $retryWait
+    }
 
-  if ($runCmdResult -and $runCmdResult.value -and $runCmdResult.value.Count -gt 0) {
+    $runCmdResult = $null
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $runCmdResult = az vm run-command invoke `
+      -g $ResourceGroup -n $VmSpokeName `
+      --command-id RunShellScript `
+      --scripts $dnsCmd `
+      -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldEP
+
+    if (-not ($runCmdResult -and $runCmdResult.value -and $runCmdResult.value.Count -gt 0)) {
+      continue
+    }
+
     $rawOut   = $runCmdResult.value[0].message
-    # Strip the [stdout] / [stderr] labels Azure prepends to script output
+    # Strip [stdout] / [stderr] labels Azure prepends to script output
     $cleanOut = ($rawOut -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
 
-    $appResolved = ($cleanOut -match "10\.80\.1\.10")
-    Write-Validation -Check "Cross-VNet: app.internal.lab resolves to 10.80.1.10" -Passed $appResolved `
-      -Details "spoke VM -> system resolver -> ruleset -> inbound EP -> private zone"
-
-    if ($appResolved) {
-      # Show first non-empty line of the getent/nslookup output
-      $firstLine = ($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 1)
-      if ($firstLine) { Write-Host "         $($firstLine.Trim())" -ForegroundColor DarkGray }
-    } else {
-      $allValid = $false
-      Write-Host ""
-      Write-Host "  DNS output from spoke VM (for diagnosis):" -ForegroundColor DarkGray
-      $outLines = @($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 8)
-      foreach ($outLine in $outLines) {
-        Write-Host "    $($outLine.Trim())" -ForegroundColor DarkGray
-      }
+    # "This is a sample script" = extension test.sh health check; script not run yet
+    if ($cleanOut -match "This is a sample script") {
+      continue
     }
+
+    $appResolved = ($cleanOut -match "10\.80\.1\.10")
+    break
+  }
+
+  Write-Validation -Check "Cross-VNet: app.internal.lab resolves to 10.80.1.10" -Passed $appResolved `
+    -Details "spoke VM -> system resolver -> ruleset -> inbound EP -> private zone"
+
+  if ($appResolved) {
+    $firstLine = ($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 1)
+    if ($firstLine) { Write-Host "         $($firstLine.Trim())" -ForegroundColor DarkGray }
+  } elseif ($cleanOut -ne "") {
+    $allValid = $false
+    Write-Host ""
+    Write-Host "  DNS output from spoke VM (for diagnosis):" -ForegroundColor DarkGray
+    $outLines = @($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 8)
+    foreach ($outLine in $outLines) { Write-Host "    $($outLine.Trim())" -ForegroundColor DarkGray }
   } else {
-    Write-Host "  [WARN] Run-Command returned no output (VM may still be initializing)." -ForegroundColor Yellow
+    Write-Host "  [WARN] Run-Command returned no output after $maxTries attempts (VM or extension may still be initializing)." -ForegroundColor Yellow
     Write-Host "         Verify when ready:" -ForegroundColor DarkGray
     Write-Host "         az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'getent hosts app.$DnsZoneName'" -ForegroundColor DarkGray
   }
