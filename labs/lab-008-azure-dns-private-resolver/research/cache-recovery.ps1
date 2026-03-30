@@ -99,14 +99,17 @@ function Invoke-VmDnsTest {
         [string]$VmName,
         [string[]]$Domains
     )
-    # Build a shell script that tests each domain with clear output markers
-    $lines = @("echo 'POLL_START'")
+    # Build a shell script that tests each domain with clear output markers.
+    # Uses getent hosts (always available via glibc) instead of nslookup
+    # (bind9-dnsutils may not be installed when run-command fires).
+    # No shell operators - avoids PS5.1->az.exe argument encoding issues.
+    $lines = @("echo POLL_START")
     foreach ($d in $Domains) {
-        $lines += "echo 'DOM_START:$d'"
-        $lines += "nslookup $d 168.63.129.16 2>&1"
-        $lines += "echo 'DOM_END:$d'"
+        $lines += "echo DOM_START_$($d -replace '\.','_')"
+        $lines += "getent hosts $d"
+        $lines += "echo DOM_END_$($d -replace '\.','_')"
     }
-    $lines += "echo 'POLL_END'"
+    $lines += "echo POLL_END"
     $shellScript = $lines -join " ; "
 
     # Retry loop: RunShellScript extension runs a test.sh health check before
@@ -131,7 +134,7 @@ function Invoke-VmDnsTest {
         $ErrorActionPreference = $oldEP
         $raw = if ($r -and $r.value) { $r.value[0].message } else { "" }
         # If our sentinel marker is present the user script actually ran
-        if ($raw -match "POLL_START") { break }
+        if ($raw -match "POLL_START") { break }  # getent sentinel
         # Extension test.sh output - not our script
         if ($raw -match "This is a sample script") { continue }
         # Any other non-empty response that lacks POLL_START - treat as not ready
@@ -140,14 +143,14 @@ function Invoke-VmDnsTest {
 
     $results = @{}
     foreach ($d in $Domains) {
-        $escaped = [regex]::Escape($d)
-        $m = [regex]::Match($raw, "DOM_START:$escaped([\s\S]*?)DOM_END:$escaped")
+        # Marker uses underscores (dots stripped) to avoid shell quoting issues
+        $marker  = $d -replace '\.', '_'
+        $m = [regex]::Match($raw, "DOM_START_$marker([\s\S]*?)DOM_END_$marker")
         $domOut = if ($m.Success) { $m.Groups[1].Value } else { "" }
 
-        # Resolved = contains an IP address line that is NOT a SERVFAIL/NXDOMAIN
-        $hasAddress = $domOut -match "Address:\s+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"
-        $hasError   = $domOut -match "SERVFAIL|NXDOMAIN|server can.t find|timed out"
-        $resolved   = $hasAddress -and (-not $hasError)
+        # getent hosts output: "<IP>   <hostname>" or empty if not found.
+        # Resolved = at least one IPv4 address in the output.
+        $resolved = ($domOut -match "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
 
         $results[$d] = [pscustomobject]@{
             domain   = $d
