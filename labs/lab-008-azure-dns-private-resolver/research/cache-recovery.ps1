@@ -109,16 +109,34 @@ function Invoke-VmDnsTest {
     $lines += "echo 'POLL_END'"
     $shellScript = $lines -join " ; "
 
-    $r = $null
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $r = az vm run-command invoke `
-        -g $ResourceGroup -n $VmName `
-        --command-id RunShellScript `
-        --scripts $shellScript `
-        -o json 2>$null | ConvertFrom-Json
-    $ErrorActionPreference = $oldEP
-
-    $raw = if ($r -and $r.value) { $r.value[0].message } else { "" }
+    # Retry loop: RunShellScript extension runs a test.sh health check before
+    # executing user scripts on first invocation. Response contains
+    # "This is a sample script" while the extension is still enabling.
+    # Wait 30s and retry until our POLL_START marker appears (or give up).
+    $raw         = ""
+    $innerTries  = 4
+    $innerWait   = 30
+    for ($t = 1; $t -le $innerTries; $t++) {
+        if ($t -gt 1) {
+            Write-Host "    [run-cmd] Extension still initializing - waiting ${innerWait}s (attempt $t/$innerTries)..." -ForegroundColor DarkGray
+            Start-Sleep -Seconds $innerWait
+        }
+        $r = $null
+        $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+        $r = az vm run-command invoke `
+            -g $ResourceGroup -n $VmName `
+            --command-id RunShellScript `
+            --scripts $shellScript `
+            -o json 2>$null | ConvertFrom-Json
+        $ErrorActionPreference = $oldEP
+        $raw = if ($r -and $r.value) { $r.value[0].message } else { "" }
+        # If our sentinel marker is present the user script actually ran
+        if ($raw -match "POLL_START") { break }
+        # Extension test.sh output - not our script
+        if ($raw -match "This is a sample script") { continue }
+        # Any other non-empty response that lacks POLL_START - treat as not ready
+        if ($raw -ne "") { continue }
+    }
 
     $results = @{}
     foreach ($d in $Domains) {

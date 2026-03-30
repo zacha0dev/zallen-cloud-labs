@@ -338,11 +338,10 @@ if ($vm) {
 # ── SECTION 7: Live DNS resolution (VM run-command) ──────────────────────────
 Write-Section "7. Live DNS Resolution (spoke VM run-command)"
 Write-Info "Running getent hosts app.$DnsZoneName from spoke VM..."
-Write-Info "(No 60s wait - VM is already running)"
 
 $dnsCmd    = "getent hosts app.$DnsZoneName"
-$maxTries  = 3
-$retryWait = 15
+$maxTries  = 5
+$retryWait = 30
 $cleanOut  = ""
 $appResolved = $false
 
@@ -366,7 +365,10 @@ for ($attempt = 1; $attempt -le $maxTries; $attempt++) {
   $raw      = $runResult.value[0].message
   $cleanOut = ($raw -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
 
-  if ($cleanOut -match "This is a sample script") { continue }  # extension still enabling
+  if ($cleanOut -match "This is a sample script") {
+    Write-Info "  Extension still initializing (test.sh health check running) - will retry..."
+    continue
+  }
 
   $appResolved = ($cleanOut -match [regex]::Escape($ExpectedAppIp))
   break
