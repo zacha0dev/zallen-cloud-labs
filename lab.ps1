@@ -18,6 +18,7 @@ Usage:
   .\lab.ps1 -Deploy lab-001 -AdminPassword "P@ss1"  # Supply VM password upfront
   .\lab.ps1 -Deploy lab-009 -Location2 westeurope   # Override second region (lab-009)
   .\lab.ps1 -Deploy lab-008 -Mode StickyBlock       # Select lab mode variant (lab-008)
+  .\lab.ps1 -Deploy lab-008 -SkipTests              # Deploy infra only, skip validation phases
   .\lab.ps1 -Destroy lab-001             # Destroy a lab
   .\lab.ps1 -Inspect lab-001             # Run post-deploy inspection
   .\lab.ps1 -Research lab-008                        # List research scenarios for a lab
@@ -60,7 +61,8 @@ param(
   [switch]$Force,                       # Skip confirmation prompts
   [string]$AwsProfile = "aws-labs",     # AWS CLI profile (used with -Cost / lab-003)
   [string]$Scenario,                    # Research scenario name (used with -Research)
-  [switch]$Background                   # Run research scenario as a background job
+  [switch]$Background,                  # Run research scenario as a background job
+  [switch]$SkipTests                    # Skip validation phases (deploy.ps1 -SkipTests pass-through)
 )
 
 Set-StrictMode -Version Latest
@@ -535,6 +537,9 @@ function Invoke-Deploy {
   }
   if ($Mode -and $deployParams.ContainsKey('mode')) {
     $scriptArgs['Mode'] = $Mode
+  }
+  if ($SkipTests -and $deployParams.ContainsKey('skiptests')) {
+    $scriptArgs['SkipTests'] = $true
   }
 
   & $script @scriptArgs

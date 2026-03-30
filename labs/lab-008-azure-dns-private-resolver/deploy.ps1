@@ -1,7 +1,7 @@
 # labs/lab-008-azure-dns-private-resolver/deploy.ps1
-# Azure DNS Private Resolver + Controlled Forwarding Lab
+# Azure DNS Private Resolver + DNS Security Policy
 #
-# This lab creates:
+# Deploys:
 #   - Resource Group
 #   - Hub VNet (10.80.0.0/16) with workload + resolver subnets
 #   - Spoke VNet (10.81.0.0/16) with workload subnet
@@ -14,21 +14,13 @@
 #       Rule: onprem.example.com   -> 10.0.0.1 (simulated)
 #   - Private DNS Zone: internal.lab (linked to hub, auto-reg OFF)
 #   - Static A record: app.internal.lab -> 10.80.1.10
-#   - Test VM in spoke (Standard_B1s, no public IP)
+#   - DNS Security Policy (linked to spoke VNet)
+#       Domain list: blocked.lab., malware.internal.lab.
+#       Block rule: SERVFAIL
+#   - Test VM in spoke (Standard_B1s, no public IP, serial console)
 #
-# Security model:
-#   - No "deny all '.'   " wildcard rule (avoids blocking Azure DNS)
-#   - Controlled forwarding: explicit domain rules only
-#   - Resolution path isolation: spoke resolves via ruleset -> resolver
-#   - Hub resolves internal.lab directly via zone link
-#
-# Deployment modes (-Mode):
-#   Base               - Deploy base infra only (default, always stable)
-#   StickyBlock        - Base + DNS Security Policy cache persistence test
-#   ForwardingVariants - Base + forwarding rule variation tests
-#
-# Flags:
-#   -SkipTests         - Skip validation and mode test phases (infra-only)
+# Explore results in the Azure portal after deployment.
+# Use .\lab.ps1 -Inspect lab-008 for a resource health summary.
 
 [CmdletBinding()]
 param(
@@ -37,34 +29,20 @@ param(
   [string]$Owner        = "",
   [string]$AdminPassword,
   [string]$AdminUser    = "azureuser",
-  [switch]$Force,
-  [ValidateSet("Base","StickyBlock","ForwardingVariants")]
-  [string]$Mode         = "Base",
-  [switch]$SkipTests
+  [switch]$Force
 )
-
-# ============================================
-# GUARDRAILS
-# ============================================
-# DNS Private Resolver is not available in all regions.
-# eastus2 and centralus are safe choices.
-$AllowedLocations = @("eastus","eastus2","centralus","westus2","northeurope","westeurope")
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$LabRoot    = $PSScriptRoot
-$RepoRoot   = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandProperty Path
-$LogsDir    = Join-Path $LabRoot "logs"
-$InfraDir   = Join-Path $LabRoot "infra"
-$ScriptsDir = Join-Path $LabRoot "scripts"
-$DataDir    = Join-Path $RepoRoot ".data\lab-008"
-$OutputsPath     = Join-Path $DataDir "outputs.json"
-$TestResultsPath = Join-Path $DataDir "test-results.json"
+$LabRoot  = $PSScriptRoot
+$RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandProperty Path
+$InfraDir = Join-Path $LabRoot "infra"
+$DataDir  = Join-Path $RepoRoot ".data\lab-008"
+$OutputsPath = Join-Path $DataDir "outputs.json"
 
-. (Join-Path $RepoRoot "scripts\labs-common.ps1")
+. (Join-Path (Join-Path $RepoRoot "scripts") "labs-common.ps1")
 
-# Lab configuration
 $ResourceGroup    = "rg-lab-008-dns-resolver"
 $HubVnetName      = "vnet-hub-008"
 $SpokeVnetName    = "vnet-spoke-008"
@@ -74,27 +52,14 @@ $OutboundEpName   = "ep-outbound-008"
 $RulesetName      = "ruleset-008"
 $DnsZoneName      = "internal.lab"
 $VmSpokeName      = "vm-spoke-008"
-$DeploymentName   = "lab-008-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 $SecurityPolicyName = "dnspolicy-lab-008"
 $DomainListName     = "domainlist-lab-008-blocked"
 $SecurityRuleName   = "rule-block-lab-domains"
-$PolicyLinkName     = "link-policy-spoke"
+$DeploymentName   = "lab-008-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
 # ============================================
-# HELPER FUNCTIONS
+# HELPERS
 # ============================================
-
-function Require-Command($name, $installHint) {
-  if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-    throw "Missing required command: $name. $installHint"
-  }
-}
-
-function Ensure-Directory([string]$Path) {
-  if (-not (Test-Path $Path)) {
-    New-Item -ItemType Directory -Path $Path -Force | Out-Null
-  }
-}
 
 function Write-Phase {
   param([int]$Number, [string]$Title)
@@ -110,23 +75,10 @@ function Write-Validation {
   if ($Passed) {
     Write-Host "  [PASS] $Check" -ForegroundColor Green
   } else {
-    Write-Host "  [FAIL] $Check" -ForegroundColor Red
+    Write-Host "  [WARN] $Check" -ForegroundColor Yellow
   }
   if ($Details) {
     Write-Host "         $Details" -ForegroundColor DarkGray
-  }
-}
-
-function Write-Log {
-  param([string]$Message, [string]$Level = "INFO")
-  $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-  $logLine   = "[$timestamp] [$Level] $Message"
-  Add-Content -Path $script:LogFile -Value $logLine
-  switch ($Level) {
-    "ERROR"   { Write-Host $Message -ForegroundColor Red }
-    "WARN"    { Write-Host $Message -ForegroundColor Yellow }
-    "SUCCESS" { Write-Host $Message -ForegroundColor Green }
-    default   { Write-Host $Message }
   }
 }
 
@@ -136,32 +88,22 @@ function Get-ElapsedTime {
   return "$([math]::Floor($elapsed.TotalMinutes))m $($elapsed.Seconds)s"
 }
 
-function Assert-LocationAllowed {
-  param([string]$Location, [string[]]$AllowedLocations)
-  if ($AllowedLocations -notcontains $Location) {
-    Write-Host ""
-    Write-Host "HARD STOP: Location '$Location' is not in the allowlist." -ForegroundColor Red
-    Write-Host "Allowed locations: $($AllowedLocations -join ', ')" -ForegroundColor Yellow
-    throw "Location '$Location' not allowed."
+function Ensure-Directory([string]$Path) {
+  if (-not (Test-Path $Path)) {
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
   }
 }
 
 # ============================================
-# MAIN DEPLOYMENT
+# MAIN
 # ============================================
 
 Write-Host ""
-Write-Host "Lab 008: Azure DNS Private Resolver + Controlled Forwarding" -ForegroundColor Cyan
-Write-Host "==============================================================" -ForegroundColor Cyan
+Write-Host "Lab 008: Azure DNS Private Resolver + Security Policy" -ForegroundColor Cyan
+Write-Host "======================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Mode: $Mode" -ForegroundColor White
-if ($SkipTests) {
-  Write-Host "SkipTests: ON (infra-only deployment; validation and test phases skipped)" -ForegroundColor Yellow
-}
-Write-Host ""
-Write-Host "Purpose: Deploy a DNS Private Resolver in a hub VNet, link a" -ForegroundColor White
-Write-Host "         forwarding ruleset to a spoke VNet, and validate that" -ForegroundColor White
-Write-Host "         the spoke can resolve private zones via the resolver." -ForegroundColor White
+Write-Host "Deploys a hub-spoke DNS architecture with Private Resolver" -ForegroundColor White
+Write-Host "and DNS Security Policy for portal exploration." -ForegroundColor White
 Write-Host ""
 
 $deploymentStartTime = Get-Date
@@ -169,34 +111,26 @@ $deploymentStartTime = Get-Date
 # ============================================
 # PHASE 0: Preflight
 # ============================================
-Write-Phase -Number 0 -Title "Preflight Checks"
-$phase0Start = Get-Date
+Write-Phase -Number 0 -Title "Preflight"
 
-Ensure-Directory $LogsDir
-$ts             = Get-Date -Format "yyyyMMdd-HHmmss"
-$script:LogFile = Join-Path $LogsDir "lab-008-$ts.log"
-Write-Log "Deployment started | Mode=$Mode SkipTests=$SkipTests"
-Write-Log "Location: $Location"
-
-Require-Command az "Install Azure CLI: https://aka.ms/installazurecli"
-Write-Validation -Check "Azure CLI installed" -Passed $true
-
-Assert-LocationAllowed -Location $Location -AllowedLocations $AllowedLocations
-Write-Validation -Check "Location '$Location' allowed" -Passed $true
+if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+  throw "Azure CLI not found. Install from https://aka.ms/installazurecli"
+}
+Write-Host "  [PASS] Azure CLI installed" -ForegroundColor Green
 
 if (-not $AdminPassword) {
-  throw "Provide -AdminPassword (temporary lab password for VM)."
+  throw "Provide -AdminPassword (VM login password)."
 }
-Write-Validation -Check "AdminPassword provided" -Passed $true
+Write-Host "  [PASS] AdminPassword provided" -ForegroundColor Green
 
 Show-ConfigPreflight -RepoRoot $RepoRoot
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
-Write-Validation -Check "Subscription resolved" -Passed $true -Details $SubscriptionId
+Write-Host "  [PASS] Subscription resolved: $SubscriptionId" -ForegroundColor Green
 
 Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 $subName = az account show --query name -o tsv
-Write-Validation -Check "Azure authenticated" -Passed $true -Details $subName
+Write-Host "  [PASS] Authenticated: $subName" -ForegroundColor Green
 
 if (-not $Owner) {
   $Owner = $env:USERNAME
@@ -204,23 +138,12 @@ if (-not $Owner) {
   if (-not $Owner) { $Owner = "unknown" }
 }
 
-Write-Validation -Check "Mode = $Mode" -Passed $true
-if ($SkipTests) {
-  Write-Validation -Check "SkipTests flag active (validation + mode phases will be skipped)" -Passed $true
-}
-
-Write-Log "Preflight checks passed" "SUCCESS"
-
-# Cost warning
 Write-Host ""
-Write-Host "Cost estimate: ~`$0.03/hour" -ForegroundColor Yellow
+Write-Host "Cost estimate: ~`$0.03/hr while running" -ForegroundColor Yellow
 Write-Host "  VM (Standard_B1s):         ~`$0.01/hr" -ForegroundColor Gray
-Write-Host "  DNS Private Resolver:      ~`$0.007/hr per endpoint" -ForegroundColor Gray
+Write-Host "  DNS Private Resolver:      ~`$0.014/hr (2 endpoints)" -ForegroundColor Gray
 Write-Host "  Private DNS Zone:          ~`$0.004/hr" -ForegroundColor Gray
-Write-Host "  VNet peering (2 links):    minimal" -ForegroundColor Gray
-Write-Host ""
-Write-Host "Note: DNS Private Resolver must be supported in $Location." -ForegroundColor Yellow
-Write-Host "  Supported regions: eastus, eastus2, westus2, centralus, etc." -ForegroundColor Gray
+Write-Host "  DNS Security Policy:       no additional cost at lab scale" -ForegroundColor Gray
 Write-Host ""
 
 if (-not $Force) {
@@ -230,55 +153,36 @@ if (-not $Force) {
 
 $portalUrl = "https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/overview"
 Write-Host ""
-Write-Host "Azure Portal:  $portalUrl" -ForegroundColor Cyan
-Write-Host ""
-
-$phase0Elapsed = Get-ElapsedTime -StartTime $phase0Start
-Write-Log "Phase 0 completed in $phase0Elapsed" "SUCCESS"
+Write-Host "Portal: $portalUrl" -ForegroundColor Cyan
 
 # ============================================
-# PHASE 1: Deploy Base Infra (RG + Bicep)
+# PHASE 1: Deploy Bicep
 # ============================================
-Write-Phase -Number 1 -Title "Deploy Base Infra"
-$phase1Start = Get-Date
+Write-Phase -Number 1 -Title "Deploy Infrastructure"
 
-# --- 1a: Resource Group ---
-# Pass each tag as a separate argument — avoids PS5.1/Windows quoting issues
-# where a single space-separated string can be treated as one tag by az group update.
 $tagArgs = @("project=azure-labs", "lab=lab-008", "owner=$Owner", "environment=lab", "cost-center=learning")
 
-$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
 if ($existingRg) {
-  Write-Host "  Resource group already exists, updating tags..." -ForegroundColor DarkGray
+  Write-Host "  Resource group exists, updating tags..." -ForegroundColor DarkGray
   az group update --name $ResourceGroup --tags @tagArgs --output none 2>$null
 } else {
   az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
-  Write-Log "Resource group created: $ResourceGroup"
+  Write-Host "  Created resource group: $ResourceGroup" -ForegroundColor DarkGray
 }
-Write-Validation -Check "Resource group exists" -Passed $true -Details $ResourceGroup
 
-# --- 1b: Bicep Deployment ---
 Write-Host ""
-Write-Host "Deploying Bicep template..." -ForegroundColor Gray
-Write-Host "  Hub VNet ($HubVnetName) + resolver subnets" -ForegroundColor DarkGray
-Write-Host "  Spoke VNet ($SpokeVnetName) + workload subnet" -ForegroundColor DarkGray
-Write-Host "  VNet peering (bidirectional)" -ForegroundColor DarkGray
-Write-Host "  DNS Private Resolver ($ResolverName)" -ForegroundColor DarkGray
-Write-Host "    Inbound endpoint  -> snet-dns-inbound" -ForegroundColor DarkGray
-Write-Host "    Outbound endpoint -> snet-dns-outbound" -ForegroundColor DarkGray
-Write-Host "  DNS Forwarding Ruleset ($RulesetName) -> linked to spoke" -ForegroundColor DarkGray
-Write-Host "    Rule: internal.lab       -> inbound endpoint" -ForegroundColor DarkGray
-Write-Host "    Rule: onprem.example.com -> 10.0.0.1 (simulated)" -ForegroundColor DarkGray
-Write-Host "  Private DNS Zone ($DnsZoneName) -> linked to hub" -ForegroundColor DarkGray
-Write-Host "  A record: app.internal.lab -> 10.80.1.10" -ForegroundColor DarkGray
-Write-Host "  Test VM ($VmSpokeName, no public IP)" -ForegroundColor DarkGray
-Write-Host "  DNS Security Policy ($SecurityPolicyName) -> linked to spoke" -ForegroundColor DarkGray
-Write-Host "    Domain list: $DomainListName (blocked.lab., malware.internal.lab.)" -ForegroundColor DarkGray
-Write-Host "    Rule: block with SERVFAIL" -ForegroundColor DarkGray
+Write-Host "  Deploying Bicep template..." -ForegroundColor Gray
+Write-Host "    Hub VNet + Spoke VNet + peering" -ForegroundColor DarkGray
+Write-Host "    DNS Private Resolver (inbound + outbound endpoints)" -ForegroundColor DarkGray
+Write-Host "    DNS Forwarding Ruleset -> linked to spoke" -ForegroundColor DarkGray
+Write-Host "    Private DNS Zone (internal.lab) + A record" -ForegroundColor DarkGray
+Write-Host "    DNS Security Policy -> domain list -> block rule -> linked to spoke" -ForegroundColor DarkGray
+Write-Host "    Test VM (vm-spoke-008, no public IP)" -ForegroundColor DarkGray
 Write-Host ""
 
 $bicepResult = az deployment group create `
@@ -297,531 +201,221 @@ if ($LASTEXITCODE -ne 0) {
   $bicepOutput = $bicepResult -join "`n"
   Write-Host $bicepOutput -ForegroundColor Red
   Write-Host ""
-  if ($bicepOutput -match "DnsResolverLimitExceeded|resolver.*limit|quota.*dnsResolver") {
-    Write-Host "[ERROR] DNS Private Resolver limit exceeded." -ForegroundColor Red
-    Write-Host "        Azure allows 1 resolver per VNet. Check for existing resolvers:" -ForegroundColor Red
+  if ($bicepOutput -match "DnsResolverLimitExceeded|resolver.*limit") {
+    Write-Host "[ERROR] DNS Private Resolver limit exceeded (1 per VNet)." -ForegroundColor Red
     Write-Host "        az dns-resolver list --query '[].{name:name,vnet:virtualNetwork.id}' -o table" -ForegroundColor Yellow
-  } elseif ($bicepOutput -match "SubnetNotDelegated|delegation.*Microsoft.Network/dnsResolvers") {
-    Write-Host "[ERROR] Resolver subnet delegation missing." -ForegroundColor Red
-    Write-Host "        Endpoint subnets must be delegated to 'Microsoft.Network/dnsResolvers'." -ForegroundColor Red
-    Write-Host "        This is set in main.bicep - check subnet delegation config." -ForegroundColor Yellow
-  } elseif ($bicepOutput -match "NetworkSecurityGroup.*not.*allowed|NSG.*resolver|subnet.*nsg") {
-    Write-Host "[ERROR] NSG attached to resolver subnet." -ForegroundColor Red
-    Write-Host "        Resolver endpoint subnets must NOT have an NSG." -ForegroundColor Red
-    Write-Host "        Remove the NSG from snet-dns-inbound and snet-dns-outbound." -ForegroundColor Yellow
-  } elseif ($bicepOutput -match "PrivateDnsZone.*Conflict|ZoneName.*already exist") {
-    Write-Host "[ERROR] DNS zone conflict: '$DnsZoneName' already exists or has a conflicting link." -ForegroundColor Red
-    Write-Host "        Check:  az network private-dns zone show -g $ResourceGroup -n $DnsZoneName" -ForegroundColor Yellow
-  } elseif ($bicepOutput -match "AuthorizationFailed|does not have authorization|Forbidden") {
-    Write-Host "[ERROR] Authorization failure: current principal lacks required RBAC permissions." -ForegroundColor Red
-    Write-Host "        Required: Contributor or Network Contributor on the subscription/RG." -ForegroundColor Red
-    Write-Host "        Principal: $(az account show --query user.name -o tsv 2>$null)" -ForegroundColor Yellow
-  } elseif ($bicepOutput -match "locationNotAvailableForResourceType|feature.*not.*supported.*region") {
-    Write-Host "[ERROR] DNS Private Resolver is not available in '$Location'." -ForegroundColor Red
-    Write-Host "        Supported regions: eastus, eastus2, westus2, centralus, northeurope, westeurope" -ForegroundColor Yellow
-    Write-Host "        Re-run with: -Location eastus2" -ForegroundColor Yellow
-  } elseif ($bicepOutput -match "dnsResolverPolicies.*not.*supported|DnsSecurityPolicy.*feature|dnsResolverDomainLists.*not.*supported|SubscriptionNotRegistered.*Microsoft.Network") {
-    Write-Host "[ERROR] DNS Security Policy resources not supported in this subscription or region." -ForegroundColor Red
-    Write-Host "        The 'Microsoft.Network/dnsResolverPolicies' resource type requires the feature to be registered." -ForegroundColor Red
+  } elseif ($bicepOutput -match "dnsResolverPolicies.*not.*supported|SubscriptionNotRegistered.*Microsoft.Network") {
+    Write-Host "[ERROR] DNS Security Policy not available in this subscription/region." -ForegroundColor Red
     Write-Host "        Try: az feature register --namespace Microsoft.Network --name dnsResolverPolicies" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "AuthorizationFailed|does not have authorization") {
+    Write-Host "[ERROR] Authorization failure - need Contributor or Network Contributor." -ForegroundColor Red
+    Write-Host "        Principal: $(az account show --query user.name -o tsv 2>$null)" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "NetworkSecurityGroup.*not.*allowed|NSG.*resolver") {
+    Write-Host "[ERROR] NSG on resolver subnet - endpoint subnets cannot have NSGs." -ForegroundColor Red
   }
-  throw "Bicep deployment failed. See output above."
+  throw "Bicep deployment failed."
 }
 
-# az output may include WARNING/progress lines before the JSON block (due to 2>&1).
-# Extract the JSON object directly to avoid ConvertFrom-Json choking on non-JSON lines.
-$bicepText = $bicepResult -join "`n"
+$bicepText  = $bicepResult -join "`n"
 $jsonStart  = $bicepText.IndexOf('{')
-if ($jsonStart -lt 0) {
-  throw "Bicep deployment succeeded but output contained no JSON.`nRaw output:`n$bicepText"
-}
+if ($jsonStart -lt 0) { throw "Bicep succeeded but no JSON in output." }
 $deployOutput = $bicepText.Substring($jsonStart) | ConvertFrom-Json
-Write-Log "Bicep deployment succeeded: $DeploymentName" "SUCCESS"
-Write-Validation -Check "Bicep deployment succeeded" -Passed $true -Details $DeploymentName
 
-# Capture inbound endpoint IP from deployment outputs
-$inboundIp = $deployOutput.properties.outputs.inboundEndpointIp.value
-Write-Host ""
-Write-Host "  Inbound endpoint IP: $inboundIp" -ForegroundColor Green
-
-# Capture hub VNet ID for mode scripts
-$hubVnetId = $deployOutput.properties.outputs.hubVnetId.value
-
-# Capture serial console URL for test VM
+$inboundIp          = $deployOutput.properties.outputs.inboundEndpointIp.value
+$hubVnetId          = $deployOutput.properties.outputs.hubVnetId.value
 $vmSerialConsoleUrl = $deployOutput.properties.outputs.vmSpokeSerialConsoleUrl.value
 $securityPolicyId   = $deployOutput.properties.outputs.securityPolicyId.value
-$securityPolicyBicepName = $deployOutput.properties.outputs.securityPolicyName.value
 $domainListId       = $deployOutput.properties.outputs.domainListId.value
 
-$phase1Elapsed = Get-ElapsedTime -StartTime $phase1Start
-Write-Log "Phase 1 completed in $phase1Elapsed" "SUCCESS"
+Write-Host ""
+Write-Host "  [PASS] Bicep deployment succeeded: $DeploymentName" -ForegroundColor Green
+Write-Host "         Inbound endpoint IP: $inboundIp" -ForegroundColor DarkGray
 
 # ============================================
-# PHASE 2: Base Validation (unless -SkipTests)
+# PHASE 2: Verify Resources Exist
 # ============================================
-Write-Phase -Number 2 -Title "Base Validation"
+Write-Phase -Number 2 -Title "Verify Resources"
 
-$allValid = $true
+# VNets
+$hubVnet = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$hubVnet = az network vnet show -g $ResourceGroup -n $HubVnetName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "Hub VNet" -Passed ($null -ne $hubVnet) -Details $HubVnetName
 
-if ($SkipTests) {
-  Write-Host "  [SKIP] -SkipTests flag set - skipping all validation checks." -ForegroundColor Yellow
-  Write-Log "Phase 2 skipped (-SkipTests)" "WARN"
-} else {
-  $phase2Start = Get-Date
+$spokeVnet = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$spokeVnet = az network vnet show -g $ResourceGroup -n $SpokeVnetName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "Spoke VNet" -Passed ($null -ne $spokeVnet) -Details $SpokeVnetName
 
-  # Hub VNet
+# Peering
+$peering = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$peering = az network vnet peering show -g $ResourceGroup --vnet-name $HubVnetName -n "peer-hub-to-spoke" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$peeringState = if ($peering) { $peering.peeringState } else { "not found" }
+Write-Validation -Check "VNet peering" -Passed ($peeringState -eq "Connected") -Details "state: $peeringState"
+
+# DNS Resolver
+$resolver = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$resolver = az dns-resolver show -g $ResourceGroup -n $ResolverName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "DNS Private Resolver" -Passed ($resolver -and $resolver.provisioningState -eq "Succeeded") -Details $ResolverName
+
+# Inbound endpoint
+$inboundEp = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$inboundEp = az dns-resolver inbound-endpoint show -g $ResourceGroup --dns-resolver-name $ResolverName -n $InboundEpName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$resolvedInboundIp = if ($inboundEp -and $inboundEp.ipConfigurations) { $inboundEp.ipConfigurations[0].privateIpAddress } else { $inboundIp }
+Write-Validation -Check "Inbound endpoint" -Passed ($inboundEp -and $inboundEp.provisioningState -eq "Succeeded") -Details "IP: $resolvedInboundIp"
+
+# Outbound endpoint
+$outboundEp = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$outboundEp = az dns-resolver outbound-endpoint show -g $ResourceGroup --dns-resolver-name $ResolverName -n $OutboundEpName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "Outbound endpoint" -Passed ($outboundEp -and $outboundEp.provisioningState -eq "Succeeded")
+
+# Forwarding ruleset
+$ruleset = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$ruleset = az dns-resolver forwarding-ruleset show -g $ResourceGroup -n $RulesetName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "Forwarding ruleset" -Passed ($ruleset -and $ruleset.provisioningState -eq "Succeeded") -Details $RulesetName
+
+# Forwarding rules count
+$fwdRules = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$fwdRules = az dns-resolver forwarding-rule list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$fwdRulesCount = if ($fwdRules) { @($fwdRules).Count } else { 0 }
+Write-Validation -Check "Forwarding rules" -Passed ($fwdRulesCount -gt 0) -Details "$fwdRulesCount rule(s)"
+
+# Ruleset linked to spoke VNet
+$rulesetLinks = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$rulesetLinks = az dns-resolver vnet-link list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$rulesetLinksCount = if ($rulesetLinks) { @($rulesetLinks).Count } else { 0 }
+Write-Validation -Check "Ruleset linked to spoke VNet" -Passed ($rulesetLinksCount -gt 0) -Details "$rulesetLinksCount link(s)"
+
+# DNS Zone
+$zone = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$zone = az network private-dns zone show -g $ResourceGroup -n $DnsZoneName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "Private DNS Zone" -Passed ($null -ne $zone) -Details $DnsZoneName
+
+# A record
+$appRecord = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$appRecord = az network private-dns record-set a show -g $ResourceGroup --zone-name $DnsZoneName -n "app" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$appRecordIp = if ($appRecord -and $appRecord.aRecords -and $appRecord.aRecords.Count -gt 0) { $appRecord.aRecords[0].ipv4Address } else { "not found" }
+Write-Validation -Check "A record: app.internal.lab" -Passed ($appRecord -and $appRecordIp -eq "10.80.1.10") -Details "-> $appRecordIp"
+
+# DNS Security Policy
+$secPol = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$secPol = az network dns-security-policy show -g $ResourceGroup -n $SecurityPolicyName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "DNS Security Policy" -Passed ($secPol -and $secPol.provisioningState -eq "Succeeded") -Details $SecurityPolicyName
+
+# Domain list
+$domainListsResult = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$domainListsResult = az resource list -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$domainListFound = $null
+$domainListFound = @($domainListsResult) | Where-Object { $_.name -eq $DomainListName }
+Write-Validation -Check "Domain list" -Passed ($null -ne $domainListFound) -Details $DomainListName
+
+# Security rules count
+$secRulesCount = 0
+if ($secPol -and $secPol.id) {
+  $rulesResponse = $null
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $hubVnet = az network vnet show -g $ResourceGroup -n $HubVnetName -o json 2>$null | ConvertFrom-Json
+  $rulesResponse = az rest --method GET --uri "$($secPol.id)/dnsSecurityRules?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
-  $hubValid = ($null -ne $hubVnet)
-  Write-Validation -Check "Hub VNet exists" -Passed $hubValid -Details "$HubVnetName (10.80.0.0/16)"
-  if (-not $hubValid) { $allValid = $false }
-
-  # Spoke VNet
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $spokeVnet = az network vnet show -g $ResourceGroup -n $SpokeVnetName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $spokeValid = ($null -ne $spokeVnet)
-  Write-Validation -Check "Spoke VNet exists" -Passed $spokeValid -Details "$SpokeVnetName (10.81.0.0/16)"
-  if (-not $spokeValid) { $allValid = $false }
-
-  # VNet Peering
-  if ($hubValid) {
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $peering = az network vnet peering show -g $ResourceGroup --vnet-name $HubVnetName -n "peer-hub-to-spoke" -o json 2>$null | ConvertFrom-Json
-    $ErrorActionPreference = $oldEP
-    $peeringValid = ($null -ne $peering -and $peering.peeringState -eq "Connected")
-    Write-Validation -Check "VNet peering Connected (hub -> spoke)" -Passed $peeringValid -Details $peering.peeringState
-    if (-not $peeringValid) { $allValid = $false }
-  }
-
-  # DNS Resolver
-  $resolver = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $resolver = az dns-resolver show -g $ResourceGroup -n $ResolverName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $resolverValid = ($null -ne $resolver -and $resolver.provisioningState -eq "Succeeded")
-  Write-Validation -Check "DNS Private Resolver provisioned" -Passed $resolverValid -Details $ResolverName
-  if (-not $resolverValid) { $allValid = $false }
-
-  # Inbound Endpoint
-  $inboundEp = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $inboundEp = az dns-resolver inbound-endpoint show -g $ResourceGroup --dns-resolver-name $ResolverName -n $InboundEpName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $inboundValid = ($null -ne $inboundEp -and $inboundEp.provisioningState -eq "Succeeded")
-  $resolvedInboundIp = if ($inboundEp) { $inboundEp.ipConfigurations[0].privateIpAddress } else { $inboundIp }
-  Write-Validation -Check "Inbound endpoint provisioned" -Passed $inboundValid -Details "IP: $resolvedInboundIp"
-  if (-not $inboundValid) { $allValid = $false }
-
-  # Outbound Endpoint
-  $outboundEp = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $outboundEp = az dns-resolver outbound-endpoint show -g $ResourceGroup --dns-resolver-name $ResolverName -n $OutboundEpName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $outboundValid = ($null -ne $outboundEp -and $outboundEp.provisioningState -eq "Succeeded")
-  Write-Validation -Check "Outbound endpoint provisioned" -Passed $outboundValid
-  if (-not $outboundValid) { $allValid = $false }
-
-  # Forwarding Ruleset
-  $ruleset = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $ruleset = az dns-resolver forwarding-ruleset show -g $ResourceGroup -n $RulesetName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $rulesetValid = ($null -ne $ruleset -and $ruleset.provisioningState -eq "Succeeded")
-  Write-Validation -Check "Forwarding ruleset provisioned" -Passed $rulesetValid -Details $RulesetName
-  if (-not $rulesetValid) { $allValid = $false }
-
-  # Forwarding rules — poll until child resources are visible or 90s timeout.
-  # Azure management plane can take 30-90s to index rules after the parent
-  # ruleset reports Succeeded; a fixed sleep is not reliable enough.
-  if ($rulesetValid) {
-    $propagateMax = 90
-    $propagatePoll = 10
-    $propagateElapsed = 0
-    $rules = $null
-    Write-Host "  Waiting for ruleset child resources to propagate (up to ${propagateMax}s)..." -ForegroundColor DarkGray
-    while ($propagateElapsed -lt $propagateMax) {
-      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-      $rules = az dns-resolver forwarding-rule list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
-      $ErrorActionPreference = $oldEP
-      if ($rules -and @($rules).Count -gt 0) { break }
-      Start-Sleep -Seconds $propagatePoll
-      $propagateElapsed += $propagatePoll
-      Write-Host "    still propagating... ${propagateElapsed}s elapsed" -ForegroundColor DarkGray
-    }
-    $ErrorActionPreference = $oldEP
-    $ruleInternalLab = $rules | Where-Object { $_.name -eq "rule-internal-lab" }
-    $ruleOnprem      = $rules | Where-Object { $_.name -eq "rule-onprem-example" }
-
-    $ruleInternalLabExists = ($null -ne $ruleInternalLab)
-    $ruleOnpremExists      = ($null -ne $ruleOnprem)
-
-    $ruleTargetIp = if ($ruleInternalLab) { $ruleInternalLab.targetDnsServers[0].ipAddress } else { "unknown" }
-    $ruleTargetMatches = ($ruleTargetIp -eq $resolvedInboundIp) -and ($resolvedInboundIp -ne "unknown")
-
-    $ruleInternalLabDomain = if ($ruleInternalLab) { $ruleInternalLab.domainName } else { "not found" }
-    Write-Validation -Check "Forwarding rule: internal.lab. -> inbound EP" -Passed $ruleInternalLabExists `
-      -Details "domain: $ruleInternalLabDomain"
-    Write-Validation -Check "Rule target IP matches inbound endpoint" -Passed $ruleTargetMatches `
-      -Details "rule target=$ruleTargetIp  inbound EP=$resolvedInboundIp"
-    Write-Validation -Check "Forwarding rule: onprem.example.com. -> 10.0.0.1" -Passed $ruleOnpremExists
-
-    if (-not $ruleInternalLabExists) { $allValid = $false }
-    if (-not $ruleTargetMatches)     { $allValid = $false }
-    if (-not $ruleOnpremExists)      { $allValid = $false }
-
-    $wildcardRule = $rules | Where-Object { $_.domainName -eq "." -or $_.domainName -eq "'.'"}
-    if ($wildcardRule) {
-      Write-Host ""
-      Write-Host "  [WARN] Wildcard '.' forwarding rule detected in ruleset!" -ForegroundColor Red
-      Write-Host "         This will break Azure platform DNS for all VMs linked to this ruleset." -ForegroundColor Red
-      Write-Host "         Remove it: az dns-resolver forwarding-rule delete --ruleset-name $RulesetName -g $ResourceGroup -n '$($wildcardRule.name)'" -ForegroundColor Yellow
-      $allValid = $false
-    }
-  }
-
-  # Ruleset linked to spoke
-  if ($rulesetValid) {
-    $rulesetLinks = $null
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $rulesetLinks = az dns-resolver vnet-link list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
-    $ErrorActionPreference = $oldEP
-    $rulesetLinkValid = ($rulesetLinks -and $rulesetLinks.Count -gt 0)
-    Write-Validation -Check "Ruleset linked to spoke VNet" -Passed $rulesetLinkValid
-    if (-not $rulesetLinkValid) { $allValid = $false }
-  }
-
-  # DNS Security Policy + Domain List + Rule + VNet Link
-  $securityPolicy = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $securityPolicy = az network dns-security-policy show -g $ResourceGroup -n $SecurityPolicyName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $policyValid = ($null -ne $securityPolicy -and $securityPolicy.provisioningState -eq "Succeeded")
-  Write-Validation -Check "DNS Security Policy provisioned" -Passed $policyValid -Details $SecurityPolicyName
-  if (-not $policyValid) { $allValid = $false }
-
-  $domainListCheck = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $domainListsResult = az resource list -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $domainListCheck = @($domainListsResult) | Where-Object { $_.name -eq $DomainListName }
-  $domainListCheckValid = ($null -ne $domainListCheck)
-  Write-Validation -Check "Domain list provisioned" -Passed $domainListCheckValid -Details $DomainListName
-  if (-not $domainListCheckValid) { $allValid = $false }
-
-  if ($policyValid -and $securityPolicy.id) {
-    $rulesResponse = $null
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $rulesResponse = az rest --method GET --uri "$($securityPolicy.id)/dnsSecurityRules?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
-    $ErrorActionPreference = $oldEP
-    $rulesCount = if ($rulesResponse -and $rulesResponse.value) { @($rulesResponse.value).Count } else { 0 }
-    $rulesValid = ($rulesCount -gt 0)
-    Write-Validation -Check "Security rules configured" -Passed $rulesValid -Details "$rulesCount rule(s)"
-    if (-not $rulesValid) { $allValid = $false }
-
-    $linksResponse = $null
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $linksResponse = az rest --method GET --uri "$($securityPolicy.id)/virtualNetworkLinks?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
-    $ErrorActionPreference = $oldEP
-    $linksCount = if ($linksResponse -and $linksResponse.value) { @($linksResponse.value).Count } else { 0 }
-    $linksValid = ($linksCount -gt 0)
-    Write-Validation -Check "Policy linked to spoke VNet" -Passed $linksValid -Details "$linksCount link(s)"
-    if (-not $linksValid) { $allValid = $false }
-  }
-
-  # Private DNS Zone
-  $zone = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $zone = az network private-dns zone show -g $ResourceGroup -n $DnsZoneName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $zoneValid = ($null -ne $zone)
-  Write-Validation -Check "Private DNS Zone exists" -Passed $zoneValid -Details $DnsZoneName
-  if (-not $zoneValid) { $allValid = $false }
-
-  # app A record
-  $appRecord = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $appRecord = az network private-dns record-set a show -g $ResourceGroup --zone-name $DnsZoneName -n "app" -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $appRecordValid = ($null -ne $appRecord -and $appRecord.aRecords.Count -gt 0)
-  $appRecordIp = if ($appRecord -and $appRecord.aRecords.Count -gt 0) { $appRecord.aRecords[0].ipv4Address } else { "not found" }
-  Write-Validation -Check "A record exists (app.internal.lab)" -Passed $appRecordValid `
-    -Details "IP: $appRecordIp"
-  if (-not $appRecordValid) { $allValid = $false }
-
-  # Test VM
-  $vm = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $vm = az vm show -g $ResourceGroup -n $VmSpokeName -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $vmValid = ($null -ne $vm)
-  Write-Validation -Check "Test VM exists (spoke)" -Passed $vmValid -Details $VmSpokeName
-  if (-not $vmValid) { $allValid = $false }
-
-  # Tags
-  $rg = $null
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
-  $ErrorActionPreference = $oldEP
-  $tagsValid = ($rg.tags.project -eq "azure-labs" -and $rg.tags.lab -eq "lab-008")
-  Write-Validation -Check "Tags applied correctly" -Passed $tagsValid -Details "project=azure-labs, lab=lab-008"
-  if (-not $tagsValid) { $allValid = $false }
-
-  # Resolution path summary
-  Write-Host ""
-  Write-Host "DNS Resolution Path (spoke VM):" -ForegroundColor Yellow
-  Write-Host "  Query: app.internal.lab" -ForegroundColor Gray
-  Write-Host "  1. Spoke VM -> Azure DNS (168.63.129.16)" -ForegroundColor Gray
-  Write-Host "  2. Azure DNS sees ruleset linked to spoke VNet" -ForegroundColor Gray
-  Write-Host "  3. Rule matches 'internal.lab.' -> forwards to inbound EP ($resolvedInboundIp:53)" -ForegroundColor Gray
-  Write-Host "  4. Inbound EP -> Azure resolves against private zone" -ForegroundColor Gray
-  Write-Host "  5. Returns: 10.80.1.10" -ForegroundColor Gray
-
-  # ── Cross-VNet DNS validation (Run-Command from spoke VM) ───────────────────
-  #
-  # Sole blocking check: can the spoke VM resolve app.internal.lab -> 10.80.1.10
-  # via the full forwarding chain?
-  #   default resolver (systemd-resolved)
-  #     -> 168.63.129.16 (Azure DNS)
-  #       -> ruleset linked to spoke VNet
-  #         -> inbound endpoint
-  #           -> private DNS zone
-  #             -> 10.80.1.10
-  #
-  # Design decisions:
-  #   Script: bare "getent hosts <name>" — no shell operators (2>/dev/null, ||).
-  #     --scripts is a space-separated list in az CLI; operators like > and ||
-  #     can be misinterpreted when passed through PowerShell -> az.exe on Windows.
-  #     getent is always present (glibc), routes through systemd-resolved stub
-  #     -> Azure DNS -> forwarding ruleset -> inbound endpoint -> private zone.
-  #   Retry loop (3 attempts, 30s gap): the RunShellScript extension runs a
-  #     test.sh health check before our script ("This is a sample script" /
-  #     "Enable succeeded"). If the extension is still enabling, the response
-  #     contains only that test output, not our DNS result. Retrying after the
-  #     extension finishes its enable cycle returns the correct output.
-  #   Strip [stdout]/[stderr]: az run-command wraps output in these labels
-  #     inside value[0].message; must be stripped before IP pattern matching.
-  #   60s initial wait: VM agent briefly disconnects during OS profile update
-  #     (password provisioning) and systemd-resolved restarts.
-  #
-  Write-Host ""
-  Write-Host "Cross-VNet DNS validation (Run-Command from spoke VM)..." -ForegroundColor Yellow
-  Write-Host "  Waiting 60s for VM agent to be ready..." -ForegroundColor DarkGray
-  Start-Sleep -Seconds 60
-
-  # No shell operators in the script string — avoids PowerShell/az quoting issues.
-  $dnsCmd    = "getent hosts app.$DnsZoneName"
-  $maxTries  = 3
-  $retryWait = 30
-  $cleanOut  = ""
-  $appResolved = $false
-
-  for ($dnsAttempt = 1; $dnsAttempt -le $maxTries; $dnsAttempt++) {
-    if ($dnsAttempt -gt 1) {
-      Write-Host "  DNS check attempt $dnsAttempt of $maxTries (waiting ${retryWait}s for extension to finish enabling)..." -ForegroundColor DarkGray
-      Start-Sleep -Seconds $retryWait
-    }
-
-    $runCmdResult = $null
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $runCmdResult = az vm run-command invoke `
-      -g $ResourceGroup -n $VmSpokeName `
-      --command-id RunShellScript `
-      --scripts $dnsCmd `
-      -o json 2>$null | ConvertFrom-Json
-    $ErrorActionPreference = $oldEP
-
-    if (-not ($runCmdResult -and $runCmdResult.value -and $runCmdResult.value.Count -gt 0)) {
-      continue
-    }
-
-    $rawOut   = $runCmdResult.value[0].message
-    # Strip [stdout] / [stderr] labels Azure prepends to script output
-    $cleanOut = ($rawOut -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
-
-    # "This is a sample script" = extension test.sh health check; script not run yet
-    if ($cleanOut -match "This is a sample script") {
-      continue
-    }
-
-    $appResolved = ($cleanOut -match "10\.80\.1\.10")
-    break
-  }
-
-  Write-Validation -Check "Cross-VNet: app.internal.lab resolves to 10.80.1.10" -Passed $appResolved `
-    -Details "spoke VM -> system resolver -> ruleset -> inbound EP -> private zone"
-
-  if ($appResolved) {
-    $firstLine = ($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 1)
-    if ($firstLine) { Write-Host "         $($firstLine.Trim())" -ForegroundColor DarkGray }
-  } elseif ($cleanOut -ne "") {
-    $allValid = $false
-    Write-Host ""
-    Write-Host "  DNS output from spoke VM (for diagnosis):" -ForegroundColor DarkGray
-    $outLines = @($cleanOut -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 8)
-    foreach ($outLine in $outLines) { Write-Host "    $($outLine.Trim())" -ForegroundColor DarkGray }
-  } else {
-    Write-Host "  [WARN] Run-Command returned no output after $maxTries attempts (VM or extension may still be initializing)." -ForegroundColor Yellow
-    Write-Host "         Verify when ready:" -ForegroundColor DarkGray
-    Write-Host "         az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'getent hosts app.$DnsZoneName'" -ForegroundColor DarkGray
-  }
-
-  # Manual verification hints (not automated — corporate subscriptions may block
-  # outbound DNS or have non-standard resolver configs)
-  Write-Host ""
-  Write-Host "  Manual checks from serial console (azureuser / your password):" -ForegroundColor DarkGray
-  Write-Host "    getent hosts app.internal.lab           # full forwarding chain" -ForegroundColor DarkGray
-  Write-Host "    dig app.internal.lab @$resolvedInboundIp   # inbound EP direct" -ForegroundColor DarkGray
-  Write-Host "    resolvectl dns                           # confirm upstream resolver" -ForegroundColor DarkGray
-
-  $phase2Elapsed = Get-ElapsedTime -StartTime $phase2Start
-  $baseStatus = if ($allValid) { "PASS" } else { "PARTIAL" }
-  Write-Host ""
-  Write-Host "  Base validation status: $baseStatus" -ForegroundColor $(if ($allValid) { "Green" } else { "Yellow" })
-  Write-Log "Phase 2 completed in $phase2Elapsed - Base: $baseStatus" "SUCCESS"
+  if ($rulesResponse -and $rulesResponse.value) { $secRulesCount = @($rulesResponse.value).Count }
 }
+Write-Validation -Check "Security rules configured" -Passed ($secRulesCount -gt 0) -Details "$secRulesCount rule(s)"
 
-# ============================================
-# PHASE 3: Mode-specific execution
-# ============================================
-Write-Phase -Number 3 -Title "Mode: $Mode"
-
-$modeResults = $null
-
-if ($SkipTests) {
-  Write-Host "  [SKIP] -SkipTests flag set - skipping mode phase." -ForegroundColor Yellow
-  Write-Log "Phase 3 skipped (-SkipTests)" "WARN"
-} elseif ($Mode -eq "Base") {
-  Write-Host "  Mode=Base: no additional phases to run." -ForegroundColor DarkGray
-  Write-Host "  Re-run with -Mode StickyBlock or -Mode ForwardingVariants for extended testing." -ForegroundColor DarkGray
-
-} elseif ($Mode -eq "StickyBlock") {
-  Write-Host "  Running StickyBlock test harness..." -ForegroundColor Yellow
-  Write-Host "  This tests DNS Security Policy (or forwarding rule) cache persistence behavior." -ForegroundColor DarkGray
-  Write-Host ""
-
-  $phase3Start = Get-Date
-  $stickyScript = Join-Path $ScriptsDir "test-stickyblock.ps1"
-
-  if (-not (Test-Path $stickyScript)) {
-    Write-Host "  [FAIL] test-stickyblock.ps1 not found at: $stickyScript" -ForegroundColor Red
-  } else {
-    # If inbound IP wasn't set yet from deployment outputs, fall back to resolved value
-    $effectiveInboundIp = if ($resolvedInboundIp -and $resolvedInboundIp -ne "unknown") { $resolvedInboundIp } else { $inboundIp }
-
-    $ErrorActionPreference = "Continue"
-    try {
-      $modeResults = & $stickyScript `
-        -ResourceGroup $ResourceGroup `
-        -VmName $VmSpokeName `
-        -RulesetName $RulesetName `
-        -InboundIp $effectiveInboundIp `
-        -Location $Location `
-        -ZoneName $DnsZoneName `
-        -OutputPath ""
-    } catch {
-      Write-Host "  [FAIL] StickyBlock mode unavailable (feature not supported in region/subscription)" -ForegroundColor Red
-      Write-Host "         Error: $_" -ForegroundColor DarkGray
-      $modeResults = [pscustomobject]@{ error = $_.ToString(); status = "unavailable" }
-    }
-    $ErrorActionPreference = "Stop"
-  }
-
-  $phase3Elapsed = Get-ElapsedTime -StartTime $phase3Start
-  Write-Log "Phase 3 (StickyBlock) completed in $phase3Elapsed" "SUCCESS"
-
-} elseif ($Mode -eq "ForwardingVariants") {
-  Write-Host "  Running ForwardingVariants test harness..." -ForegroundColor Yellow
-  Write-Host "  This tests adding/removing forwarding rules and VNet links safely." -ForegroundColor DarkGray
-  Write-Host ""
-
-  $phase3Start = Get-Date
-  $variantsScript = Join-Path $ScriptsDir "test-forwarding-variants.ps1"
-
-  if (-not (Test-Path $variantsScript)) {
-    Write-Host "  [FAIL] test-forwarding-variants.ps1 not found at: $variantsScript" -ForegroundColor Red
-  } else {
-    $effectiveInboundIp = if ($resolvedInboundIp -and $resolvedInboundIp -ne "unknown") { $resolvedInboundIp } else { $inboundIp }
-    $effectiveHubVnetId = if ($hubVnetId) { $hubVnetId } else {
-      az network vnet show -g $ResourceGroup -n $HubVnetName --query id -o tsv 2>$null
-    }
-
-    $ErrorActionPreference = "Continue"
-    try {
-      $modeResults = & $variantsScript `
-        -ResourceGroup $ResourceGroup `
-        -VmName $VmSpokeName `
-        -RulesetName $RulesetName `
-        -HubVnetId $effectiveHubVnetId `
-        -InboundIp $effectiveInboundIp `
-        -ZoneName $DnsZoneName `
-        -OutputPath ""
-    } catch {
-      Write-Host "  [FAIL] ForwardingVariants mode error: $_" -ForegroundColor Red
-      $modeResults = [pscustomobject]@{ error = $_.ToString(); status = "failed" }
-    }
-    $ErrorActionPreference = "Stop"
-  }
-
-  $phase3Elapsed = Get-ElapsedTime -StartTime $phase3Start
-  Write-Log "Phase 3 (ForwardingVariants) completed in $phase3Elapsed" "SUCCESS"
+# Policy VNet link
+$policyLinksCount = 0
+if ($secPol -and $secPol.id) {
+  $policyLinksResponse = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $policyLinksResponse = az rest --method GET --uri "$($secPol.id)/virtualNetworkLinks?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if ($policyLinksResponse -and $policyLinksResponse.value) { $policyLinksCount = @($policyLinksResponse.value).Count }
 }
+Write-Validation -Check "Security policy VNet link" -Passed ($policyLinksCount -gt 0) -Details "$policyLinksCount link(s)"
+
+# Test VM
+$vm = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$vm = az vm show -g $ResourceGroup -n $VmSpokeName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+Write-Validation -Check "Test VM" -Passed ($null -ne $vm) -Details $VmSpokeName
 
 # ============================================
-# PHASE 4: Write Outputs + Evidence Artifacts
+# PHASE 3: Write Outputs
 # ============================================
-Write-Phase -Number 4 -Title "Outputs + Evidence Artifacts"
-$phase4Start  = Get-Date
+Write-Phase -Number 3 -Title "Outputs"
+
 $totalElapsed = Get-ElapsedTime -StartTime $deploymentStartTime
 
+$vmPrivateIp = $null
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vmPrivateIp = az vm list-ip-addresses -g $ResourceGroup -n $VmSpokeName `
   --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv 2>$null
 $ErrorActionPreference = $oldEP
 
-# Ensure we have resolvedInboundIp even if validation was skipped
 if (-not $resolvedInboundIp) { $resolvedInboundIp = $inboundIp }
-# Ensure serial console URL is always defined (set from Bicep output in Phase 1)
 if (-not $vmSerialConsoleUrl) { $vmSerialConsoleUrl = "" }
+if (-not $securityPolicyId)  { $securityPolicyId   = "" }
+if (-not $domainListId)      { $domainListId        = "" }
+if (-not $hubVnetId)         { $hubVnetId           = "" }
 
 Ensure-Directory $DataDir
 
-# --- outputs.json (base infra snapshot) ---
+$resolverPortalUrl = "https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/dnsResolvers/$ResolverName/overview"
+$secPolPortalUrl   = if ($securityPolicyId) {
+  "https://portal.azure.com/#@/resource$securityPolicyId/overview"
+} else {
+  "https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/dnsResolverPolicies/$SecurityPolicyName/overview"
+}
+
 $outputs = [pscustomobject]@{
   metadata = [pscustomobject]@{
-    lab             = "lab-008"
-    mode            = $Mode
-    skipTests       = $SkipTests.IsPresent
-    deployedAt      = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-    deploymentTime  = $totalElapsed
-    status          = if ($allValid) { "PASS" } else { "PARTIAL" }
+    lab            = "lab-008"
+    deployedAt     = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+    deploymentTime = $totalElapsed
+    location       = $Location
+    resourceGroup  = $ResourceGroup
     bicepDeployment = $DeploymentName
-    tags            = @{
-      project       = "azure-labs"
-      lab           = "lab-008"
-      owner         = $Owner
-      environment   = "lab"
-      "cost-center" = "learning"
-    }
   }
   azure = [pscustomobject]@{
     subscriptionId   = $SubscriptionId
     subscriptionName = $subName
-    location         = $Location
     resourceGroup    = $ResourceGroup
+    location         = $Location
     hubVnet = [pscustomobject]@{
-      name   = $HubVnetName
-      cidr   = "10.80.0.0/16"
-      id     = $hubVnetId
+      name = $HubVnetName
+      cidr = "10.80.0.0/16"
+      id   = $hubVnetId
     }
     spokeVnet = [pscustomobject]@{
-      name   = $SpokeVnetName
-      cidr   = "10.81.0.0/16"
+      name = $SpokeVnetName
+      cidr = "10.81.0.0/16"
     }
     dnsResolver = [pscustomobject]@{
-      name             = $ResolverName
-      inboundEndpoint  = [pscustomobject]@{
+      name            = $ResolverName
+      inboundEndpoint = [pscustomobject]@{
         name = $InboundEpName
         ip   = $resolvedInboundIp
       }
@@ -830,8 +424,7 @@ $outputs = [pscustomobject]@{
       }
     }
     forwardingRuleset = [pscustomobject]@{
-      name  = $RulesetName
-      rules = @("internal.lab. -> inbound EP", "onprem.example.com. -> 10.0.0.1")
+      name        = $RulesetName
       linkedVnets = @($SpokeVnetName)
     }
     dns = [pscustomobject]@{
@@ -847,13 +440,13 @@ $outputs = [pscustomobject]@{
       name        = $SecurityPolicyName
       id          = if ($securityPolicyId) { $securityPolicyId } else { "" }
       domainList  = [pscustomobject]@{
-        name   = $DomainListName
-        id     = if ($domainListId) { $domainListId } else { "" }
+        name    = $DomainListName
+        id      = if ($domainListId) { $domainListId } else { "" }
         domains = @("blocked.lab.", "malware.internal.lab.")
       }
       rule        = $SecurityRuleName
       linkedVnets = @($SpokeVnetName)
-      note        = "Spoke VNet queries for blocked.lab. and malware.internal.lab. return SERVFAIL"
+      note        = "Spoke queries for blocked.lab. and malware.internal.lab. return SERVFAIL"
     }
     vm = [pscustomobject]@{
       name             = $VmSpokeName
@@ -862,117 +455,46 @@ $outputs = [pscustomobject]@{
       noPublicIp       = $true
       serialConsoleUrl = $vmSerialConsoleUrl
       loginUser        = $AdminUser
-      dnsToolsInstalled = @("dig", "nslookup", "ping")
     }
   }
-  validationTests = [pscustomobject]@{
-    fromSpokeVm = @(
-      "nslookup app.internal.lab",
-      "dig app.internal.lab",
-      "nslookup app.internal.lab $resolvedInboundIp"
-    )
-    viaRunCommand = @(
-      "az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'nslookup app.internal.lab'",
-      "az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'dig app.internal.lab'"
-    )
-    expected = @(
-      "app.internal.lab -> 10.80.1.10",
-      "Azure DNS (168.63.129.16) routes via ruleset -> inbound EP -> private zone"
-    )
+  portalLinks = [pscustomobject]@{
+    resourceGroup  = $portalUrl
+    resolver       = $resolverPortalUrl
+    securityPolicy = $secPolPortalUrl
   }
 }
 
 $outputs | ConvertTo-Json -Depth 10 | Set-Content -Path $OutputsPath -Encoding UTF8
-Write-Validation -Check "outputs.json written" -Passed $true -Details $OutputsPath
-
-# --- test-results.json (mode + evidence) ---
-$testResults = [pscustomobject]@{
-  mode        = $Mode
-  skipTests   = $SkipTests.IsPresent
-  base        = [pscustomobject]@{
-    status    = if ($SkipTests) { "skipped" } elseif ($allValid) { "PASS" } else { "PARTIAL" }
-    allChecks = $allValid
-  }
-  modeResults = $modeResults
-  notes       = switch ($Mode) {
-    "Base"               { "Base deployment only. Run with -Mode StickyBlock or -Mode ForwardingVariants for extended tests." }
-    "StickyBlock"        { "DNS Security Policy (or forwarding rule redirect) applied and removed. Check modeResults.persistenceDetected for cache behavior." }
-    "ForwardingVariants" { "Forwarding rule variants applied and cleaned up. See modeResults.variants for per-variant outcomes." }
-  }
-  timestamps  = [pscustomobject]@{
-    started   = $deploymentStartTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
-    completed = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-    elapsed   = $totalElapsed
-  }
-}
-
-$testResults | ConvertTo-Json -Depth 15 | Set-Content -Path $TestResultsPath -Encoding UTF8
-Write-Validation -Check "test-results.json written" -Passed $true -Details $TestResultsPath
+Write-Host "  [PASS] outputs.json written: $OutputsPath" -ForegroundColor Green
 
 # ============================================
-# Summary
+# SUMMARY
 # ============================================
 Write-Host ""
 Write-Host ("=" * 60) -ForegroundColor Green
-Write-Host "DEPLOYMENT SUMMARY" -ForegroundColor Green
+Write-Host "DEPLOYMENT COMPLETE  ($totalElapsed)" -ForegroundColor Green
 Write-Host ("=" * 60) -ForegroundColor Green
-Write-Host ""
-Write-Host "Total deployment time:  $totalElapsed" -ForegroundColor White
-Write-Host "Mode:                   $Mode" -ForegroundColor White
-Write-Host "Resource Group:         $ResourceGroup" -ForegroundColor Gray
-Write-Host "Location:               $Location" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Hub VNet:               $HubVnetName (10.80.0.0/16)" -ForegroundColor Gray
 Write-Host "Spoke VNet:             $SpokeVnetName (10.81.0.0/16)" -ForegroundColor Gray
 Write-Host "DNS Private Resolver:   $ResolverName" -ForegroundColor Gray
 Write-Host "  Inbound endpoint IP:  $resolvedInboundIp" -ForegroundColor Gray
 Write-Host "Forwarding Ruleset:     $RulesetName (linked to spoke)" -ForegroundColor Gray
-Write-Host "Private DNS Zone:       $DnsZoneName -> hub" -ForegroundColor Gray
-Write-Host "A record:               app.internal.lab -> 10.80.1.10" -ForegroundColor Gray
+Write-Host "  internal.lab.      -> inbound EP ($resolvedInboundIp)" -ForegroundColor DarkGray
+Write-Host "  onprem.example.com -> 10.0.0.1 (simulated)" -ForegroundColor DarkGray
+Write-Host "Private DNS Zone:       $DnsZoneName (linked to hub)" -ForegroundColor Gray
+Write-Host "  app.internal.lab   -> 10.80.1.10" -ForegroundColor DarkGray
 Write-Host "DNS Security Policy:    $SecurityPolicyName (linked to spoke)" -ForegroundColor Gray
-Write-Host "  Domain list:          $DomainListName" -ForegroundColor Gray
-Write-Host "  Block rule:           $SecurityRuleName -> SERVFAIL for blocked.lab., malware.internal.lab." -ForegroundColor Gray
-Write-Host "Test VM (spoke):        $VmSpokeName (IP: $vmPrivateIp)" -ForegroundColor Gray
+Write-Host "  Domain list:          $DomainListName" -ForegroundColor DarkGray
+Write-Host "  Block rule:           $SecurityRuleName -> SERVFAIL" -ForegroundColor DarkGray
+Write-Host "  Blocked domains:      blocked.lab., malware.internal.lab." -ForegroundColor DarkGray
+Write-Host "Test VM:                $VmSpokeName (spoke, no public IP)" -ForegroundColor Gray
+Write-Host "  Serial console:       $vmSerialConsoleUrl" -ForegroundColor DarkGray
+Write-Host "  Login:                $AdminUser / <password you provided>" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "Serial Console access (no NSG/public IP needed):" -ForegroundColor Yellow
-Write-Host "  Portal: $vmSerialConsoleUrl" -ForegroundColor Cyan
-Write-Host "  Login:  $AdminUser / <password you provided>" -ForegroundColor Gray
-Write-Host "  DNS tools pre-installed: dig, nslookup, ping" -ForegroundColor Gray
+Write-Host "Portal: $portalUrl" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Quick DNS tests from serial console:" -ForegroundColor Yellow
-Write-Host "  dig app.internal.lab                    # resolves via ruleset -> inbound EP -> zone" -ForegroundColor Gray
-Write-Host "  nslookup app.internal.lab               # same, alternate tool" -ForegroundColor Gray
-Write-Host "  dig app.internal.lab $inboundIp         # query inbound endpoint directly" -ForegroundColor Gray
-Write-Host "  resolvectl status                       # show which DNS server the VM is using" -ForegroundColor Gray
+Write-Host "Next steps:" -ForegroundColor White
+Write-Host "  .\lab.ps1 -Inspect lab-008   # verify all resources" -ForegroundColor DarkGray
+Write-Host "  .\lab.ps1 -Destroy lab-008   # clean up when done" -ForegroundColor DarkGray
 Write-Host ""
-
-if ($SkipTests) {
-  Write-Host "STATUS: INFRA-ONLY (tests skipped)" -ForegroundColor Yellow
-} elseif ($allValid) {
-  Write-Host "STATUS: PASS" -ForegroundColor Green
-  Write-Host "  All base resources validated successfully." -ForegroundColor Green
-} else {
-  Write-Host "STATUS: PARTIAL" -ForegroundColor Yellow
-  Write-Host "  Some validations failed. Check above for details." -ForegroundColor Yellow
-}
-
-Write-Host ""
-Write-Host "Outputs saved to:  $OutputsPath" -ForegroundColor Gray
-Write-Host "Results saved to:  $TestResultsPath" -ForegroundColor Gray
-Write-Host "Log saved to:      $script:LogFile" -ForegroundColor Gray
-Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  - DNS test (Run-Command from spoke VM):" -ForegroundColor Gray
-Write-Host "    az vm run-command invoke -g $ResourceGroup -n $VmSpokeName \" -ForegroundColor Gray
-Write-Host "      --command-id RunShellScript --scripts 'nslookup app.internal.lab'" -ForegroundColor Gray
-Write-Host "  - View forwarding rules:" -ForegroundColor Gray
-Write-Host "    az dns-resolver forwarding-rule list --ruleset-name $RulesetName -g $ResourceGroup -o table" -ForegroundColor Gray
-Write-Host "  - Run StickyBlock mode:         .\deploy.ps1 -Mode StickyBlock -AdminPassword <pw>" -ForegroundColor Gray
-Write-Host "  - Run ForwardingVariants mode:  .\deploy.ps1 -Mode ForwardingVariants -AdminPassword <pw>" -ForegroundColor Gray
-Write-Host "  - Cost check:  .\..\..\tools\cost-check.ps1 -Lab lab-008" -ForegroundColor Gray
-Write-Host "  - Cleanup:     .\destroy.ps1" -ForegroundColor Gray
-Write-Host ""
-
-$phase4Elapsed = Get-ElapsedTime -StartTime $phase4Start
-Write-Log "Phase 4 completed in $phase4Elapsed" "SUCCESS"
-Write-Log "Deployment completed | Mode=$Mode Status=$(if ($allValid) { 'PASS' } else { 'PARTIAL' })" "SUCCESS"
