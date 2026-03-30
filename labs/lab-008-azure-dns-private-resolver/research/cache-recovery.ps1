@@ -274,7 +274,7 @@ if (-not $blockApplied) {
     $ruleCreate = $null
     $ruleCreate = az dns-resolver forwarding-rule create `
         -g $ResourceGroup `
-        --forwarding-ruleset-name $RulesetName `
+        --ruleset-name $RulesetName `
         -n $BlockRuleName `
         --domain-name "$PrivateZone." `
         --target-dns-servers "[{`"ipAddress`":`"192.0.2.1`",`"port`":53}]" `
@@ -330,7 +330,7 @@ if ($blockMethod -eq "azure-dns-security-policy") {
 } elseif ($blockMethod -eq "forwarding-rule-redirect") {
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az dns-resolver forwarding-rule delete `
-        -g $ResourceGroup --forwarding-ruleset-name $RulesetName `
+        -g $ResourceGroup --ruleset-name $RulesetName `
         -n $BlockRuleName --yes 2>$null
     $ErrorActionPreference = $oldEP
 }
