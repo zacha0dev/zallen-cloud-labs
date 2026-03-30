@@ -10,8 +10,9 @@
 #   azure.microsoft.com   - public domain (control - expected fast recovery)
 #
 # Block mechanism:
-#   1. Tries az network dns-security-policy (native, preferred)
-#   2. Falls back to forwarding rule redirect to 192.0.2.1 (RFC5737 dead IP)
+#   1. DNS Security Policy (preferred): policy + domain list + block rule + VNet link
+#      Blocks at Azure DNS layer - returns NXDOMAIN/REFUSED rather than timeout
+#   2. Fallback: forwarding rule redirect to 192.0.2.1 (RFC5737 dead IP - timeout-based)
 #
 # Phases:
 #   CR-0  Preflight    - verify lab is deployed, load context
@@ -242,39 +243,122 @@ if (-not $baselineOk) {
 
 Write-Phase -Title "CR-3: Apply block" -Progress 25
 
-$blockMethod  = "none"
-$blockApplied = $false
+$blockMethod    = "none"
+$blockApplied   = $false
 
-# Try DNS Security Policy first
+# DNS Security Policy resource names (used in CR-3, CR-5, CR-7)
+$DspPolicyName     = "dnspolicy-lab-008-research"
+$DspDomainListName = "blocklist-lab-008-research"
+$DspRuleName       = "blockrule-lab-008-research"
+$DspVnetLinkName   = "vnetlink-lab-008-research"
+
+# ── Attempt 1: Full DNS Security Policy stack ────────────────────────────────
+# Requires: policy + domain list + block traffic rule + VNet link
+# All four must succeed or we fall back.
+Write-Host "  Building DNS Security Policy block stack..." -ForegroundColor DarkGray
+
+# Check CLI availability
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$policyHelp = az network dns-security-policy --help 2>$null
+$dspHelp = az network dns-security-policy create --help 2>&1
 $ErrorActionPreference = $oldEP
+$dspAvailable = ($dspHelp -match "dns-security-policy|Required Parameters|--name")
 
-if ($policyHelp -match "Commands|dns-security-policy") {
-    $policyName = "dnspolicy-lab-008-research"
-    Write-Host "  Trying DNS Security Policy..." -ForegroundColor DarkGray
+if (-not $dspAvailable) {
+    Write-Host "  [WARN] az network dns-security-policy not found in this az CLI version." -ForegroundColor Yellow
+    Write-Host "         Run: az upgrade   then retry." -ForegroundColor DarkGray
+} else {
+    # Get spoke VNet resource ID for the VNet link
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    $policyCreate = $null
-    $policyCreate = az network dns-security-policy create `
-        --name $policyName --resource-group $ResourceGroup `
-        --location $Location --output json 2>$null | ConvertFrom-Json
+    $spokeVnetId = $null
+    $spokeVnetId = az network vnet show -g $ResourceGroup -n "vnet-spoke-008" --query id -o tsv 2>$null
     $ErrorActionPreference = $oldEP
 
-    if ($policyCreate -and $policyCreate.id) {
-        $blockMethod  = "azure-dns-security-policy"
-        $blockApplied = $true
-        Write-Milestone -Event "Block applied via DNS Security Policy: $policyName" -Color "Yellow"
+    if (-not $spokeVnetId) {
+        Write-Host "  [WARN] Could not resolve spoke VNet ID - cannot link DNS Security Policy." -ForegroundColor Yellow
+    } else {
+        # Step A: Create policy
+        $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+        $policyObj = $null
+        $policyObj = az network dns-security-policy create `
+            --name $DspPolicyName `
+            --resource-group $ResourceGroup `
+            --location $Location `
+            --output json --only-show-errors 2>$null | ConvertFrom-Json
+        $ErrorActionPreference = $oldEP
+
+        if ($policyObj -and $policyObj.id) {
+            Write-Host "  [ok] Policy created: $DspPolicyName" -ForegroundColor DarkGray
+
+            # Step B: Create domain list (blocks both test domains)
+            $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+            $domainListObj = $null
+            $domainListObj = az network dns-security-policy dns-domain-list create `
+                --name $DspDomainListName `
+                --resource-group $ResourceGroup `
+                --dns-security-policy-name $DspPolicyName `
+                --domains "app.internal.lab" "azure.microsoft.com" `
+                --output json --only-show-errors 2>$null | ConvertFrom-Json
+            $ErrorActionPreference = $oldEP
+
+            if ($domainListObj -and $domainListObj.id) {
+                Write-Host "  [ok] Domain list created: $DspDomainListName (app.internal.lab, azure.microsoft.com)" -ForegroundColor DarkGray
+
+                # Step C: Create block traffic rule (priority 100)
+                $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+                $ruleObj = $null
+                $ruleObj = az network dns-security-policy dns-traffic-rule create `
+                    --name $DspRuleName `
+                    --resource-group $ResourceGroup `
+                    --dns-security-policy-name $DspPolicyName `
+                    --priority 100 `
+                    --action Block `
+                    --dns-domain-lists $DspDomainListName `
+                    --output json --only-show-errors 2>$null | ConvertFrom-Json
+                $ErrorActionPreference = $oldEP
+
+                if ($ruleObj -and $ruleObj.id) {
+                    Write-Host "  [ok] Block rule created: $DspRuleName (priority 100, action=Block)" -ForegroundColor DarkGray
+
+                    # Step D: Link policy to spoke VNet
+                    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+                    $linkObj = $null
+                    $linkObj = az network dns-security-policy virtual-network-link create `
+                        --name $DspVnetLinkName `
+                        --resource-group $ResourceGroup `
+                        --dns-security-policy-name $DspPolicyName `
+                        --virtual-network $spokeVnetId `
+                        --output json --only-show-errors 2>$null | ConvertFrom-Json
+                    $ErrorActionPreference = $oldEP
+
+                    if ($linkObj -and $linkObj.id) {
+                        $blockMethod  = "azure-dns-security-policy"
+                        $blockApplied = $true
+                        Write-Milestone -Event "DNS Security Policy block active: policy=$DspPolicyName linked to vnet-spoke-008" -Color "Yellow"
+                    } else {
+                        Write-Host "  [WARN] VNet link step failed - see below for diagnosis." -ForegroundColor Yellow
+                        Write-Host "         az network dns-security-policy virtual-network-link create returned no id." -ForegroundColor DarkGray
+                        Write-Host "         VNet may already be linked to another security policy (1:1 limit)." -ForegroundColor DarkGray
+                    }
+                } else {
+                    Write-Host "  [WARN] Traffic rule creation failed." -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "  [WARN] Domain list creation failed." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  [WARN] Policy creation failed. Check: az network dns-security-policy create --help" -ForegroundColor Yellow
+        }
     }
 }
 
+# ── Fallback: forwarding rule redirect ───────────────────────────────────────
 if (-not $blockApplied) {
-    # Fallback: forwarding rule redirect to RFC5737 dead IP (192.0.2.1 - never routes)
-    Write-Host "  DNS Security Policy not available - using forwarding rule redirect" -ForegroundColor DarkGray
+    Write-Host "  Falling back to forwarding rule redirect (192.0.2.1 dead IP)..." -ForegroundColor DarkGray
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $ruleCreate = $null
     $ruleCreate = az dns-resolver forwarding-rule create `
         -g $ResourceGroup `
-        --forwarding-ruleset-name $RulesetName `
+        --ruleset-name $RulesetName `
         -n $BlockRuleName `
         --domain-name "$PrivateZone." `
         --target-dns-servers "[{`"ipAddress`":`"192.0.2.1`",`"port`":53}]" `
@@ -285,17 +369,17 @@ if (-not $blockApplied) {
     if ($ruleCreate -and $ruleCreate.id) {
         $blockMethod  = "forwarding-rule-redirect"
         $blockApplied = $true
-        Write-Milestone -Event "Block applied via forwarding rule redirect to 192.0.2.1: $BlockRuleName" -Color "Yellow"
+        Write-Milestone -Event "Block applied via forwarding rule redirect: $BlockRuleName -> 192.0.2.1" -Color "Yellow"
     } else {
-        Write-Host "  [FAIL] Could not apply block. Cannot run scenario." -ForegroundColor Red
+        Write-Host "  [FAIL] Could not apply block via any method. Cannot run scenario." -ForegroundColor Red
         exit 1
     }
 }
 
 $blockAppliedAt = Get-Date
 Write-Host "  Block method: $blockMethod" -ForegroundColor Gray
-Write-Host "  Waiting 15s for propagation..." -ForegroundColor DarkGray
-Start-Sleep -Seconds 15
+Write-Host "  Waiting 30s for policy propagation..." -ForegroundColor DarkGray
+Start-Sleep -Seconds 30
 
 # ─── CR-4: Confirm block ─────────────────────────────────────────────────────
 
@@ -323,14 +407,29 @@ for ($i = 1; $i -le 3; $i++) {
 Write-Phase -Title "CR-5: Remove block" -Progress 45
 
 if ($blockMethod -eq "azure-dns-security-policy") {
+    # Tear down in dependency order: VNet link -> rule -> domain list -> policy
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    az network dns-security-policy delete --name "dnspolicy-lab-008-research" `
+    az network dns-security-policy virtual-network-link delete `
+        --name $DspVnetLinkName `
+        --resource-group $ResourceGroup `
+        --dns-security-policy-name $DspPolicyName --yes 2>$null
+    az network dns-security-policy dns-traffic-rule delete `
+        --name $DspRuleName `
+        --resource-group $ResourceGroup `
+        --dns-security-policy-name $DspPolicyName --yes 2>$null
+    az network dns-security-policy dns-domain-list delete `
+        --name $DspDomainListName `
+        --resource-group $ResourceGroup `
+        --dns-security-policy-name $DspPolicyName --yes 2>$null
+    az network dns-security-policy delete `
+        --name $DspPolicyName `
         --resource-group $ResourceGroup --yes 2>$null
     $ErrorActionPreference = $oldEP
+    Write-Host "  DNS Security Policy and all sub-resources removed." -ForegroundColor DarkGray
 } elseif ($blockMethod -eq "forwarding-rule-redirect") {
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az dns-resolver forwarding-rule delete `
-        -g $ResourceGroup --forwarding-ruleset-name $RulesetName `
+        -g $ResourceGroup --ruleset-name $RulesetName `
         -n $BlockRuleName --yes 2>$null
     $ErrorActionPreference = $oldEP
 }
@@ -416,11 +515,15 @@ foreach ($d in $TestDomains) {
 
 Write-Phase -Title "CR-7: Cleanup" -Progress 98
 
-# Remove block rule if anything went wrong and it's still there
+# Safety cleanup - remove any leftover block resources if scenario aborted mid-run
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-az dns-resolver forwarding-rule delete `
-    -g $ResourceGroup --forwarding-ruleset-name $RulesetName `
-    -n $BlockRuleName --yes 2>$null
+# DNS Security Policy cleanup (idempotent - silent if already gone)
+az network dns-security-policy virtual-network-link delete --name $DspVnetLinkName --resource-group $ResourceGroup --dns-security-policy-name $DspPolicyName --yes 2>$null
+az network dns-security-policy dns-traffic-rule delete     --name $DspRuleName     --resource-group $ResourceGroup --dns-security-policy-name $DspPolicyName --yes 2>$null
+az network dns-security-policy dns-domain-list delete      --name $DspDomainListName --resource-group $ResourceGroup --dns-security-policy-name $DspPolicyName --yes 2>$null
+az network dns-security-policy delete --name $DspPolicyName --resource-group $ResourceGroup --yes 2>$null
+# Forwarding rule cleanup (idempotent)
+az dns-resolver forwarding-rule delete -g $ResourceGroup --ruleset-name $RulesetName -n $BlockRuleName --yes 2>$null
 $ErrorActionPreference = $oldEP
 
 Write-Milestone -Event "Cleanup complete"
