@@ -95,7 +95,7 @@ if ($resources) {
 if (-not $Force) {
   Write-Host "WARNING: This will permanently delete all resources!" -ForegroundColor Red
   Write-Host "  Includes: DNS Private Resolver, both VNets, peerings, ruleset, zone, VM." -ForegroundColor Yellow
-  Write-Host "  Also removes any StickyBlock policies and ForwardingVariants leftovers." -ForegroundColor Yellow
+  Write-Host "  Also removes DNS Security Policy, domain list, StickyBlock policies, and ForwardingVariants leftovers." -ForegroundColor Yellow
   $confirm = Read-Host "Type DELETE to confirm"
   if ($confirm -ne "DELETE") {
     Write-Host "Cancelled." -ForegroundColor Yellow
@@ -115,6 +115,43 @@ Write-Host "Pre-deletion cleanup (mode-specific resources)..." -ForegroundColor 
 Remove-IfExists -Label "DNS Security Policy: $StickyPolicyName" `
   -CheckCmd  { az network dns-security-policy show --name $StickyPolicyName --resource-group $ResourceGroup -o json 2>$null | ConvertFrom-Json } `
   -DeleteCmd { az network dns-security-policy delete --name $StickyPolicyName --resource-group $ResourceGroup --yes 2>$null }
+
+# Base: DNS Security Policy VNet link (unlink before group delete to avoid dependency errors)
+$PermPolicyName = "dnspolicy-lab-008"
+$PermDomainListName = "domainlist-lab-008-blocked"
+
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$permPolicy = az network dns-security-policy show --name $PermPolicyName --resource-group $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+
+if ($permPolicy -and $permPolicy.id) {
+  # Remove VNet links first
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $pLinks = az rest --method GET --uri "$($permPolicy.id)/virtualNetworkLinks?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if ($pLinks -and $pLinks.value) {
+    foreach ($lnk in @($pLinks.value)) {
+      Write-Host "  Removing policy VNet link: $($lnk.name)" -ForegroundColor DarkGray
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      az rest --method DELETE --uri "$($lnk.id)?api-version=2023-07-01-preview" 2>$null | Out-Null
+      $ErrorActionPreference = $oldEP
+    }
+    Write-Host "  [PASS] Policy VNet links removed" -ForegroundColor Green
+  }
+  # Delete the policy
+  Write-Host "  Removing: DNS Security Policy: $PermPolicyName" -ForegroundColor DarkGray
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  az network dns-security-policy delete --name $PermPolicyName --resource-group $ResourceGroup --yes 2>$null
+  $ErrorActionPreference = $oldEP
+  Write-Host "  [PASS] DNS Security Policy removed: $PermPolicyName" -ForegroundColor Green
+} else {
+  Write-Host "  [SKIP] Not found (already gone): DNS Security Policy: $PermPolicyName" -ForegroundColor DarkGray
+}
+
+# Domain list (top-level resource - delete explicitly)
+Remove-IfExists -Label "Domain list: $PermDomainListName" `
+  -CheckCmd  { az resource show -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -n $PermDomainListName --api-version "2023-07-01-preview" -o json 2>$null | ConvertFrom-Json } `
+  -DeleteCmd { az resource delete -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -n $PermDomainListName --api-version "2023-07-01-preview" 2>$null }
 
 # StickyBlock: block forwarding rule (in case it wasn't cleaned up)
 Remove-IfExists -Label "StickyBlock forwarding rule: $StickyBlockRule" `

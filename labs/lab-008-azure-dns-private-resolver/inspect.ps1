@@ -17,6 +17,7 @@
 #   6. Private DNS zone + A record (app.internal.lab)
 #   7. Test VM running (spoke)
 #   8. Live DNS resolution via VM run-command (getent hosts)
+#   9. DNS Security Policy + domain list + rules + VNet link
 
 [CmdletBinding()]
 param(
@@ -394,6 +395,75 @@ if ($appResolved) {
   Write-Warn "Run-command returned no output after $maxTries attempts"
   Write-Info "  VM agent or extension may be busy. Try manually:"
   Write-Info "  az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'getent hosts app.$DnsZoneName'"
+}
+
+# ── SECTION 8: DNS Security Policy ───────────────────────────────────────────
+$SecurityPolicyName = "dnspolicy-lab-008"
+$DomainListName     = "domainlist-lab-008-blocked"
+
+Write-Section "8. DNS Security Policy"
+
+$secPol = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$secPol = az network dns-security-policy show -g $ResourceGroup -n $SecurityPolicyName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+
+if ($secPol -and $secPol.provisioningState -eq "Succeeded") {
+  Write-Pass "DNS Security Policy provisioned" $SecurityPolicyName
+  $passCount++
+} else {
+  $state = if ($secPol) { $secPol.provisioningState } else { "not found" }
+  Write-Fail "DNS Security Policy not ready" "state: $state"
+  $failCount++
+}
+
+$domainListCheck = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$domainListsResult = az resource list -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$domainListCheck = @($domainListsResult) | Where-Object { $_.name -eq $DomainListName }
+if ($domainListCheck) {
+  Write-Pass "Domain list exists" $DomainListName
+  $passCount++
+} else {
+  Write-Fail "Domain list not found" $DomainListName
+  $failCount++
+}
+
+if ($secPol -and $secPol.id) {
+  $rulesResp = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $rulesResp = az rest --method GET --uri "$($secPol.id)/dnsSecurityRules?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  $rulesCount = if ($rulesResp -and $rulesResp.value) { @($rulesResp.value).Count } else { 0 }
+  if ($rulesCount -gt 0) {
+    Write-Pass "Security rules configured" "$rulesCount rule(s)"
+    $passCount++
+    $blockRule = @($rulesResp.value) | Where-Object { $_.name -eq "rule-block-lab-domains" }
+    if ($blockRule) {
+      $action = if ($blockRule.properties.action) { "$($blockRule.properties.action.actionType) / $($blockRule.properties.action.blockResponseCode)" } else { "see portal" }
+      Write-Info "  Block rule: $action | priority: $($blockRule.properties.priority)"
+    }
+  } else {
+    Write-Fail "No security rules found on policy" "Expected at least 1 block rule"
+    $failCount++
+  }
+
+  $linksResp = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $linksResp = az rest --method GET --uri "$($secPol.id)/virtualNetworkLinks?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  $linksCount = if ($linksResp -and $linksResp.value) { @($linksResp.value).Count } else { 0 }
+  if ($linksCount -gt 0) {
+    Write-Pass "Policy VNet links present" "$linksCount link(s)"
+    $passCount++
+    Write-Info "  Queries from linked VNet(s) for blocked.lab., malware.internal.lab. return SERVFAIL"
+  } else {
+    Write-Fail "Policy has no VNet links" "Policy cannot filter DNS until a VNet is linked"
+    $failCount++
+  }
+} else {
+  Write-Warn "Skipping rule/link checks (policy not found or not provisioned)"
 }
 
 # ── SUMMARY ──────────────────────────────────────────────────────────────────

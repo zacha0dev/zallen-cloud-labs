@@ -63,6 +63,11 @@ var spokeWorkloadSubnet  = '10.81.1.0/24'
 // Static DNS A record target (simulated app server)
 var appRecordIp          = '10.80.1.10'
 
+var securityPolicyName = 'dnspolicy-lab-008'
+var domainListName     = 'domainlist-lab-008-blocked'
+var securityRuleName   = 'rule-block-lab-domains'
+var policyLinkName     = 'link-policy-spoke'
+
 // ─── Subnet IDs — computed from known names to avoid fragile index references ─
 // These are constructed after the VNet is declared using resourceId() so that
 // subnet ordering changes in the array never silently break endpoint deployments.
@@ -425,6 +430,62 @@ resource vmSpoke 'Microsoft.Compute/virtualMachines@2023-07-01' = {
   }
 }
 
+// ─── DNS Security Policy ─────────────────────────────────────────────────────
+// Demonstrates DNS query filtering. Regional resource - must match VNet region.
+// One VNet can be linked to at most one DNS Security Policy.
+resource dnsSecurityPolicy 'Microsoft.Network/dnsResolverPolicies@2023-07-01-preview' = {
+  name: securityPolicyName
+  location: location
+  tags: tags
+}
+
+// ─── DNS Domain List ─────────────────────────────────────────────────────────
+// Top-level resource (not nested under policy). Contains domains to block.
+// Domains use standard DNS format with trailing dot.
+resource domainList 'Microsoft.Network/dnsResolverDomainLists@2023-07-01-preview' = {
+  name: domainListName
+  location: location
+  tags: tags
+  properties: {
+    domains: [
+      'blocked.lab.'
+      'malware.internal.lab.'
+    ]
+  }
+}
+
+// ─── DNS Security Rule: Block ─────────────────────────────────────────────────
+// Blocks queries for domains in the domain list before they reach the forwarding
+// ruleset or private DNS zones. Priority 100. SERVFAIL returned to the querier.
+resource securityRule 'Microsoft.Network/dnsResolverPolicies/dnsSecurityRules@2023-07-01-preview' = {
+  parent: dnsSecurityPolicy
+  name: securityRuleName
+  location: location
+  properties: {
+    priority: 100
+    action: {
+      actionType: 'Block'
+      blockResponseCode: 'SERVFAIL'
+    }
+    dnsSecurityRuleState: 'Enabled'
+    dnsResolverDomainLists: [
+      { id: domainList.id }
+    ]
+  }
+}
+
+// ─── Policy VNet Link: spoke ──────────────────────────────────────────────────
+// Links the security policy to the spoke VNet. DNS queries from spoke VMs
+// are evaluated against the policy rules before forwarding ruleset is consulted.
+// NOTE: A VNet can be linked to only one DNS Security Policy at a time.
+resource policyVnetLink 'Microsoft.Network/dnsResolverPolicies/virtualNetworkLinks@2023-07-01-preview' = {
+  parent: dnsSecurityPolicy
+  name: policyLinkName
+  properties: {
+    virtualNetwork: { id: spokeVnet.id }
+  }
+}
+
 // ─── Outputs ─────────────────────────────────────────────────────────────────
 output hubVnetId string = hubVnet.id
 output spokeVnetId string = spokeVnet.id
@@ -440,3 +501,7 @@ output vmSpokeName string = vmSpoke.name
 output appRecordFqdn string = 'app.${dnsZoneName}'
 // Direct portal link to serial console (requires Azure AD login with VM Contributor+ role)
 output vmSpokeSerialConsoleUrl string = 'https://portal.azure.com/#resource${vmSpoke.id}/serialConsole'
+output securityPolicyId string = dnsSecurityPolicy.id
+output securityPolicyName string = dnsSecurityPolicy.name
+output domainListId string = domainList.id
+output domainListName string = domainList.name
