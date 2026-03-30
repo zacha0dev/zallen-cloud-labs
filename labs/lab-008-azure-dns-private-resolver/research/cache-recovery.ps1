@@ -214,6 +214,29 @@ Write-Milestone -Event "Starting baseline polls (3 rounds x ${PollIntervalSec}s)
 $baselinePolls  = [System.Collections.ArrayList]::new()
 $baselineOk     = $true
 
+# Warm up RunShellScript extension before baseline polls.
+# First invocation after VM start triggers test.sh health check (~60s).
+# Repeated rapid invocations reset the enable cycle; prime it once here.
+Write-Host "  Warming up VM run-command extension (one-time)..." -ForegroundColor DarkGray
+$warmMaxTries = 5; $warmWait = 30
+for ($w = 1; $w -le $warmMaxTries; $w++) {
+    if ($w -gt 1) {
+        Write-Host "    Waiting ${warmWait}s for extension (attempt $w/$warmMaxTries)..." -ForegroundColor DarkGray
+        Start-Sleep -Seconds $warmWait
+    }
+    $warmResult = $null
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $warmResult = az vm run-command invoke -g $ResourceGroup -n $VmName --command-id RunShellScript --scripts "echo ready" -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldEP
+    if ($warmResult -and $warmResult.value -and $warmResult.value.Count -gt 0) {
+        $warmMsg = ($warmResult.value[0].message -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
+        if ($warmMsg -notmatch "This is a sample script" -and $warmMsg -ne "") {
+            Write-Host "  Extension ready." -ForegroundColor DarkGray
+            break
+        }
+    }
+}
+
 for ($i = 1; $i -le 3; $i++) {
     Write-Host "  Baseline poll $i/3..." -ForegroundColor DarkGray
     $poll = Invoke-VmDnsTest -ResourceGroup $ResourceGroup -VmName $VmName -Domains $TestDomains
