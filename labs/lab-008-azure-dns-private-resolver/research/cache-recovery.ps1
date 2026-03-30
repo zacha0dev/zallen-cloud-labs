@@ -99,63 +99,47 @@ function Invoke-VmDnsTest {
         [string]$VmName,
         [string[]]$Domains
     )
-    # Build a shell script that tests each domain with clear output markers.
-    # Uses getent hosts (always available via glibc) instead of nslookup
-    # (bind9-dnsutils may not be installed when run-command fires).
-    # No shell operators - avoids PS5.1->az.exe argument encoding issues.
-    $lines = @("echo POLL_START")
-    foreach ($d in $Domains) {
-        $lines += "echo DOM_START_$($d -replace '\.','_')"
-        $lines += "getent hosts $d"
-        $lines += "echo DOM_END_$($d -replace '\.','_')"
-    }
-    $lines += "echo POLL_END"
-    $shellScript = $lines -join " ; "
-
-    # Retry loop: RunShellScript extension runs a test.sh health check before
-    # executing user scripts on first invocation. Response contains
-    # "This is a sample script" while the extension is still enabling.
-    # Wait 30s and retry until our POLL_START marker appears (or give up).
-    $raw         = ""
-    $innerTries  = 4
-    $innerWait   = 30
-    for ($t = 1; $t -le $innerTries; $t++) {
-        if ($t -gt 1) {
-            Write-Host "    [run-cmd] Extension still initializing - waiting ${innerWait}s (attempt $t/$innerTries)..." -ForegroundColor DarkGray
-            Start-Sleep -Seconds $innerWait
-        }
-        $r = $null
-        $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-        $r = az vm run-command invoke `
-            -g $ResourceGroup -n $VmName `
-            --command-id RunShellScript `
-            --scripts $shellScript `
-            -o json 2>$null | ConvertFrom-Json
-        $ErrorActionPreference = $oldEP
-        $raw = if ($r -and $r.value) { $r.value[0].message } else { "" }
-        # If our sentinel marker is present the user script actually ran
-        if ($raw -match "POLL_START") { break }  # getent sentinel
-        # Extension test.sh output - not our script
-        if ($raw -match "This is a sample script") { continue }
-        # Any other non-empty response that lacks POLL_START - treat as not ready
-        if ($raw -ne "") { continue }
-    }
-
+    # One run-command call per domain: bare "getent hosts <name>" with no shell
+    # operators or semicolons. This matches the CLAUDE.md-required pattern and
+    # avoids az CLI splitting a multi-command string on spaces into separate
+    # bash lines (which causes the script to fail silently).
+    # Strip [stdout]/[stderr] labels before any matching.
     $results = @{}
     foreach ($d in $Domains) {
-        # Marker uses underscores (dots stripped) to avoid shell quoting issues
-        $marker  = $d -replace '\.', '_'
-        $m = [regex]::Match($raw, "DOM_START_$marker([\s\S]*?)DOM_END_$marker")
-        $domOut = if ($m.Success) { $m.Groups[1].Value } else { "" }
+        $resolved = $false
+        $domOut   = ""
+        $maxTries = 4
+        $waitSec  = 30
 
-        # getent hosts output: "<IP>   <hostname>" or empty if not found.
-        # Resolved = at least one IPv4 address in the output.
-        $resolved = ($domOut -match "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
+        for ($t = 1; $t -le $maxTries; $t++) {
+            if ($t -gt 1) {
+                Write-Host "    [dns:$d] Retrying (attempt $t/$maxTries, waiting ${waitSec}s)..." -ForegroundColor DarkGray
+                Start-Sleep -Seconds $waitSec
+            }
+            $r = $null
+            $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+            $r = az vm run-command invoke `
+                -g $ResourceGroup -n $VmName `
+                --command-id RunShellScript `
+                --scripts "getent hosts $d" `
+                -o json 2>$null | ConvertFrom-Json
+            $ErrorActionPreference = $oldEP
+
+            if (-not ($r -and $r.value -and $r.value.Count -gt 0)) { continue }
+            $raw     = $r.value[0].message
+            $cleaned = ($raw -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
+
+            if ($cleaned -match "This is a sample script") { continue }
+
+            $domOut  = $cleaned
+            $resolved = ($cleaned -match "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
+            break
+        }
 
         $results[$d] = [pscustomobject]@{
             domain   = $d
             resolved = $resolved
-            output   = $domOut.Trim()
+            output   = $domOut
         }
     }
     return $results
