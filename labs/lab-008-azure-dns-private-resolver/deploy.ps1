@@ -41,7 +41,7 @@ $InfraDir = Join-Path $LabRoot "infra"
 $DataDir  = Join-Path $RepoRoot ".data\lab-008"
 $OutputsPath = Join-Path $DataDir "outputs.json"
 
-. (Join-Path $RepoRoot "scripts\labs-common.ps1")
+. (Join-Path (Join-Path $RepoRoot "scripts") "labs-common.ps1")
 
 $ResourceGroup    = "rg-lab-008-dns-resolver"
 $HubVnetName      = "vnet-hub-008"
@@ -286,6 +286,22 @@ $ruleset = az dns-resolver forwarding-ruleset show -g $ResourceGroup -n $Ruleset
 $ErrorActionPreference = $oldEP
 Write-Validation -Check "Forwarding ruleset" -Passed ($ruleset -and $ruleset.provisioningState -eq "Succeeded") -Details $RulesetName
 
+# Forwarding rules count
+$fwdRules = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$fwdRules = az dns-resolver forwarding-rule list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$fwdRulesCount = if ($fwdRules) { @($fwdRules).Count } else { 0 }
+Write-Validation -Check "Forwarding rules" -Passed ($fwdRulesCount -gt 0) -Details "$fwdRulesCount rule(s)"
+
+# Ruleset linked to spoke VNet
+$rulesetLinks = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$rulesetLinks = az dns-resolver vnet-link list --ruleset-name $RulesetName -g $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$rulesetLinksCount = if ($rulesetLinks) { @($rulesetLinks).Count } else { 0 }
+Write-Validation -Check "Ruleset linked to spoke VNet" -Passed ($rulesetLinksCount -gt 0) -Details "$rulesetLinksCount link(s)"
+
 # DNS Zone
 $zone = $null
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
@@ -317,6 +333,28 @@ $domainListFound = $null
 $domainListFound = @($domainListsResult) | Where-Object { $_.name -eq $DomainListName }
 Write-Validation -Check "Domain list" -Passed ($null -ne $domainListFound) -Details $DomainListName
 
+# Security rules count
+$secRulesCount = 0
+if ($secPol -and $secPol.id) {
+  $rulesResponse = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $rulesResponse = az rest --method GET --uri "$($secPol.id)/dnsSecurityRules?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if ($rulesResponse -and $rulesResponse.value) { $secRulesCount = @($rulesResponse.value).Count }
+}
+Write-Validation -Check "Security rules configured" -Passed ($secRulesCount -gt 0) -Details "$secRulesCount rule(s)"
+
+# Policy VNet link
+$policyLinksCount = 0
+if ($secPol -and $secPol.id) {
+  $policyLinksResponse = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $policyLinksResponse = az rest --method GET --uri "$($secPol.id)/virtualNetworkLinks?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if ($policyLinksResponse -and $policyLinksResponse.value) { $policyLinksCount = @($policyLinksResponse.value).Count }
+}
+Write-Validation -Check "Security policy VNet link" -Passed ($policyLinksCount -gt 0) -Details "$policyLinksCount link(s)"
+
 # Test VM
 $vm = $null
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
@@ -339,8 +377,18 @@ $ErrorActionPreference = $oldEP
 
 if (-not $resolvedInboundIp) { $resolvedInboundIp = $inboundIp }
 if (-not $vmSerialConsoleUrl) { $vmSerialConsoleUrl = "" }
+if (-not $securityPolicyId)  { $securityPolicyId   = "" }
+if (-not $domainListId)      { $domainListId        = "" }
+if (-not $hubVnetId)         { $hubVnetId           = "" }
 
 Ensure-Directory $DataDir
+
+$resolverPortalUrl = "https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/dnsResolvers/$ResolverName/overview"
+$secPolPortalUrl   = if ($securityPolicyId) {
+  "https://portal.azure.com/#@/resource$securityPolicyId/overview"
+} else {
+  "https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/dnsResolverPolicies/$SecurityPolicyName/overview"
+}
 
 $outputs = [pscustomobject]@{
   metadata = [pscustomobject]@{
@@ -408,6 +456,11 @@ $outputs = [pscustomobject]@{
       serialConsoleUrl = $vmSerialConsoleUrl
       loginUser        = $AdminUser
     }
+  }
+  portalLinks = [pscustomobject]@{
+    resourceGroup  = $portalUrl
+    resolver       = $resolverPortalUrl
+    securityPolicy = $secPolPortalUrl
   }
 }
 

@@ -1,6 +1,6 @@
-# Lab 008: Azure DNS Private Resolver + Controlled Forwarding
+# Lab 008: Azure DNS Private Resolver + Security Policy
 
-Deploy Azure DNS Private Resolver in a hub VNet, connect a spoke via VNet peering and a forwarding ruleset, and validate cross-VNet private DNS resolution — without blocking Azure's platform DNS.
+Deploy a hub-spoke DNS architecture with a DNS Private Resolver and DNS Security Policy, then explore how they work together in the Azure portal.
 
 ---
 
@@ -9,80 +9,97 @@ Deploy Azure DNS Private Resolver in a hub VNet, connect a spoke via VNet peerin
 | What you learn | How |
 |---|---|
 | DNS Private Resolver architecture | Inbound + outbound endpoints in dedicated subnets |
-| Forwarding Ruleset | Explicit domain-scoped forwarding rules |
-| Cross-VNet resolution | Spoke resolves hub's private zones via resolver |
-| Controlled forwarding (no wildcard deny) | Rules only for named domains — Azure DNS preserved |
-| Simulated external forwarding | `onprem.example.com` → placeholder target |
-| DNS Security Policy | Block specific domains with SERVFAIL via domain list + traffic rule |
+| Forwarding Ruleset | Domain-scoped forwarding rules directing spoke DNS through the resolver |
+| DNS Security Policy | Block specific domains before they reach the resolver |
+| Resolution path isolation | Spoke resolves private zones via resolver, not direct zone access |
+| Portal exploration | Each resource has a clear portal view showing config and linked resources |
 
-**Security model:** No `'.'` (deny-all) rule. Security is achieved via:
-- Explicit forwarding rules for known domains only
-- Zone visibility isolation (zone linked only to hub)
-- Resolution path isolation (spoke routes only named domains through resolver)
+---
+
+## What gets deployed
+
+| Resource | Name | Purpose |
+|---|---|---|
+| Hub VNet | vnet-hub-008 | Hosts the DNS Private Resolver |
+| Spoke VNet | vnet-spoke-008 | Has test VM, linked to forwarding ruleset and security policy |
+| DNS Private Resolver | dnsresolver-008 | Inbound + outbound endpoints |
+| Forwarding Ruleset | ruleset-008 | Routes internal.lab + onprem.example.com through resolver |
+| Private DNS Zone | internal.lab | Authoritative zone for app.internal.lab |
+| DNS Security Policy | dnspolicy-lab-008 | Blocks blocked.lab + malware.internal.lab with SERVFAIL |
+| Domain List | domainlist-lab-008-blocked | The list of blocked domains |
+| Test VM | vm-spoke-008 | Ubuntu 22.04, no public IP - serial console access only |
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  Resource Group: rg-lab-008-dns-resolver                         │
-│                                                                  │
-│  ┌──────────────────────────────────┐  ┌──────────────────────┐  │
-│  │ Hub VNet: vnet-hub-008           │  │ Spoke VNet:          │  │
-│  │ 10.80.0.0/16                     │  │ vnet-spoke-008       │  │
-│  │                                  │◄─►│ 10.81.0.0/16        │  │
-│  │ snet-workload-hub (10.80.1.0/24) │  │                      │  │
-│  │                                  │  │ snet-workload-spoke  │  │
-│  │ DNS Private Resolver             │  │ (10.81.1.0/24)       │  │
-│  │ ┌─────────────────────────────┐  │  │                      │  │
-│  │ │ snet-dns-inbound            │  │  │  vm-spoke-008        │  │
-│  │ │ (10.80.2.0/28)              │  │  │  (Standard_B1s)      │  │
-│  │ │  Inbound EP: 10.80.2.x ◄───┼──┼──┼─ nslookup            │  │
-│  │ └─────────────────────────────┘  │  │  app.internal.lab    │  │
-│  │ ┌─────────────────────────────┐  │  └──────────────────────┘  │
-│  │ │ snet-dns-outbound           │  │                            │
-│  │ │ (10.80.3.0/28)              │  │  DNS Forwarding Ruleset    │
-│  │ │  Outbound EP ───────────────┼──┼─► linked to spoke VNet    │
-│  │ └─────────────────────────────┘  │  ┌──────────────────────┐  │
-│  │                                  │  │ internal.lab.        │  │
-│  │ Private DNS Zone: internal.lab   │  │  → inbound EP IP     │  │
-│  │  (linked to hub, auto-reg OFF)   │  │ onprem.example.com.  │  │
-│  │  A: app.internal.lab→10.80.1.10  │  │  → 10.0.0.1 (sim)   │  │
-│  └──────────────────────────────────┘  └──────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
-
-DNS Security Policy: dnspolicy-lab-008
-  Domain list: domainlist-lab-008-blocked
-    - blocked.lab.
-    - malware.internal.lab.
-  Rule: block with SERVFAIL (priority 100)
-  VNet link: spoke VNet
-  Effect: queries from spoke VM for blocked.lab. return SERVFAIL
-
-Resolution flow (spoke VM → app.internal.lab):
-  1. VM queries Azure DNS (168.63.129.16)
-  2. Azure DNS sees forwarding ruleset linked to spoke VNet
-  3. Rule: internal.lab. matches → forward to inbound endpoint IP:53
-  4. Inbound endpoint resolves against internal.lab private zone
-  5. Returns: 10.80.1.10
++------------------------------------------------------------------+
+|  Resource Group: rg-lab-008-dns-resolver                         |
+|                                                                  |
+|  +-----------------------------+   +-------------------------+   |
+|  | Hub VNet: vnet-hub-008      |   | Spoke VNet:             |   |
+|  | 10.80.0.0/16                |   | vnet-spoke-008          |   |
+|  |                             |<->| 10.81.0.0/16            |   |
+|  | snet-workload-hub           |   |                         |   |
+|  | (10.80.1.0/24)              |   | snet-workload-spoke     |   |
+|  |                             |   | (10.81.1.0/24)          |   |
+|  | DNS Private Resolver        |   |                         |   |
+|  |  snet-dns-inbound           |   |  vm-spoke-008           |   |
+|  |  (10.80.2.0/28)             |   |  (Standard_B1s)         |   |
+|  |  Inbound EP: 10.80.2.x <---+---+--                        |   |
+|  |                             |   +-------------------------+   |
+|  |  snet-dns-outbound          |                                 |
+|  |  (10.80.3.0/28)             |   DNS Forwarding Ruleset        |
+|  |  Outbound EP                |   ruleset-008                   |
+|  |                             |   (linked to spoke VNet)        |
+|  | Private DNS Zone:           |   - internal.lab. -> inbound EP |
+|  |  internal.lab               |   - onprem.example.com -> sim.  |
+|  |  (linked to hub)            |                                 |
+|  |  A: app -> 10.80.1.10       |   DNS Security Policy           |
+|  +-----------------------------+   dnspolicy-lab-008             |
+|                                    (linked to spoke VNet)        |
+|                                    Domain list: blocked domains  |
+|                                    Rule: SERVFAIL for matches    |
++------------------------------------------------------------------+
 ```
 
-### DNS Security Policy
+---
 
-The lab deploys a **DNS Security Policy** (`dnspolicy-lab-008`) alongside the core resolver infrastructure. Key characteristics:
+## DNS resolution flow
 
-- **Regional resource**: The policy must be deployed to the same region as the VNets it protects. It is not a global resource.
-- **Attached to VNets**: The policy is linked to the spoke VNet. DNS queries from VMs in linked VNets are evaluated against the policy rules before the forwarding ruleset is consulted.
-- **Evaluation order**: DNS Security Policy rules are evaluated **first** — before the forwarding ruleset and before private DNS zone lookup. A block rule short-circuits the query and returns SERVFAIL immediately.
-- **One policy per VNet**: A VNet can be linked to at most one DNS Security Policy at a time. Attempting to link a second policy will fail.
-- **Domain list**: The blocked domains are stored in a separate top-level resource (`domainlist-lab-008-blocked`). The domain list is referenced by the security rule and can be updated independently of the policy.
+### app.internal.lab (resolves successfully)
 
-Blocked domains in this lab:
-- `blocked.lab.` — synthetic test domain
-- `malware.internal.lab.` — simulated threat subdomain
+```
+spoke VM
+  -> Azure DNS (168.63.129.16)
+     -> forwarding ruleset linked to spoke VNet
+        -> rule: internal.lab. matches
+           -> forward to inbound endpoint IP:53
+              -> resolver queries private DNS zone
+                 -> returns 10.80.1.10
+```
 
-Queries from the spoke VM for these domains return `SERVFAIL` without reaching the resolver or private DNS zone.
+### blocked.lab (blocked by security policy)
+
+```
+spoke VM
+  -> Azure DNS (168.63.129.16)
+     -> DNS Security Policy evaluated first (linked to spoke VNet)
+        -> domain list matches blocked.lab.
+           -> SERVFAIL returned immediately
+              (query never reaches the forwarding ruleset or resolver)
+```
+
+---
+
+## Evaluation order
+
+Security Policy evaluates **before** the forwarding ruleset. For any VNet linked to a policy:
+
+1. Azure DNS checks security policy rules for the queried domain
+2. If a block rule matches, SERVFAIL is returned (query never reaches the resolver)
+3. If no match, the forwarding ruleset is consulted normally
 
 ---
 
@@ -94,283 +111,122 @@ Queries from the spoke VM for these domains return `SERVFAIL` without reaching t
 | DNS Private Resolver (2 endpoints) | ~$0.014/hr |
 | Private DNS Zone | ~$0.004/hr |
 | VNet peering (2 links) | ~$0.01/hr per GB transferred |
-| DNS Security Policy + domain list | minimal (included in ~$0.03/hr estimate; negligible for lab workloads) |
+| DNS Security Policy + domain list | no additional cost at lab scale |
 | **Estimated total** | **~$0.03/hr while running** |
 
-> Run `.\..\..\tools\cost-check.ps1 -Lab lab-008` to audit live resources.
+> Run `.\lab.ps1 -Cost -Lab lab-008` to audit live resources.
 
 ---
 
 ## Prerequisites
 
 - Azure CLI installed (`az version`)
-- `.data/subs.json` configured (`.\setup.ps1 -ConfigureSubs`)
-- PowerShell 7+ (`pwsh`)
-- Subscription with DNS Private Resolver feature enabled
-  - DNS Private Resolver is generally available in: eastus, eastus2, westus2, centralus, northeurope, westeurope
-
----
-
-## Modes
-
-Lab 008 supports parameterized deployment modes via `-Mode`:
-
-| Mode | Description |
-|------|-------------|
-| `Base` (default) | Deploy base infra only — always stable and reliable |
-| `StickyBlock` | Base + DNS Security Policy (or forwarding rule redirect) cache persistence test |
-| `ForwardingVariants` | Base + forwarding rule variation tests (safe, generic) |
-
-```powershell
-# Base deploy (default)
-.\deploy.ps1 -Mode Base -AdminPassword "YourLabPass123!"
-
-# StickyBlock — test DNS cache persistence after policy apply/remove
-.\deploy.ps1 -Mode StickyBlock -AdminPassword "YourLabPass123!"
-
-# ForwardingVariants — test adding/removing rules and VNet links
-.\deploy.ps1 -Mode ForwardingVariants -AdminPassword "YourLabPass123!"
-
-# StickyBlock infra only (skip tests, just wire up base infra)
-.\deploy.ps1 -Mode StickyBlock -SkipTests -AdminPassword "YourLabPass123!"
-```
-
-> **Note:** Base mode must succeed before running StickyBlock or ForwardingVariants. All modes use the same base infrastructure. If the `-SkipTests` flag is set, Phase 2 (validation) and Phase 3 (mode-specific tests) are skipped regardless of the mode chosen.
+- `.data/subs.json` configured (`.\lab.ps1 -Setup`)
+- PowerShell 5.1 or 7+
+- Subscription with DNS Private Resolver available
+  - Supported in: eastus, eastus2, westus2, centralus, northeurope, westeurope
 
 ---
 
 ## Deploy
 
 ```powershell
-cd labs/lab-008-azure-dns-private-resolver
-
-.\deploy.ps1 `
-  -AdminPassword "YourLabPass123!" `
-  -Location eastus2
+.\lab.ps1 -Deploy lab-008 -AdminPassword "YourLabPass123!"
 ```
 
-Optional flags:
+Or with explicit parameters:
+
+```powershell
+.\lab.ps1 -Deploy lab-008 -Location eastus2 -Force -AdminPassword "YourLabPass123!"
+```
+
 | Flag | Default | Notes |
 |---|---|---|
 | `-SubscriptionKey` | default from subs.json | key name in subs.json |
 | `-Location` | eastus2 | DNS Resolver must be supported |
 | `-AdminUser` | azureuser | VM OS username |
 | `-Owner` | `$env:USERNAME` | tag value |
-| `-Force` | off | skip confirmations |
-| `-Mode` | `Base` | `Base`, `StickyBlock`, or `ForwardingVariants` |
-| `-SkipTests` | off | infra-only; skip Phase 2 and Phase 3 |
+| `-Force` | off | skip confirmation prompt |
 
 Deployment time: **~8-12 minutes** (resolver endpoint provisioning takes the most time).
 
-### Phases
+---
 
-| Phase | What happens | ~Time |
-|---|---|---|
-| 0 — Preflight | auth, config, cost warning | <1 min |
-| 1 — Deploy Base Infra | resource group + Bicep (VNets, resolver, endpoints, ruleset, zone, VM) | 7-10 min |
-| 2 — Base Validation | verify all resources + rules + record (skipped with `-SkipTests`) | <1 min |
-| 3 — Mode Execution | StickyBlock or ForwardingVariants test harness (Base: no-op) | varies |
-| 4 — Outputs + Evidence | write outputs.json + test-results.json | <1 min |
+## Explore in the portal
+
+After deployment, open the resource group URL printed in the summary output. Then:
+
+### 1. Resource group overview
+
+Open `rg-lab-008-dns-resolver` and browse the resource list. You should see the hub VNet, spoke VNet, resolver, ruleset, private DNS zone, security policy, domain list, and VM all in one place.
+
+### 2. DNS Private Resolver
+
+Click on `dnsresolver-008`:
+- **Inbound endpoints** tab: shows `ep-inbound-008` with its private IP in `snet-dns-inbound`. This is the IP that forwarding rules point to.
+- **Outbound endpoints** tab: shows `ep-outbound-008` in `snet-dns-outbound`. This is the exit point for queries forwarded to external servers.
+
+### 3. DNS Forwarding Ruleset
+
+Click on `ruleset-008`:
+- **Forwarding rules** tab: shows two rules - `internal.lab.` pointing to the inbound endpoint IP, and `onprem.example.com.` pointing to `10.0.0.1` (simulated upstream).
+- **Virtual network links** tab: shows the spoke VNet linked here. Only VNets linked to this ruleset use it for DNS forwarding.
+
+### 4. Private DNS Zone
+
+Click on `internal.lab`:
+- **Overview**: shows the `app` A record pointing to `10.80.1.10`.
+- **Virtual network links** tab: shows only the hub VNet linked here. The spoke does NOT have direct access - it reaches this zone only through the forwarding path via the resolver.
+
+### 5. DNS Security Policy
+
+Click on `dnspolicy-lab-008`:
+- **Domain lists** tab: shows `domainlist-lab-008-blocked` attached to this policy.
+- **DNS security rules** tab: shows `rule-block-lab-domains` with SERVFAIL action.
+- **Virtual network links** tab: shows the spoke VNet. DNS queries from VMs in this VNet are evaluated against this policy.
+
+### 6. Domain List
+
+Click on `domainlist-lab-008-blocked`:
+- **Domains** tab: shows `blocked.lab.` and `malware.internal.lab.` as the blocked entries.
 
 ---
 
-## Validate
+## Validate from the VM (optional)
 
-### Azure CLI (control plane)
+The test VM has no public IP. Use Azure Serial Console to access it:
+
+1. In the portal, open `vm-spoke-008`
+2. Click **Serial console** in the left menu
+3. Log in as `azureuser` with the password you provided at deploy time
+
+From the serial console, test DNS resolution:
 
 ```bash
-# Show resolver endpoints
-az dns-resolver inbound-endpoint list \
-  -g rg-lab-008-dns-resolver \
-  --dns-resolver-name dnsresolver-008 \
-  --query "[].{name:name, ip:ipConfigurations[0].privateIpAddress}" -o table
+# Should resolve to 10.80.1.10 via the forwarding chain
+getent hosts app.internal.lab
 
-# List forwarding rules
-az dns-resolver forwarding-rule list \
-  -g rg-lab-008-dns-resolver \
-  --forwarding-ruleset-name ruleset-008 \
-  --query "[].{name:name, domain:domainName, target:targetDnsServers[0].ipAddress}" -o table
+# Should return SERVFAIL (blocked by security policy)
+getent hosts blocked.lab
 
-# Check ruleset VNet links (should show spoke VNet)
-az dns-resolver vnet-link list \
-  -g rg-lab-008-dns-resolver \
-  --forwarding-ruleset-name ruleset-008 -o table
+# Should return SERVFAIL (malware subdomain, blocked)
+getent hosts malware.internal.lab
 
-# List DNS records in the zone
-az network private-dns record-set list \
-  -g rg-lab-008-dns-resolver \
-  --zone-name internal.lab -o table
-
-# Check VNet peering state
-az network vnet peering list \
-  -g rg-lab-008-dns-resolver \
-  --vnet-name vnet-hub-008 \
-  --query "[].{name:name, state:peeringState}" -o table
+# Should resolve normally (not in forwarding rules, goes direct to Azure DNS)
+getent hosts azure.microsoft.com
 ```
 
-### Data plane — DNS resolution (from spoke VM)
+You can also use `dig` (pre-installed):
 
-Using Azure Run-Command (no SSH required):
 ```bash
-# Test: app.internal.lab via forwarding ruleset path
-az vm run-command invoke \
-  -g rg-lab-008-dns-resolver \
-  -n vm-spoke-008 \
-  --command-id RunShellScript \
-  --scripts "nslookup app.internal.lab && dig app.internal.lab"
+# Direct query against inbound endpoint
+dig app.internal.lab @<inbound-endpoint-ip>
 
-# Test: resolve directly against inbound endpoint
-# Replace <INBOUND_IP> with IP from outputs.json
-az vm run-command invoke \
-  -g rg-lab-008-dns-resolver \
-  -n vm-spoke-008 \
-  --command-id RunShellScript \
-  --scripts "dig app.internal.lab <INBOUND_IP>"
-
-# Confirm Azure DNS is still the default resolver
-az vm run-command invoke \
-  -g rg-lab-008-dns-resolver \
-  -n vm-spoke-008 \
-  --command-id RunShellScript \
-  --scripts "cat /etc/resolv.conf && nslookup azure.microsoft.com"
+# Show which DNS server the VM is configured to use
+resolvectl status
 ```
 
-Expected results:
-```
-app.internal.lab         → 10.80.1.10   (via ruleset → inbound EP → zone)
-azure.microsoft.com      → resolves OK  (Azure DNS unbroken — no wildcard deny)
-onprem.example.com       → SERVFAIL     (forwarded to 10.0.0.1, no real server — expected)
-```
-
----
-
-## DNS Security Policy – Sticky Block
-
-The `StickyBlock` mode tests **cache persistence** behavior in Azure DNS Private Resolver. This matters when enforcement policies are applied at the DNS layer.
-
-### What you're testing
-
-When a DNS Security Policy (or a forwarding rule redirect) is applied, it changes what a resolver returns for a given domain. But DNS clients and intermediate resolvers **cache responses for their TTL**. The sticky block test answers:
-
-> *If I block a domain at the resolver level after a client already resolved it — how long does the cached answer persist?*
-
-### How the test works
-
-1. **Before policy:** A test A record (`sticky.internal.lab → 10.80.1.99`) is created and queried from the spoke VM — establishing a baseline resolved answer in the resolver's cache.
-2. **Apply block:** The test tries to create a native [Azure DNS Security Policy](https://docs.microsoft.com/azure/dns/). If that feature isn't available in your region/subscription, it falls back to redirecting the zone's forwarding rule to `192.0.2.1` (RFC 5737 TEST-NET — an address that never routes). Either way, subsequent queries should fail.
-3. **After policy:** Queries run again. You expect `SERVFAIL` or `NXDOMAIN` — the block is enforced.
-4. **Remove block:** The policy or redirecting rule is removed.
-5. **Post-removal loop:** Repeated queries run at intervals. If responses still fail after removal, it is evidence the **resolver is serving from cache** rather than re-querying upstream.
-
-### What you should see
-
-| Phase | Expected result |
-|-------|----------------|
-| Before policy | `10.80.1.99` resolved |
-| After policy | `SERVFAIL` or `NXDOMAIN` |
-| After removal (immediately) | May still return error (cached NXDOMAIN or cached redirect failure) |
-| After removal (30-60s later) | Should resolve again once TTL expires |
-
-> If you see the same failure response immediately after removal, that **is the cache** — not the policy. This is the key learning.
-
-### Proving it's cache, not the policy
-
-Use a **new random subdomain** for each run to bypass any existing cache:
-```powershell
-# Each run uses a unique subdomain — guaranteed cache miss on first query
-.\deploy.ps1 -Mode StickyBlock -AdminPassword "YourLabPass123!"
-```
-
-The test script uses `sticky.internal.lab` which is seeded fresh each run. For maximum isolation:
-- Use a fresh VM (no prior queries)
-- Wait for the TTL window (typically 30 seconds for Azure Private DNS)
-- Ensure all queries go through the same resolver path (inbound EP IP, not a bypass)
-
-### Policy eval vs caching — key distinction
-
-| Mechanism | What it controls |
-|-----------|-----------------|
-| DNS Security Policy | What the **resolver returns** for matching queries |
-| DNS response cache | How long that answer is **stored at the resolver** |
-
-The policy can be applied or removed in seconds. The cached answer persists until its TTL expires. This is why you can remove a block and still see "blocked" behavior for 30–300 seconds afterward.
-
-See also: [docs/DOMAINS/dns.md — DNS Security Policy + cache persistence](../../docs/DOMAINS/dns.md#dns-security-policy--cache-persistence)
-
----
-
-## Outputs
-
-After deployment, two files are written to `.data/lab-008/`:
-
-**`outputs.json`** — base infrastructure snapshot:
-```json
-{
-  "metadata": { "lab": "lab-008", "mode": "Base", "status": "PASS", ... },
-  "azure": {
-    "resourceGroup": "rg-lab-008-dns-resolver",
-    "hubVnet": { "name": "vnet-hub-008", "cidr": "10.80.0.0/16" },
-    "spokeVnet": { "name": "vnet-spoke-008", "cidr": "10.81.0.0/16" },
-    "dnsResolver": {
-      "name": "dnsresolver-008",
-      "inboundEndpoint": { "ip": "10.80.2.x" },
-      "outboundEndpoint": {}
-    },
-    "forwardingRuleset": {
-      "name": "ruleset-008",
-      "rules": ["internal.lab. -> inbound EP", "onprem.example.com. -> 10.0.0.1"],
-      "linkedVnets": ["vnet-spoke-008"]
-    },
-    "dns": {
-      "zoneName": "internal.lab",
-      "linkedTo": "vnet-hub-008",
-      "aRecord": { "fqdn": "app.internal.lab", "ip": "10.80.1.10" }
-    }
-  }
-}
-```
-
-**`test-results.json`** — mode-specific test evidence:
-```json
-{
-  "mode": "StickyBlock",
-  "base": { "status": "PASS", "allChecks": true },
-  "modeResults": {
-    "testDomain": "sticky.internal.lab",
-    "dnsPolicyMethod": "forwarding-rule-redirect",
-    "persistenceDetected": true,
-    "phases": {
-      "before_policy": { "summary": { "resolved": true } },
-      "after_policy":  { "summary": { "resolved": false } },
-      "post_removal":  [ ... ]
-    }
-  },
-  "notes": "...",
-  "timestamps": { "started": "...", "completed": "...", "elapsed": "..." }
-}
-```
-
----
-
-## Destroy
-
-```powershell
-.\destroy.ps1
-# Type DELETE to confirm, or use -Force to skip prompt
-```
-
-Removes:
-- Resource group `rg-lab-008-dns-resolver` (all resources including resolver, endpoints, ruleset, peerings, zone, VM)
-- Local `.data/lab-008/` directory
-- Log files (unless `-KeepLogs`)
-
-Note: DNS Private Resolver teardown can take 3-5 minutes. The script waits up to 12 minutes.
-
-After destroying, run the cost audit to confirm no billable resources remain:
-
-```powershell
-.\..\..\tools\cost-check.ps1 -Lab lab-008
-```
+> The inbound endpoint IP is shown in the deployment summary and saved in `.data/lab-008/outputs.json`.
 
 ---
 
@@ -385,33 +241,39 @@ az extension add --name dns-resolver
 ### Resolver endpoint provisioning fails
 
 DNS Private Resolver requires:
-1. The endpoint subnets are delegated to `Microsoft.Network/dnsResolvers`
-2. The subnets have no NSG (Azure rejects them)
-3. The region supports the feature — check `az provider list --query "[?namespace=='Microsoft.Network']"`
+1. Endpoint subnets delegated to `Microsoft.Network/dnsResolvers`
+2. No NSG on endpoint subnets (Azure rejects them)
+3. The region supports the feature
 
-### `app.internal.lab` returns NXDOMAIN from spoke VM
+### DNS Security Policy not available
+
+The `Microsoft.Network/dnsResolverPolicies` resource type requires feature registration in some subscriptions:
+
+```bash
+az feature register --namespace Microsoft.Network --name dnsResolverPolicies
+az provider register --namespace Microsoft.Network
+```
+
+### app.internal.lab returns NXDOMAIN from spoke VM
 
 1. Verify the forwarding ruleset is linked to the spoke VNet:
    ```bash
    az dns-resolver vnet-link list -g rg-lab-008-dns-resolver \
-     --forwarding-ruleset-name ruleset-008 -o table
+     --ruleset-name ruleset-008 -o table
    ```
 2. Verify the rule target IP matches the inbound endpoint's private IP:
    ```bash
    az dns-resolver forwarding-rule show -g rg-lab-008-dns-resolver \
-     --forwarding-ruleset-name ruleset-008 -n rule-internal-lab \
-     --query "targetDnsServers"
+     --ruleset-name ruleset-008 -n rule-internal-lab --query targetDnsServers
    ```
 3. Verify the zone is linked to hub VNet (not spoke):
    ```bash
    az network private-dns link vnet list -g rg-lab-008-dns-resolver \
      --zone-name internal.lab -o table
    ```
-4. Test directly against inbound endpoint IP — if this works but VNet path doesn't, the ruleset link is the issue.
 
-### VNet peering state is not `Connected`
+### VNet peering state is not Connected
 
-This can happen if peering was created only one-way. Bicep creates both directions. Check:
 ```bash
 az network vnet peering list -g rg-lab-008-dns-resolver \
   --vnet-name vnet-hub-008 -o table
@@ -419,12 +281,22 @@ az network vnet peering list -g rg-lab-008-dns-resolver \
   --vnet-name vnet-spoke-008 -o table
 ```
 
-### Azure DNS broken after deployment (other domains fail)
+---
 
-This lab does NOT deploy a `'.'` (wildcard) forwarding rule. Only `internal.lab.` and `onprem.example.com.` are forwarded. All other queries go directly to Azure DNS (`168.63.129.16`) as normal. If something is broken, verify the ruleset rules list has no unexpected wildcard:
-```bash
-az dns-resolver forwarding-rule list -g rg-lab-008-dns-resolver \
-  --forwarding-ruleset-name ruleset-008 -o table
+## Destroy
+
+```powershell
+.\lab.ps1 -Destroy lab-008
+```
+
+Removes the resource group `rg-lab-008-dns-resolver` and all resources within it, plus local `.data/lab-008/`.
+
+DNS Private Resolver teardown takes 3-5 minutes. The script waits up to 12 minutes.
+
+After destroying, confirm no billable resources remain:
+
+```powershell
+.\lab.ps1 -Cost -Lab lab-008
 ```
 
 ---
@@ -433,47 +305,36 @@ az dns-resolver forwarding-rule list -g rg-lab-008-dns-resolver \
 
 ```
 lab-008-azure-dns-private-resolver/
-├── deploy.ps1                          # Phased deployment (phases 0-4); supports -Mode and -SkipTests
-├── destroy.ps1                         # Idempotent cleanup (all modes)
-├── README.md                           # This file
-├── infra/
-│   ├── main.bicep                      # Base infrastructure (Bicep)
-│   └── main.parameters.json
-├── scripts/
-│   ├── test-dns.ps1                    # Generic DNS query harness (outputs structured JSON)
-│   ├── test-stickyblock.ps1            # StickyBlock mode: policy + cache persistence test
-│   └── test-forwarding-variants.ps1   # ForwardingVariants mode: rule/link variation tests
-└── logs/                               # Deployment logs (gitignored)
+├── deploy.ps1          # Phased deployment (phases 0-3)
+├── destroy.ps1         # Idempotent cleanup
+├── inspect.ps1         # Post-deploy resource health check
+├── README.md           # This file
+└── infra/
+    ├── main.bicep      # Infrastructure definition
+    └── main.parameters.json
 ```
 
-Evidence artifacts written to `.data/lab-008/`:
-```
-.data/lab-008/
-├── outputs.json        # Base infrastructure snapshot
-└── test-results.json   # Mode-specific test evidence (base + modeResults)
-```
+Outputs saved to `.data/lab-008/outputs.json` after deployment.
 
 ---
 
-## Key Learnings
+## Key learnings
 
-1. **Inbound endpoint** accepts DNS queries from peered networks and forwards them to Azure's private DNS resolver. It needs a `/28` min subnet, dedicated, delegated to `Microsoft.Network/dnsResolvers`, no NSG.
-2. **Outbound endpoint** is the exit point for forwarded queries to external DNS servers. Same subnet requirements.
-3. **DNS Forwarding Ruleset** is what links the resolver to VNets. Link it to the VNets that need the forwarding behavior.
-4. **No wildcard `'.'` rule** — this avoids breaking Azure's internal DNS for platform services, metadata, and public resolution. Only define rules for domains you control.
-5. **Resolution path isolation** — the spoke cannot see the hub's private zone directly (zone is only linked to hub), so it can only resolve it via the forwarding path through the resolver. This is an explicit, auditable security boundary.
-6. **Private DNS Zone is still in the hub** — the resolver's inbound endpoint acts as a proxy for cross-VNet resolution without requiring the zone to be linked to every spoke.
+1. **Inbound endpoint** accepts DNS queries from peered networks. Needs a `/28` minimum subnet, delegated to `Microsoft.Network/dnsResolvers`, no NSG.
+2. **Outbound endpoint** is the exit point for queries forwarded to external DNS servers. Same subnet requirements.
+3. **Forwarding Ruleset** links the resolver to VNets. Only VNets linked to the ruleset use it for forwarding.
+4. **No wildcard `'.'` rule** - only `internal.lab.` and `onprem.example.com.` are forwarded. All other queries go directly to Azure DNS, preserving platform DNS for all services.
+5. **Resolution path isolation** - the spoke cannot see the hub's private zone directly (zone linked only to hub). Spoke resolves it only via the forwarding path through the resolver. This is an explicit, auditable security boundary.
+6. **DNS Security Policy evaluates first** - before the forwarding ruleset and before private DNS zone lookup. A block rule short-circuits the query immediately.
 
 ---
 
-## Next Labs (DNS Series)
+## Next labs (DNS series)
 
-| Lab | What you explored before | Where to go next |
-|-----|--------------------------|-----------------|
-| [lab-007](../lab-007-azure-dns-foundations/README.md) | Single-VNet private zone + auto-registration | ← prerequisite |
-| lab-008 | Hub resolver + spoke forwarding ruleset | ← you are here |
-
-With lab-007 and lab-008 complete you have covered the full Azure DNS private resolution stack. Apply these patterns in your own hub-spoke or multi-VNet designs.
+| Lab | Coverage |
+|-----|----------|
+| [lab-007](../lab-007-azure-dns-foundations/README.md) | Single-VNet private zone + auto-registration |
+| lab-008 | Hub resolver + spoke forwarding ruleset + DNS Security Policy - you are here |
 
 ---
 
@@ -482,5 +343,5 @@ With lab-007 and lab-008 complete you have covered the full Azure DNS private re
 - [Azure DNS Private Resolver overview](https://docs.microsoft.com/azure/dns/dns-private-resolver-overview)
 - [Resolver endpoint subnet requirements](https://docs.microsoft.com/azure/dns/dns-private-resolver-overview#subnet-restrictions)
 - [DNS Forwarding Rulesets](https://docs.microsoft.com/azure/dns/private-resolver-endpoints-rulesets)
-- [Bicep DNS Resolver reference](https://docs.microsoft.com/azure/templates/microsoft.network/dnsresolvers)
+- [DNS Security Policy](https://docs.microsoft.com/azure/dns/dns-security-policy)
 - Domain guide: [docs/DOMAINS/dns.md](../../docs/DOMAINS/dns.md)
