@@ -75,6 +75,10 @@ $RulesetName      = "ruleset-008"
 $DnsZoneName      = "internal.lab"
 $VmSpokeName      = "vm-spoke-008"
 $DeploymentName   = "lab-008-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+$SecurityPolicyName = "dnspolicy-lab-008"
+$DomainListName     = "domainlist-lab-008-blocked"
+$SecurityRuleName   = "rule-block-lab-domains"
+$PolicyLinkName     = "link-policy-spoke"
 
 # ============================================
 # HELPER FUNCTIONS
@@ -272,6 +276,9 @@ Write-Host "    Rule: onprem.example.com -> 10.0.0.1 (simulated)" -ForegroundCol
 Write-Host "  Private DNS Zone ($DnsZoneName) -> linked to hub" -ForegroundColor DarkGray
 Write-Host "  A record: app.internal.lab -> 10.80.1.10" -ForegroundColor DarkGray
 Write-Host "  Test VM ($VmSpokeName, no public IP)" -ForegroundColor DarkGray
+Write-Host "  DNS Security Policy ($SecurityPolicyName) -> linked to spoke" -ForegroundColor DarkGray
+Write-Host "    Domain list: $DomainListName (blocked.lab., malware.internal.lab.)" -ForegroundColor DarkGray
+Write-Host "    Rule: block with SERVFAIL" -ForegroundColor DarkGray
 Write-Host ""
 
 $bicepResult = az deployment group create `
@@ -313,6 +320,10 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] DNS Private Resolver is not available in '$Location'." -ForegroundColor Red
     Write-Host "        Supported regions: eastus, eastus2, westus2, centralus, northeurope, westeurope" -ForegroundColor Yellow
     Write-Host "        Re-run with: -Location eastus2" -ForegroundColor Yellow
+  } elseif ($bicepOutput -match "dnsResolverPolicies.*not.*supported|DnsSecurityPolicy.*feature|dnsResolverDomainLists.*not.*supported|SubscriptionNotRegistered.*Microsoft.Network") {
+    Write-Host "[ERROR] DNS Security Policy resources not supported in this subscription or region." -ForegroundColor Red
+    Write-Host "        The 'Microsoft.Network/dnsResolverPolicies' resource type requires the feature to be registered." -ForegroundColor Red
+    Write-Host "        Try: az feature register --namespace Microsoft.Network --name dnsResolverPolicies" -ForegroundColor Yellow
   }
   throw "Bicep deployment failed. See output above."
 }
@@ -338,6 +349,9 @@ $hubVnetId = $deployOutput.properties.outputs.hubVnetId.value
 
 # Capture serial console URL for test VM
 $vmSerialConsoleUrl = $deployOutput.properties.outputs.vmSpokeSerialConsoleUrl.value
+$securityPolicyId   = $deployOutput.properties.outputs.securityPolicyId.value
+$securityPolicyBicepName = $deployOutput.properties.outputs.securityPolicyName.value
+$domainListId       = $deployOutput.properties.outputs.domainListId.value
 
 $phase1Elapsed = Get-ElapsedTime -StartTime $phase1Start
 Write-Log "Phase 1 completed in $phase1Elapsed" "SUCCESS"
@@ -476,6 +490,44 @@ if ($SkipTests) {
     $rulesetLinkValid = ($rulesetLinks -and $rulesetLinks.Count -gt 0)
     Write-Validation -Check "Ruleset linked to spoke VNet" -Passed $rulesetLinkValid
     if (-not $rulesetLinkValid) { $allValid = $false }
+  }
+
+  # DNS Security Policy + Domain List + Rule + VNet Link
+  $securityPolicy = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $securityPolicy = az network dns-security-policy show -g $ResourceGroup -n $SecurityPolicyName -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  $policyValid = ($null -ne $securityPolicy -and $securityPolicy.provisioningState -eq "Succeeded")
+  Write-Validation -Check "DNS Security Policy provisioned" -Passed $policyValid -Details $SecurityPolicyName
+  if (-not $policyValid) { $allValid = $false }
+
+  $domainListCheck = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $domainListsResult = az resource list -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  $domainListCheck = @($domainListsResult) | Where-Object { $_.name -eq $DomainListName }
+  $domainListCheckValid = ($null -ne $domainListCheck)
+  Write-Validation -Check "Domain list provisioned" -Passed $domainListCheckValid -Details $DomainListName
+  if (-not $domainListCheckValid) { $allValid = $false }
+
+  if ($policyValid -and $securityPolicy.id) {
+    $rulesResponse = $null
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $rulesResponse = az rest --method GET --uri "$($securityPolicy.id)/dnsSecurityRules?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldEP
+    $rulesCount = if ($rulesResponse -and $rulesResponse.value) { @($rulesResponse.value).Count } else { 0 }
+    $rulesValid = ($rulesCount -gt 0)
+    Write-Validation -Check "Security rules configured" -Passed $rulesValid -Details "$rulesCount rule(s)"
+    if (-not $rulesValid) { $allValid = $false }
+
+    $linksResponse = $null
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $linksResponse = az rest --method GET --uri "$($securityPolicy.id)/virtualNetworkLinks?api-version=2023-07-01-preview" -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldEP
+    $linksCount = if ($linksResponse -and $linksResponse.value) { @($linksResponse.value).Count } else { 0 }
+    $linksValid = ($linksCount -gt 0)
+    Write-Validation -Check "Policy linked to spoke VNet" -Passed $linksValid -Details "$linksCount link(s)"
+    if (-not $linksValid) { $allValid = $false }
   }
 
   # Private DNS Zone
@@ -791,6 +843,18 @@ $outputs = [pscustomobject]@{
         ip   = "10.80.1.10"
       }
     }
+    dnsSecurityPolicy = [pscustomobject]@{
+      name        = $SecurityPolicyName
+      id          = if ($securityPolicyId) { $securityPolicyId } else { "" }
+      domainList  = [pscustomobject]@{
+        name   = $DomainListName
+        id     = if ($domainListId) { $domainListId } else { "" }
+        domains = @("blocked.lab.", "malware.internal.lab.")
+      }
+      rule        = $SecurityRuleName
+      linkedVnets = @($SpokeVnetName)
+      note        = "Spoke VNet queries for blocked.lab. and malware.internal.lab. return SERVFAIL"
+    }
     vm = [pscustomobject]@{
       name             = $VmSpokeName
       vnet             = $SpokeVnetName
@@ -865,6 +929,9 @@ Write-Host "  Inbound endpoint IP:  $resolvedInboundIp" -ForegroundColor Gray
 Write-Host "Forwarding Ruleset:     $RulesetName (linked to spoke)" -ForegroundColor Gray
 Write-Host "Private DNS Zone:       $DnsZoneName -> hub" -ForegroundColor Gray
 Write-Host "A record:               app.internal.lab -> 10.80.1.10" -ForegroundColor Gray
+Write-Host "DNS Security Policy:    $SecurityPolicyName (linked to spoke)" -ForegroundColor Gray
+Write-Host "  Domain list:          $DomainListName" -ForegroundColor Gray
+Write-Host "  Block rule:           $SecurityRuleName -> SERVFAIL for blocked.lab., malware.internal.lab." -ForegroundColor Gray
 Write-Host "Test VM (spoke):        $VmSpokeName (IP: $vmPrivateIp)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Serial Console access (no NSG/public IP needed):" -ForegroundColor Yellow

@@ -13,6 +13,7 @@ Deploy Azure DNS Private Resolver in a hub VNet, connect a spoke via VNet peerin
 | Cross-VNet resolution | Spoke resolves hub's private zones via resolver |
 | Controlled forwarding (no wildcard deny) | Rules only for named domains — Azure DNS preserved |
 | Simulated external forwarding | `onprem.example.com` → placeholder target |
+| DNS Security Policy | Block specific domains with SERVFAIL via domain list + traffic rule |
 
 **Security model:** No `'.'` (deny-all) rule. Security is achieved via:
 - Explicit forwarding rules for known domains only
@@ -51,6 +52,14 @@ Deploy Azure DNS Private Resolver in a hub VNet, connect a spoke via VNet peerin
 │  └──────────────────────────────────┘  └──────────────────────┘  │
 └──────────────────────────────────────────────────────────────────┘
 
+DNS Security Policy: dnspolicy-lab-008
+  Domain list: domainlist-lab-008-blocked
+    - blocked.lab.
+    - malware.internal.lab.
+  Rule: block with SERVFAIL (priority 100)
+  VNet link: spoke VNet
+  Effect: queries from spoke VM for blocked.lab. return SERVFAIL
+
 Resolution flow (spoke VM → app.internal.lab):
   1. VM queries Azure DNS (168.63.129.16)
   2. Azure DNS sees forwarding ruleset linked to spoke VNet
@@ -58,6 +67,22 @@ Resolution flow (spoke VM → app.internal.lab):
   4. Inbound endpoint resolves against internal.lab private zone
   5. Returns: 10.80.1.10
 ```
+
+### DNS Security Policy
+
+The lab deploys a **DNS Security Policy** (`dnspolicy-lab-008`) alongside the core resolver infrastructure. Key characteristics:
+
+- **Regional resource**: The policy must be deployed to the same region as the VNets it protects. It is not a global resource.
+- **Attached to VNets**: The policy is linked to the spoke VNet. DNS queries from VMs in linked VNets are evaluated against the policy rules before the forwarding ruleset is consulted.
+- **Evaluation order**: DNS Security Policy rules are evaluated **first** — before the forwarding ruleset and before private DNS zone lookup. A block rule short-circuits the query and returns SERVFAIL immediately.
+- **One policy per VNet**: A VNet can be linked to at most one DNS Security Policy at a time. Attempting to link a second policy will fail.
+- **Domain list**: The blocked domains are stored in a separate top-level resource (`domainlist-lab-008-blocked`). The domain list is referenced by the security rule and can be updated independently of the policy.
+
+Blocked domains in this lab:
+- `blocked.lab.` — synthetic test domain
+- `malware.internal.lab.` — simulated threat subdomain
+
+Queries from the spoke VM for these domains return `SERVFAIL` without reaching the resolver or private DNS zone.
 
 ---
 
@@ -69,6 +94,7 @@ Resolution flow (spoke VM → app.internal.lab):
 | DNS Private Resolver (2 endpoints) | ~$0.014/hr |
 | Private DNS Zone | ~$0.004/hr |
 | VNet peering (2 links) | ~$0.01/hr per GB transferred |
+| DNS Security Policy + domain list | minimal (included in ~$0.03/hr estimate; negligible for lab workloads) |
 | **Estimated total** | **~$0.03/hr while running** |
 
 > Run `.\..\..\tools\cost-check.ps1 -Lab lab-008` to audit live resources.
