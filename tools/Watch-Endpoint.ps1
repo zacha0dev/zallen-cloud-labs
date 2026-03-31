@@ -595,6 +595,12 @@ function Invoke-Poll {
                   elseif (-not $r.Success -and $r.ElapsedMs -gt 5000)     { "TIMEOUT" }
                   else                                                     { "NXDOMAIN"}
         $subLbl = if ($resolver) { "@$resolver" } else { "(system resolver)" }
+        # Show full IP list in SubLabel when there are multiple values so nothing is hidden
+        if ($r.Values.Count -gt 1) {
+          $ipList = $r.Values -join ", "
+          if ($ipList.Length -gt 60) { $ipList = $ipList.Substring(0, 57) + "..." }
+          $subLbl = "$subLbl  [$ipList]"
+        }
 
         Set-StateRow -Key $key -Props @{
           Group     = "DNS"

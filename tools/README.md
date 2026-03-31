@@ -103,6 +103,81 @@ Copy `Watch-Endpoint.ps1` to any machine with PowerShell 5.1 or 7. No other file
 
 ---
 
+## Watch-AfdCertPropagation.ps1
+
+Watches Azure Front Door TLS certificate propagation across edge nodes. After attaching or changing a custom domain certificate on an AFD profile, this tool discovers edge IPs via repeated DNS sampling and probes each one directly to show which cert it is currently serving.
+
+**Fully standalone** -- no imports, no repo helpers. Copy the single file to any machine with PowerShell and run it directly.
+
+### Quick Start
+
+```powershell
+# Watch with defaults (30 min, 30s interval) -- prompts for hostname
+./tools/Watch-AfdCertPropagation.ps1
+
+# Specify target up front
+./tools/Watch-AfdCertPropagation.ps1 -Target "https://myapp.azurefd.net"
+
+# Watch for 45 minutes with 20s interval
+./tools/Watch-AfdCertPropagation.ps1 -Target "myapp.azurefd.net" -DurationMinutes 45 -IntervalSeconds 20
+
+# Aggressive edge discovery
+./tools/Watch-AfdCertPropagation.ps1 -Target "myapp.azurefd.net" -DnsSamplesPerCycle 15
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `-Target` | *(prompted)* | URL or hostname of the AFD custom domain |
+| `-DurationMinutes` | `30` | Total watch duration |
+| `-IntervalSeconds` | `30` | Seconds between probe cycles |
+| `-DnsSamplesPerCycle` | `8` | DNS queries per cycle for edge discovery (AFD anycast) |
+| `-DnsSampleDelayMs` | `300` | Delay between DNS samples within a cycle |
+| `-Port` | `443` | TLS port |
+| `-ConnectTimeoutMs` | `5000` | TCP connect timeout per edge |
+
+### Report Format
+
+```
+  Watch-AfdCertPropagation  |  myapp.azurefd.net  |  Cycle 4/60  |  2m 00s
+  ----------------------------------------------------------------------------
+  Progress: 5/8 edges on custom cert (62%)   platform: 3   errors: 0
+  ----------------------------------------------------------------------------
+  EDGE IP           CERT KIND              EXPIRES       CHG  SINCE
+  ----------------------------------------------------------------------------
+  20.112.53.42      platform (*.azureedge) 2025-12-01      0  19:32:01
+    CN=*.azureedge.net  thumb=A1B2C3D4...
+  13.107.253.41     custom (expected)      2026-09-06      0  19:30:01
+    CN=myapp.azurefd.net  thumb=E5F6A7B8...
+  13.107.226.41     custom (expected)      2026-09-06      1  19:28:01
+    CN=myapp.azurefd.net  thumb=E5F6A7B8...
+  ----------------------------------------------------------------------------
+  Last: 19:34:01  |  Next in: 28s  |  Ctrl+C to stop
+```
+
+- **CHG** -- how many times this edge's cert or cert kind has changed during the session
+- Rows sorted: errors first, then platform (still propagating), then custom (done)
+- New edges discovered mid-session appear automatically
+- Report updates in-place, no screen clearing
+
+### Cert kinds
+
+| Kind | Meaning |
+|------|---------|
+| `custom (expected)` | Edge is serving the cert for your hostname -- propagation complete for this edge |
+| `platform (*.azureedge)` | Edge still on the default AFD cert -- propagation in progress |
+| `other/unknown` | Cert subject doesn't match hostname or azureedge.net -- investigate |
+| `error` | Could not connect or complete TLS handshake |
+
+### Propagation timing
+
+- Single global AFD config change: up to ~20 minutes
+- Back-to-back changes: longer
+- New custom domain cert deployment: up to ~1 hour
+
+---
+
 ## cost-check.ps1
 
 Audits Azure and AWS resources created by these labs to help you stay cost-aware. **Read-only** - no destructive actions.
