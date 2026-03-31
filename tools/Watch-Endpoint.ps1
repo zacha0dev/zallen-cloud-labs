@@ -222,16 +222,17 @@ function Invoke-DnsTest {
 
       if ($records) {
         $result.Success = $true
-        $result.Values  = switch ($RecordType) {
-          "A"     { @($records | Where-Object { $_.Type -eq "A"     } | ForEach-Object { $_.IPAddress }) }
-          "AAAA"  { @($records | Where-Object { $_.Type -eq "AAAA"  } | ForEach-Object { $_.IPAddress }) }
-          "CNAME" { @($records | Where-Object { $_.Type -eq "CNAME" } | ForEach-Object { $_.NameHost }) }
-          "MX"    { @($records | Where-Object { $_.Type -eq "MX"    } | ForEach-Object { $_.NameExchange }) }
-          "TXT"   { @($records | Where-Object { $_.Type -eq "TXT"   } | ForEach-Object { $_.Strings -join " " }) }
-          "NS"    { @($records | Where-Object { $_.Type -eq "NS"    } | ForEach-Object { $_.NameHost }) }
-          default { @() }
-        }
-        if (-not $result.Values) { $result.Values = @() }
+        # Wrap in @() to guarantee array -- PS5.1 switch can unroll a single-element
+        # array to a scalar, breaking .Count under Set-StrictMode -Version Latest
+        $result.Values  = @(switch ($RecordType) {
+          "A"     { $records | Where-Object { $_.Type -eq "A"     } | ForEach-Object { $_.IPAddress } }
+          "AAAA"  { $records | Where-Object { $_.Type -eq "AAAA"  } | ForEach-Object { $_.IPAddress } }
+          "CNAME" { $records | Where-Object { $_.Type -eq "CNAME" } | ForEach-Object { $_.NameHost } }
+          "MX"    { $records | Where-Object { $_.Type -eq "MX"    } | ForEach-Object { $_.NameExchange } }
+          "TXT"   { $records | Where-Object { $_.Type -eq "TXT"   } | ForEach-Object { $_.Strings -join " " } }
+          "NS"    { $records | Where-Object { $_.Type -eq "NS"    } | ForEach-Object { $_.NameHost } }
+          default { }
+        })
       }
     } elseif ($RecordType -in @("A","AAAA")) {
       # Cross-platform .NET fallback: system resolver only, A/AAAA records only
@@ -515,7 +516,8 @@ function Write-Report {
       $portFmt = if ($null -ne $row.Port) { "$($row.Port)" } else { "--" }
       $color   = Get-StatusColor $row.Status
 
-      $val = $row.LastValue
+      # Guard against null LastValue -- can occur if a prior poll errored mid-assignment
+      $val = if ($null -ne $row.LastValue) { [string]$row.LastValue } else { "" }
       if ($val.Length -gt 24) { $val = $val.Substring(0, 21) + "..." }
 
       $dataLine = "  {0,-10}  {1,-24}  {2,5}  {3,-11}  {4,7}  {5}" -f `
@@ -583,11 +585,15 @@ function Invoke-Poll {
         $key  = "DNS:${rtype}:${rKey}:$($TInfo.Hostname)"
         $r    = Invoke-DnsTest -Hostname $TInfo.Hostname -RecordType $rtype -Resolver $resolver
 
-        $valStr = if ($r.Values -and $r.Values.Count -gt 0) { $r.Values -join ", " } else { "" }
-        $status = if     ($r.Success)                         { "OK"      }
-                  elseif ($r.ErrorMsg -match "[Tt]imeout")    { "TIMEOUT" }
-                  elseif ($r.ErrorMsg)                        { "FAIL"    }
-                  else                                        { "NXDOMAIN"}
+        # Values is now always @() or a proper array -- safe to use .Count directly
+        [string]$valStr = if ($r.Values.Count -eq 0)   { "" }
+                          elseif ($r.Values.Count -eq 1) { $r.Values[0] }
+                          else { "$($r.Values[0]) (+$($r.Values.Count - 1))" }
+        $status = if     ($r.Success)                                      { "OK"      }
+                  elseif ($r.ErrorMsg -match "[Tt]imeout")                 { "TIMEOUT" }
+                  elseif ($r.ErrorMsg)                                     { "FAIL"    }
+                  elseif (-not $r.Success -and $r.ElapsedMs -gt 5000)     { "TIMEOUT" }
+                  else                                                     { "NXDOMAIN"}
         $subLbl = if ($resolver) { "@$resolver" } else { "(system resolver)" }
 
         Set-StateRow -Key $key -Props @{
