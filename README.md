@@ -54,6 +54,7 @@ All operations go through a single entry point at the repo root:
 .\lab.ps1 -Settings                   # Account, subscriptions, and repo sync state
 .\lab.ps1 -Update                     # Pull latest lab updates from GitHub
 .\lab.ps1 -Setup -Aws                 # AWS setup (lab-003 only)
+.\lab.ps1 -Watch -WatchTarget "myapp.azure.com"   # Watch DNS/TCP/TLS/HTTP over time
 ```
 
 ### Research Mode

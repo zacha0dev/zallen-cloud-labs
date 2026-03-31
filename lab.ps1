@@ -62,7 +62,11 @@ param(
   [string]$AwsProfile = "aws-labs",     # AWS CLI profile (used with -Cost / lab-003)
   [string]$Scenario,                    # Research scenario name (used with -Research)
   [switch]$Background,                  # Run research scenario as a background job
-  [switch]$SkipTests                    # Skip validation phases (deploy.ps1 -SkipTests pass-through)
+  [switch]$SkipTests,                   # Skip validation phases (deploy.ps1 -SkipTests pass-through)
+
+  # Watch-Endpoint pass-through (used with -Watch)
+  [switch]$Watch,                       # Watch an endpoint for DNS/TCP/TLS/HTTP behavior
+  [string]$WatchTarget                  # Endpoint to watch: FQDN, IP, or URL (used with -Watch)
 )
 
 Set-StrictMode -Version Latest
@@ -224,6 +228,10 @@ function Show-Help {
   Write-Host "  -Cost                       Scan subscription for billable lab resources"
   Write-Host "  -Cost -Lab <lab-id>         Cost check for a specific lab only"
   Write-Host "  -Cost -AwsProfile <name>    Include AWS account in scan"
+  Write-Host ""
+  Write-Host "DIAGNOSTICS" -ForegroundColor White
+  Write-Host "  -Watch -WatchTarget <endpoint>    Poll endpoint for DNS/TCP/TLS/HTTP over time"
+  Write-Host "  For full options: .\tools\Watch-Endpoint.ps1 -?"
   Write-Host ""
   Write-Host "CONFIG" -ForegroundColor White
   Write-Host "  -Settings                   Show account, subscriptions, and repo version"
@@ -898,6 +906,27 @@ function Invoke-Research {
 }
 
 # =============================================================================
+# Action: Watch
+# =============================================================================
+
+function Invoke-Watch {
+  if (-not $WatchTarget) {
+    Write-Err "-Watch requires a target.  Example: .\lab.ps1 -Watch -WatchTarget myapp.azure.com"
+    Write-Warn "For full parameter control, run: .\tools\Watch-Endpoint.ps1 -?"
+    exit 1
+  }
+
+  $watchScript = Join-Path (Join-Path $RepoRoot "tools") "Watch-Endpoint.ps1"
+  if (-not (Test-Path $watchScript)) {
+    Write-Err "Watch-Endpoint.ps1 not found at: $watchScript"
+    exit 1
+  }
+
+  & $watchScript -Target $WatchTarget
+  exit $LASTEXITCODE
+}
+
+# =============================================================================
 # Action: Update
 # =============================================================================
 
@@ -920,7 +949,7 @@ function Invoke-Update {
 $LabTarget = $Lab
 
 # If no action switch is set, show help
-$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost -or $Settings -or $Update -or $Research
+$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost -or $Settings -or $Update -or $Research -or $Watch
 if (-not $anyAction) {
   Show-Help
   exit 0
@@ -938,3 +967,4 @@ if ($Cost)     { Invoke-Cost }
 if ($Settings) { Invoke-Settings }
 if ($Update)   { Invoke-Update }
 if ($Research) { Invoke-Research -LabId $LabTarget }
+if ($Watch)    { Invoke-Watch }

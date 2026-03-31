@@ -1,11 +1,107 @@
 # Tools
 
-Utility scripts for managing Azure Labs resources.
+Utility scripts for managing and troubleshooting Azure Labs resources.
 
 ## Prerequisites
 
 - **Azure CLI** - [Install](https://aka.ms/installazurecli)
 - **AWS CLI** - [Install](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) (optional, for hybrid labs)
+
+---
+
+## Watch-Endpoint.ps1
+
+Polls an endpoint repeatedly over time, building a live in-place report of DNS, TCP, TLS, and HTTP behavior. Designed for troubleshooting DNS propagation, connectivity flaps, certificate validity, and resolver differences.
+
+**Fully standalone** -- no imports, no module dependencies, no repo helpers required. Copy the single file to any machine with PowerShell and run it directly.
+
+### Quick Start
+
+```powershell
+# Watch DNS for a hostname (system resolver)
+./tools/Watch-Endpoint.ps1 -Target "example.com" -Tests DNS
+
+# Full suite: DNS + TCP + TLS + HTTP on port 443
+./tools/Watch-Endpoint.ps1 -Target "myapp.azure.com" -Tests ALL -Ports 443
+
+# TCP reachability to a bare IP -- no DNS lookup needed
+./tools/Watch-Endpoint.ps1 -Target "10.0.1.4" -Tests TCP -Ports 22,443
+
+# Compare two DNS resolvers side-by-side over 10 minutes
+./tools/Watch-Endpoint.ps1 -Target "corp.internal" -Tests DNS `
+  -DnsResolvers "10.0.0.4","168.63.129.16" -DurationMinutes 10
+
+# Quick 2-minute HTTPS health check, fast poll
+./tools/Watch-Endpoint.ps1 -Target "https://api.example.com" `
+  -Tests TCP,TLS,HTTP -DurationMinutes 2 -IntervalSeconds 5
+
+# Watch a URL with default settings (ALL tests, 5 minutes, 10s interval)
+./tools/Watch-Endpoint.ps1 -Target "https://myapp.azure.com"
+```
+
+Via `lab.ps1`:
+
+```powershell
+.\lab.ps1 -Watch -WatchTarget "myapp.azure.com"
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `-Target` | *(required)* | FQDN, IP address, or full URL |
+| `-Tests` | `ALL` | `DNS`, `TCP`, `TLS`, `HTTP`, or `ALL` |
+| `-Ports` | auto | TCP port(s). Defaults: 443 for TLS/HTTPS, 80 for HTTP |
+| `-DurationMinutes` | `5` | How long to poll |
+| `-IntervalSeconds` | `10` | Seconds between polls |
+| `-DnsResolvers` | *(system)* | Explicit resolver IPs (e.g. `"8.8.8.8","10.0.0.4"`) |
+| `-DnsRecordTypes` | `A` | Record types to query: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS` |
+| `-ConnectTimeoutMs` | `3000` | TCP/TLS connect timeout in milliseconds |
+
+### Report Format
+
+```
+  Watch-Endpoint  |  myapp.azure.com  |  Poll 4/30  |  0m 40s
+  ----------------------------------------------------------------------------
+  TEST        ADDRESS/VALUE             PORT   STATUS       LATENCY  P/F
+  ----------------------------------------------------------------------------
+  DNS A       10.0.1.4, 10.0.1.5         --   OK              8ms   4/0
+                (system resolver)
+  DNS A       10.0.1.4                   --   OK             12ms   4/0
+                @10.0.0.4
+  TCP         10.0.1.4                  443   CONNECTED      44ms   4/0
+  TLS         10.0.1.4                  443   VALID          19ms   4/0
+                CN=myapp.azure.com  exp 2026-06-01  (62d left)
+  HTTP        https://myapp.azure...    443   200            98ms   4/0
+  ----------------------------------------------------------------------------
+  Last: 14:32:40  |  Next in: 7s  |  Ctrl+C to stop
+```
+
+- **P/F** column -- cumulative pass/fail count across all polls since start
+- Rows are persistent: once a row appears it stays for the session
+- New IPs discovered mid-session get their own TCP/TLS rows automatically
+- Report updates in-place using ANSI cursor positioning (no screen flicker)
+- Each DNS resolver gets its own row for side-by-side comparison
+
+### DNS vs. TCP/TLS separation
+
+The tool distinguishes between:
+
+- **DNS as a test** (`-Tests DNS`) -- shows DNS rows in the report
+- **DNS for discovery** -- when target is an FQDN and TCP/TLS are requested, the tool silently resolves IPs internally even if `DNS` is not in `-Tests`
+
+This means you can watch TCP/TLS behavior for `myapp.azure.com` without DNS rows cluttering the report, while still getting per-IP rows that appear as the DNS answer evolves.
+
+### Standalone use (outside this repo)
+
+Copy `Watch-Endpoint.ps1` to any machine with PowerShell 5.1 or 7. No other files needed.
+
+```powershell
+# Run from any directory
+.\Watch-Endpoint.ps1 -Target "example.com" -Tests ALL
+```
+
+---
 
 ## cost-check.ps1
 
