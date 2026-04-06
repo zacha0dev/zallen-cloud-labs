@@ -20,6 +20,7 @@
 | [lab-007](../../labs/lab-007-azure-dns-foundations/README.md) | Azure Private DNS Zone, VNet link, auto-registration, static A record | Azure | ~$0.02/hr | lab-000 passing | Stable |
 | [lab-008](../../labs/lab-008-azure-dns-private-resolver/README.md) | DNS Private Resolver in hub; forwarding ruleset to spoke; cross-VNet resolution; supports `-Mode Base\|StickyBlock\|ForwardingVariants` | Azure | ~$0.03/hr | lab-007 recommended | Stable |
 | [lab-009](../../labs/lab-009-avnm-hub-spoke-global-mesh/README.md) | AVNM dual-region hub-spoke; script deploys two isolated hub-spoke topologies; Global Mesh enabled manually via portal | Azure | ~$0.01/hr | Azure CLI 2.51+ | Stable |
+| [lab-010](../../labs/lab-010-vwan-route-maps/README.md) | vWAN Route Maps: community tagging, route filtering, AS path prepend applied to hub connections | Azure | ~$0.26/hr | lab-001 passing, Azure CLI 2.54+ | Stable |
 
 ---
 
@@ -43,7 +44,7 @@ Full contract details: [docs/ops/LAB-STANDARD.md](../ops/LAB-STANDARD.md)
 
 | Labs | Primary Domain |
 |------|---------------|
-| lab-001, 003, 004, 005, 006 | [vWAN](../DOMAINS/vwan.md) |
+| lab-001, 003, 004, 005, 006, 010 | [vWAN](../DOMAINS/vwan.md) |
 | lab-002 | App Gateway + Front Door |
 | lab-003 | [AWS Hybrid](../DOMAINS/aws-hybrid.md) |
 | lab-007, lab-008 | [Azure DNS](../DOMAINS/dns.md) |
