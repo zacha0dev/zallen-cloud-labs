@@ -422,20 +422,25 @@ if ($existingRmTag) {
     }
   )
   $tmpTag = [System.IO.Path]::GetTempFileName()
-  $rmTagRules | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpTag -Encoding UTF8
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($tmpTag, ($rmTagRules | ConvertTo-Json -Depth 10 -Compress), $utf8NoBom)
 
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  az network vhub route-map create `
+  $rmOut = az network vhub route-map create `
     --name $RmTagName `
     --resource-group $ResourceGroup `
     --vhub-name $VhubName `
     --rules "@$tmpTag" `
-    --output none 2>$null
+    --output none 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpTag -Force -ErrorAction SilentlyContinue
-  if ($rmExit -ne 0) { throw "Failed to create route map $RmTagName (exit $rmExit)" }
+  if ($rmExit -ne 0) {
+    Write-Host "        Error output:" -ForegroundColor Red
+    $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
+    throw "Failed to create route map $RmTagName (exit $rmExit)"
+  }
   Write-Log "Route Map created: $RmTagName"
   Write-Host "        Created." -ForegroundColor Green
 }
@@ -482,20 +487,25 @@ if ($existingRmFilter) {
     }
   )
   $tmpFilter = [System.IO.Path]::GetTempFileName()
-  $rmFilterRules | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpFilter -Encoding UTF8
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($tmpFilter, ($rmFilterRules | ConvertTo-Json -Depth 10 -Compress), $utf8NoBom)
 
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  az network vhub route-map create `
+  $rmOut = az network vhub route-map create `
     --name $RmFilterName `
     --resource-group $ResourceGroup `
     --vhub-name $VhubName `
     --rules "@$tmpFilter" `
-    --output none 2>$null
+    --output none 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpFilter -Force -ErrorAction SilentlyContinue
-  if ($rmExit -ne 0) { throw "Failed to create route map $RmFilterName (exit $rmExit)" }
+  if ($rmExit -ne 0) {
+    Write-Host "        Error output:" -ForegroundColor Red
+    $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
+    throw "Failed to create route map $RmFilterName (exit $rmExit)"
+  }
   Write-Log "Route Map created: $RmFilterName"
   Write-Host "        Created." -ForegroundColor Green
 }
@@ -534,20 +544,25 @@ if ($existingRmPrepend) {
     }
   )
   $tmpPrepend = [System.IO.Path]::GetTempFileName()
-  $rmPrependRules | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpPrepend -Encoding UTF8
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($tmpPrepend, ($rmPrependRules | ConvertTo-Json -Depth 10 -Compress), $utf8NoBom)
 
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  az network vhub route-map create `
+  $rmOut = az network vhub route-map create `
     --name $RmPrependName `
     --resource-group $ResourceGroup `
     --vhub-name $VhubName `
     --rules "@$tmpPrepend" `
-    --output none 2>$null
+    --output none 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpPrepend -Force -ErrorAction SilentlyContinue
-  if ($rmExit -ne 0) { throw "Failed to create route map $RmPrependName (exit $rmExit)" }
+  if ($rmExit -ne 0) {
+    Write-Host "        Error output:" -ForegroundColor Red
+    $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
+    throw "Failed to create route map $RmPrependName (exit $rmExit)"
+  }
   Write-Log "Route Map created: $RmPrependName"
   Write-Host "        Created." -ForegroundColor Green
 }
