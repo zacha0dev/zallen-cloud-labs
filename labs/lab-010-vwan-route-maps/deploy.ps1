@@ -424,15 +424,18 @@ if ($existingRmTag) {
   $tmpTag = [System.IO.Path]::GetTempFileName()
   $rmTagRules | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpTag -Encoding UTF8
 
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az network vhub route-map create `
     --name $RmTagName `
     --resource-group $ResourceGroup `
     --vhub-name $VhubName `
     --rules "@$tmpTag" `
-    --output none `
-    --only-show-errors 2>&1 | Out-Null
+    --output none 2>$null
+  $rmExit = $LASTEXITCODE
+  $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpTag -Force -ErrorAction SilentlyContinue
+  if ($rmExit -ne 0) { throw "Failed to create route map $RmTagName (exit $rmExit)" }
   Write-Log "Route Map created: $RmTagName"
   Write-Host "        Created." -ForegroundColor Green
 }
@@ -481,15 +484,18 @@ if ($existingRmFilter) {
   $tmpFilter = [System.IO.Path]::GetTempFileName()
   $rmFilterRules | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpFilter -Encoding UTF8
 
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az network vhub route-map create `
     --name $RmFilterName `
     --resource-group $ResourceGroup `
     --vhub-name $VhubName `
     --rules "@$tmpFilter" `
-    --output none `
-    --only-show-errors 2>&1 | Out-Null
+    --output none 2>$null
+  $rmExit = $LASTEXITCODE
+  $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpFilter -Force -ErrorAction SilentlyContinue
+  if ($rmExit -ne 0) { throw "Failed to create route map $RmFilterName (exit $rmExit)" }
   Write-Log "Route Map created: $RmFilterName"
   Write-Host "        Created." -ForegroundColor Green
 }
@@ -530,15 +536,18 @@ if ($existingRmPrepend) {
   $tmpPrepend = [System.IO.Path]::GetTempFileName()
   $rmPrependRules | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpPrepend -Encoding UTF8
 
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az network vhub route-map create `
     --name $RmPrependName `
     --resource-group $ResourceGroup `
     --vhub-name $VhubName `
     --rules "@$tmpPrepend" `
-    --output none `
-    --only-show-errors 2>&1 | Out-Null
+    --output none 2>$null
+  $rmExit = $LASTEXITCODE
+  $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpPrepend -Force -ErrorAction SilentlyContinue
+  if ($rmExit -ne 0) { throw "Failed to create route map $RmPrependName (exit $rmExit)" }
   Write-Log "Route Map created: $RmPrependName"
   Write-Host "        Created." -ForegroundColor Green
 }
@@ -585,6 +594,7 @@ $existingConnA = $null
 $existingConnA = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnAName -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 if ($existingConnA -and $existingConnA.provisioningState -eq "Succeeded") {
   Write-Host "  Already connected. Updating route maps..." -ForegroundColor DarkGray
   az network vhub connection update `
@@ -593,8 +603,7 @@ if ($existingConnA -and $existingConnA.provisioningState -eq "Succeeded") {
     --name $ConnAName `
     --route-map-inbound $rmTagId `
     --route-map-outbound $rmPrependId `
-    --output none `
-    --only-show-errors 2>&1 | Out-Null
+    --output none 2>$null
 } else {
   az network vhub connection create `
     --resource-group $ResourceGroup `
@@ -603,10 +612,12 @@ if ($existingConnA -and $existingConnA.provisioningState -eq "Succeeded") {
     --remote-vnet $vnetAId `
     --route-map-inbound $rmTagId `
     --route-map-outbound $rmPrependId `
-    --output none `
-    --only-show-errors 2>&1 | Out-Null
+    --output none 2>$null
   Write-Log "Spoke-A hub connection created: $ConnAName"
 }
+$connAExit = $LASTEXITCODE
+$ErrorActionPreference = $oldEP
+if ($connAExit -ne 0) { throw "Failed to create/update connection $ConnAName (exit $connAExit)" }
 
 # Wait for Spoke-A connection
 Write-Host "  Waiting for $ConnAName to provision..." -ForegroundColor Gray
@@ -636,6 +647,7 @@ $existingConnB = $null
 $existingConnB = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnBName -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 if ($existingConnB -and $existingConnB.provisioningState -eq "Succeeded") {
   Write-Host "  Already connected. Updating route maps..." -ForegroundColor DarkGray
   az network vhub connection update `
@@ -643,8 +655,7 @@ if ($existingConnB -and $existingConnB.provisioningState -eq "Succeeded") {
     --vhub-name $VhubName `
     --name $ConnBName `
     --route-map-outbound $rmFilterId `
-    --output none `
-    --only-show-errors 2>&1 | Out-Null
+    --output none 2>$null
 } else {
   az network vhub connection create `
     --resource-group $ResourceGroup `
@@ -652,10 +663,12 @@ if ($existingConnB -and $existingConnB.provisioningState -eq "Succeeded") {
     --name $ConnBName `
     --remote-vnet $vnetBId `
     --route-map-outbound $rmFilterId `
-    --output none `
-    --only-show-errors 2>&1 | Out-Null
+    --output none 2>$null
   Write-Log "Spoke-B hub connection created: $ConnBName"
 }
+$connBExit = $LASTEXITCODE
+$ErrorActionPreference = $oldEP
+if ($connBExit -ne 0) { throw "Failed to create/update connection $ConnBName (exit $connBExit)" }
 
 # Wait for Spoke-B connection
 Write-Host "  Waiting for $ConnBName to provision..." -ForegroundColor Gray
