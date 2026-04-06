@@ -201,7 +201,11 @@ Require-Command az "Install Azure CLI: https://aka.ms/installazurecli"
 Write-Validation -Check "Azure CLI installed" -Passed $true
 
 # Verify Azure CLI version supports route maps (2.54.0+)
-$cliVersionRaw = az version --query '"azure-cli"' -o tsv 2>$null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$cliVerJson = $null
+$cliVerJson = az version -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+$cliVersionRaw = if ($cliVerJson) { $cliVerJson.'azure-cli' } else { "unknown" }
 Write-Validation -Check "Azure CLI version: $cliVersionRaw (2.54+ required for route-map)" -Passed $true
 
 Assert-LocationAllowed -Location $Location -AllowedLocations $AllowedLocations
