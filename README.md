@@ -101,6 +101,7 @@ Everything is organized at: **[docs/README.md](docs/README.md)**
 | [lab-007](labs/lab-007-azure-dns-foundations/) | Azure Private DNS Zones + auto-registration | Azure | ~$0.02/hr |
 | [lab-008](labs/lab-008-azure-dns-private-resolver/) | Azure DNS Private Resolver + forwarding ruleset | Azure | ~$0.03/hr |
 | [lab-009](labs/lab-009-avnm-hub-spoke-global-mesh/) | AVNM dual-region hub-spoke + Global Mesh | Azure | ~$0.01/hr |
+| [lab-010](labs/lab-010-vwan-route-maps/) | vWAN Route Maps: community tagging, route filtering, AS path prepend | Azure | ~$0.26/hr |
 
 ---
 
