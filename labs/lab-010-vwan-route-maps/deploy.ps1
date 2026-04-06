@@ -197,6 +197,11 @@ $script:LogFile = Join-Path $LogsDir "lab-010-$timestamp.log"
 Write-Log "Deployment started"
 Write-Log "Location: $Location"
 
+# Suppress Python OpenSSL UserWarning that az CLI emits on 32-bit Python / 64-bit Windows.
+# Without this, PS5.1 with EAP=Stop raises NativeCommandError on any az command that writes
+# to stderr, even when the command itself succeeds.
+$env:PYTHONWARNINGS = "ignore::UserWarning"
+
 Require-Command az "Install Azure CLI: https://aka.ms/installazurecli"
 Write-Validation -Check "Azure CLI installed" -Passed $true
 
