@@ -62,6 +62,7 @@ Full contract details: [docs/ops/LAB-STANDARD.md](../ops/LAB-STANDARD.md)
 7. **lab-007** - Azure DNS fundamentals. Private zones, VNet links, auto-registration. ~5-8 min.
 8. **lab-008** - DNS Private Resolver. Cross-VNet forwarding, ruleset isolation. ~8-12 min.
 9. **lab-009** - AVNM hub-spoke + Global Mesh. Near-free, CLI deploys infra, portal step enables cross-region mesh. ~8-12 min.
+10. **lab-010** - vWAN Route Maps. Community tagging, route filtering, AS path prepend. Requires Azure CLI 2.54+. ~15-20 min.
 
 **Always run `.\destroy.ps1` after each lab session.**
 
