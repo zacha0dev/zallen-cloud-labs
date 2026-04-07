@@ -179,12 +179,37 @@ The `.gitignore` already covers these. Run `git status` before committing.
 
 ---
 
-## Tagging Convention
+## Tagging Schema
 
-All lab resources are tagged at the resource group level:
+All lab resources carry five required tags, applied at resource group creation.
 
+### Required Tags
+
+| Tag | Value | Notes |
+|-----|-------|-------|
+| `project` | `azure-labs` | Fixed string |
+| `lab` | `lab-NNN` (e.g. `lab-010`) | Matches lab directory name |
+| `owner` | OS username | Read from `$env:USERNAME` / `$env:USER` — never hardcoded |
+| `environment` | `lab` | Fixed string |
+| `cost-center` | `learning` | Fixed string |
+
+### Helper Functions (from `scripts/labs-common.ps1`)
+
+Use the shared helpers — never build tag strings manually.
+
+```powershell
+# Load once in Phase 0 after $Owner is resolved:
+$tags    = Get-LabTags -LabId "lab-010" -Owner $Owner
+$tagStr  = Get-LabTagString -Tags $tags   # "project=azure-labs lab=lab-010 ..."
+$tagArgs = Get-LabTagArgs   -Tags $tags   # @("project=azure-labs", "lab=lab-010", ...)
 ```
-project=azure-labs  lab=lab-NNN  owner=<username>  environment=lab  cost-center=learning
-```
 
-The `cost-check.ps1` tool uses these tags (plus resource group name patterns) to identify lab resources.
+### When to Use Each Form
+
+| Command | Use | Reason |
+|---------|-----|--------|
+| `az group create --tags $tagStr` | `Get-LabTagString` | String form works here |
+| `az network vwan create --tags $tagStr` | `Get-LabTagString` | Same |
+| `az group update --tags @tagArgs` | `Get-LabTagArgs` (array-splat) | String form fails silently on Windows PS5.1 |
+
+The `cost-check.ps1` tool uses the `lab` and `project` tags (plus resource group name patterns) to identify lab resources.

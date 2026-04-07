@@ -271,6 +271,57 @@ function Clear-AzureCredentialCache {
   }
 }
 
+function Get-LabTags {
+  <#
+  .SYNOPSIS
+    Returns the standard tag hashtable for a lab. Use with Get-LabTagString
+    (for az create) or Get-LabTagArgs (for az group update on Windows).
+  .PARAMETER LabId
+    Lab identifier string, e.g. "lab-010".
+  .PARAMETER Owner
+    Owner value. Defaults to $env:USERNAME / $env:USER / "unknown".
+  #>
+  param(
+    [Parameter(Mandatory)][string]$LabId,
+    [string]$Owner = ""
+  )
+  if (-not $Owner) {
+    $Owner = $env:USERNAME
+    if (-not $Owner) { $Owner = $env:USER }
+    if (-not $Owner) { $Owner = "unknown" }
+  }
+  return @{
+    project        = "azure-labs"
+    lab            = $LabId
+    owner          = $Owner
+    environment    = "lab"
+    "cost-center"  = "learning"
+  }
+}
+
+function Get-LabTagString {
+  <#
+  .SYNOPSIS
+    Converts a tag hashtable to a single space-separated "key=value" string.
+    Safe for az group create / az resource create --tags on Windows.
+    NOT safe for az group update --tags on Windows -- use Get-LabTagArgs instead.
+  #>
+  param([Parameter(Mandatory)][hashtable]$Tags)
+  return ($Tags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join " "
+}
+
+function Get-LabTagArgs {
+  <#
+  .SYNOPSIS
+    Converts a tag hashtable to an array of "key=value" strings.
+    Required for az group update --tags on Windows PS5.1 (space-separated
+    string is parsed as one token there). Use with array-splat:
+      az group update --name $rg --tags @tagArgs
+  #>
+  param([Parameter(Mandatory)][hashtable]$Tags)
+  return @($Tags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
+}
+
 function Ensure-AzureAuth {
   <#
   .SYNOPSIS

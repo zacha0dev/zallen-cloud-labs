@@ -61,9 +61,11 @@ function Show-RouteMapDetail {
       if ($rule.actions -and $rule.actions.Count -gt 0) {
         foreach ($action in $rule.actions) {
           $paramStr = ""
-          if ($action.parameter) {
-            if ($action.parameter.community) { $paramStr += " community=$($action.parameter.community -join ',')" }
-            if ($action.parameter.asPath)    { $paramStr += " asPath=$($action.parameter.asPath -join ',')" }
+          if ($action.parameters -and $action.parameters.Count -gt 0) {
+            foreach ($p in $action.parameters) {
+              if ($p.community -and $p.community.Count -gt 0) { $paramStr += " community=$($p.community -join ',')" }
+              if ($p.asPath    -and $p.asPath.Count    -gt 0) { $paramStr += " asPath=$($p.asPath -join ',')" }
+            }
           }
           Write-Host "      Action: $($action.type)$paramStr" -ForegroundColor Green
         }
