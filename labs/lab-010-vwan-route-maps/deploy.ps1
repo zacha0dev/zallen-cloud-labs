@@ -415,7 +415,10 @@ function Invoke-RouteMapPut {
     $null = Invoke-RestMethod -Method PUT -Uri $uri -Headers $Headers -Body $json
   } catch {
     $errMsg = $_.Exception.Message
-    if ($_.Exception.Response) {
+    # PS7: response body is in ErrorDetails.Message
+    if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+      $errMsg = $_.ErrorDetails.Message
+    } elseif ($_.Exception.Response) {
       try {
         $stream = $_.Exception.Response.GetResponseStream()
         $reader = New-Object System.IO.StreamReader($stream)
@@ -446,7 +449,7 @@ if ($existingRmTag) {
         [pscustomobject]@{
           name = "tag-all-routes"
           matchCriteria = @([pscustomobject]@{ matchCondition = "Contains"; routePrefix = @("0.0.0.0/0") })
-          actions = @([pscustomobject]@{ type = "Add"; parameter = [pscustomobject]@{ community = @("65010:100") } })
+          actions = @([pscustomobject]@{ type = "Add"; parameters = @([pscustomobject]@{ community = @("65010:100") }) })
           nextStepIfMatched = "Continue"
         }
       )
@@ -512,7 +515,7 @@ if ($existingRmPrepend) {
         [pscustomobject]@{
           name = "prepend-as-path"
           matchCriteria = @([pscustomobject]@{ matchCondition = "Contains"; routePrefix = @("0.0.0.0/0") })
-          actions = @([pscustomobject]@{ type = "Add"; parameter = [pscustomobject]@{ asPath = @("65010", "65010") } })
+          actions = @([pscustomobject]@{ type = "Add"; parameters = @([pscustomobject]@{ asPath = @("65010", "65010") }) })
           nextStepIfMatched = "Continue"
         }
       )
