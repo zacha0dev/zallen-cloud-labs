@@ -98,8 +98,15 @@ function Show-ConnectionRouteMaps {
     return
   }
 
-  $inboundMap  = if ($conn.routingConfiguration -and $conn.routingConfiguration.inboundRouteMap)  { $conn.routingConfiguration.inboundRouteMap.id  } else { "(none)" }
-  $outboundMap = if ($conn.routingConfiguration -and $conn.routingConfiguration.outboundRouteMap) { $conn.routingConfiguration.outboundRouteMap.id } else { "(none)" }
+  # PSObject.Properties check required under Set-StrictMode when inbound/outboundRouteMap
+  # may not be present on the routingConfiguration object (e.g. conn has no route map assigned)
+  $rcObj = $conn.routingConfiguration
+  $inboundMap  = "(none)"
+  $outboundMap = "(none)"
+  if ($rcObj) {
+    if (($rcObj.PSObject.Properties.Name -contains "inboundRouteMap")  -and $rcObj.inboundRouteMap)  { $inboundMap  = $rcObj.inboundRouteMap.id }
+    if (($rcObj.PSObject.Properties.Name -contains "outboundRouteMap") -and $rcObj.outboundRouteMap) { $outboundMap = $rcObj.outboundRouteMap.id }
+  }
 
   # Shorten IDs for display
   if ($inboundMap -ne "(none)") {
