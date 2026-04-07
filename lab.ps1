@@ -21,6 +21,7 @@ Usage:
   .\lab.ps1 -Deploy lab-008 -SkipTests              # Deploy infra only, skip validation phases
   .\lab.ps1 -Destroy lab-001             # Destroy a lab
   .\lab.ps1 -Inspect lab-001             # Run post-deploy inspection
+  .\lab.ps1 -Validate lab-001            # Alias for -Inspect
   .\lab.ps1 -Research lab-008                        # List research scenarios for a lab
   .\lab.ps1 -Research lab-008 -Scenario cache-recovery             # Run a scenario
   .\lab.ps1 -Research lab-008 -Scenario cache-recovery -Background # Run in background
@@ -42,6 +43,7 @@ param(
   [switch]$Deploy,
   [switch]$Destroy,
   [switch]$Inspect,
+  [switch]$Validate,                    # Alias for -Inspect (run inspect.ps1)
   [switch]$Cost,
   [switch]$Settings,
   [switch]$Update,
@@ -71,7 +73,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$env:PYTHONWARNINGS = "ignore::UserWarning"
+$env:PYTHONWARNINGS = "ignore"
 
 $RepoRoot = $PSScriptRoot
 
@@ -216,7 +218,8 @@ function Show-Help {
   Write-Host "  -List                       Show all labs with cost, cloud, and live status"
   Write-Host "  -Deploy <lab-id>            Deploy a lab (e.g. -Deploy lab-001)"
   Write-Host "  -Destroy <lab-id>           Tear down a lab cleanly"
-  Write-Host "  -Inspect <lab-id>           Run post-deploy validation on a lab"
+  Write-Host "  -Inspect <lab-id>           Run post-deploy validation on a lab
+  -Validate <lab-id>          Alias for -Inspect (same behavior)"
   Write-Host ""
   Write-Host "RESEARCH" -ForegroundColor White
   Write-Host "  -Research <lab-id>                    List available research scenarios for a lab"
@@ -949,7 +952,7 @@ function Invoke-Update {
 $LabTarget = $Lab
 
 # If no action switch is set, show help
-$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost -or $Settings -or $Update -or $Research -or $Watch
+$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Validate -or $Cost -or $Settings -or $Update -or $Research -or $Watch
 if (-not $anyAction) {
   Show-Help
   exit 0
@@ -963,6 +966,7 @@ if ($List)     { Invoke-List }
 if ($Deploy)   { Invoke-Deploy -LabId $LabTarget }
 if ($Destroy)  { Invoke-Destroy -LabId $LabTarget }
 if ($Inspect)  { Invoke-Inspect -LabId $LabTarget }
+if ($Validate) { Invoke-Inspect -LabId $LabTarget }
 if ($Cost)     { Invoke-Cost }
 if ($Settings) { Invoke-Settings }
 if ($Update)   { Invoke-Update }

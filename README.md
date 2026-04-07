@@ -47,6 +47,7 @@ All operations go through a single entry point at the repo root:
 .\lab.ps1 -Deploy lab-001 -Force      # Deploy without confirmation prompt
 .\lab.ps1 -Destroy lab-001            # Tear down cleanly
 .\lab.ps1 -Inspect lab-001            # Post-deploy validation
+.\lab.ps1 -Validate lab-001           # Alias for -Inspect (same behavior)
 .\lab.ps1 -Research lab-008                              # List research scenarios for a lab
 .\lab.ps1 -Research lab-008 -Scenario cache-recovery    # Run a research scenario
 .\lab.ps1 -Research lab-008 -Scenario cache-recovery -Background  # Run in background

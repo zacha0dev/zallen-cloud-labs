@@ -637,8 +637,8 @@ Write-Phase -Number 4 -Title "Hub Connections + Route Map Assignment"
 $phase4Start = Get-Date
 
 # Resolve VNet IDs
-$vnetAId = az network vnet show -g $ResourceGroup -n $VnetAName --query id -o tsv
-$vnetBId = az network vnet show -g $ResourceGroup -n $VnetBName --query id -o tsv
+$vnetAId = az network vnet show -g $ResourceGroup -n $VnetAName --query id -o tsv --only-show-errors
+$vnetBId = az network vnet show -g $ResourceGroup -n $VnetBName --query id -o tsv --only-show-errors
 
 if (-not $vnetAId) { throw "Could not resolve VNet ID for $VnetAName" }
 if (-not $vnetBId) { throw "Could not resolve VNet ID for $VnetBName" }

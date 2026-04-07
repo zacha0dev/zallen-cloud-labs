@@ -270,6 +270,121 @@ for ($attempt = 1; $attempt -le $maxTries; $attempt++) {
 
 Not just `subscriptions=$SubscriptionId`.
 
+### ARM REST API via `Invoke-RestMethod` — error body location differs by PS version
+
+When `Invoke-RestMethod` throws on a non-2xx response, the ARM error body (containing the real reason) is in different places depending on PS version:
+
+- **PS7**: `$_.ErrorDetails.Message` (string, parse with `ConvertFrom-Json`)
+- **PS5.1**: `$_.Exception.Response.GetResponseStream()` (stream, must read manually)
+
+**Required catch block pattern:**
+
+```powershell
+catch {
+  $errBody = $null
+  if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+    $errBody = $_.ErrorDetails.Message
+  } elseif ($_.Exception.Response) {
+    $stream = $_.Exception.Response.GetResponseStream()
+    $reader = New-Object System.IO.StreamReader($stream)
+    $errBody = $reader.ReadToEnd()
+  }
+  $msg = if ($errBody) { $errBody } else { $_.Exception.Message }
+  throw "ARM PUT failed: $msg"
+}
+```
+
+### Azure Route Maps — circular dependency between connections and route maps
+
+When a hub VNet connection reaches `provisioningState: Failed` while a route map is assigned to it, Azure marks the route map as `Failed` too. You cannot recreate the route map while the failed connection still holds a reference, and you cannot reconnect while the route map is failed.
+
+**Break the cycle in this order:**
+1. Delete any Failed hub connections first (before touching route maps)
+2. Wait for the connection deletion to complete (poll until `az network vhub connection show` returns nothing)
+3. Delete and recreate route maps; wait for each to reach `provisioningState: Succeeded` before proceeding
+4. Create the connection with the full routing config in a single ARM PUT (do not create then update)
+
+**Phase 3 pre-cleanup pattern:**
+
+```powershell
+foreach ($preConnName in @($ConnAName, $ConnBName)) {
+  $preConn = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $preConn = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $preConnName -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if ($preConn -and $preConn.provisioningState -eq "Failed") {
+    Write-Host "  Pre-cleanup: deleting Failed connection $preConnName..." -ForegroundColor Yellow
+    az network vhub connection delete -g $ResourceGroup --vhub-name $VhubName -n $preConnName --yes --no-wait 2>$null
+    # Poll until gone
+    $waitSec = 0
+    while ($waitSec -lt 120) {
+      Start-Sleep -Seconds 10; $waitSec += 10
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $check = $null
+      $check = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $preConnName -o json 2>$null | ConvertFrom-Json
+      $ErrorActionPreference = $oldEP
+      if (-not $check) { break }
+    }
+  }
+}
+```
+
+### ARM hub connection PUT requires full `routingConfiguration`
+
+When creating a hub VNet connection via `Invoke-RestMethod PUT`, the body must include `associatedRouteTable` and `propagatedRouteTables` even if you just want defaults. A minimal PUT body that omits these causes the connection to provision as `Failed`.
+
+**Minimal correct body:**
+
+```powershell
+$defaultRtId = "$vhubResourceId/hubRouteTables/defaultRouteTable"
+$body = [pscustomobject]@{
+  properties = [pscustomobject]@{
+    remoteVirtualNetwork  = [pscustomobject]@{ id = $RemoteVnetId }
+    routingConfiguration  = [pscustomobject]@{
+      associatedRouteTable  = [pscustomobject]@{ id = $defaultRtId }
+      propagatedRouteTables = [pscustomobject]@{
+        labels = @("default")
+        ids    = @([pscustomobject]@{ id = $defaultRtId })
+      }
+      # add inboundRouteMap / outboundRouteMap here if needed
+    }
+  }
+}
+```
+
+### Route Map `actions[].parameters` is a plural array, not a singular object
+
+The ARM Route Map schema uses `parameters` (plural, `Parameter[]`) on each action, not `parameter` (singular). Passing a single object instead of an array causes the PUT to silently accept the request but the rules have no effect.
+
+**Correct:**
+```powershell
+actions = @([pscustomobject]@{
+  type       = "Add"
+  parameters = @([pscustomobject]@{ community = @("65010:100") })
+})
+```
+
+**Wrong (silently broken — no community is ever set):**
+```powershell
+actions = @([pscustomobject]@{
+  type      = "Add"
+  parameter = [pscustomobject]@{ community = @("65010:100") }
+})
+```
+
+### `--only-show-errors` for az commands that emit advisory warnings
+
+Some `az` commands emit non-critical advisory text to stderr (e.g. Bicep upgrade notices, Python version suggestions). Under `$ErrorActionPreference = "Stop"` on PS5.1, stderr output can trigger `NativeCommandError` before `$LASTEXITCODE` is checked.
+
+Add `--only-show-errors` to any `az` command where advisory stderr is a known issue:
+
+```powershell
+az network vnet show -g $rg -n $vnetName --query id -o tsv --only-show-errors
+az deployment group create ... --only-show-errors 2>&1
+```
+
+Do NOT add `--only-show-errors` blindly to all commands — it also suppresses real errors that should be visible.
+
 ---
 
 ## Security & Multi-User Portability
