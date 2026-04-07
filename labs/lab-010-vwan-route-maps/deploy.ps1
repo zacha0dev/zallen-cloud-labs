@@ -400,44 +400,34 @@ $ErrorActionPreference = $oldEP
 if ($existingRmTag) {
   Write-Host "        Already exists, skipping." -ForegroundColor DarkGray
 } else {
-  # Build rules JSON using a temp file (most reliable in PS5.1 for complex JSON)
-  $rmTagRules = @(
-    [pscustomobject]@{
-      name = "tag-all-routes"
-      matchCriteria = @(
+  # az network vhub route-map create --rules does not support @file on Windows PS5.1.
+  # Use az rest PUT to the ARM endpoint instead - --body @file is explicitly supported.
+  $rmTagBody = @{
+    properties = @{
+      rules = @(
         [pscustomobject]@{
-          matchCondition = "Contains"
-          routePrefix    = @("0.0.0.0/0")
+          name = "tag-all-routes"
+          matchCriteria = @([pscustomobject]@{ matchCondition = "Contains"; routePrefix = @("0.0.0.0/0") })
+          actions = @([pscustomobject]@{ type = "Add"; parameter = [pscustomobject]@{ community = @("65010:100") } })
+          nextStepIfMatched = "Continue"
         }
       )
-      actions = @(
-        [pscustomobject]@{
-          type      = "Add"
-          parameter = [pscustomobject]@{
-            community = @("65010:100")
-          }
-        }
-      )
-      nextStepIfMatched = "Continue"
     }
-  )
+  }
   $tmpTag = [System.IO.Path]::GetTempFileName()
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($tmpTag, ($rmTagRules | ConvertTo-Json -Depth 10 -Compress), $utf8NoBom)
+  [System.IO.File]::WriteAllText($tmpTag, ($rmTagBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
 
+  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmTagName}?api-version=2023-09-01"
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az network vhub route-map create `
-    --name $RmTagName `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --rules "@$tmpTag" `
-    --output none 2>&1
+  $rmOut = az rest --method PUT --uri $rmUri `
+    --body "@$tmpTag" --headers "Content-Type=application/json" 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpTag -Force -ErrorAction SilentlyContinue
   if ($rmExit -ne 0) {
-    Write-Host "        Error output:" -ForegroundColor Red
+    Write-Host "        Error:" -ForegroundColor Red
     $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
     throw "Failed to create route map $RmTagName (exit $rmExit)"
   }
@@ -458,51 +448,38 @@ $ErrorActionPreference = $oldEP
 if ($existingRmFilter) {
   Write-Host "        Already exists, skipping." -ForegroundColor DarkGray
 } else {
-  $rmFilterRules = @(
-    [pscustomobject]@{
-      name = "drop-spoke-a-prefix"
-      matchCriteria = @(
+  $rmFilterBody = @{
+    properties = @{
+      rules = @(
         [pscustomobject]@{
-          matchCondition = "Contains"
-          routePrefix    = @("10.61.0.0/16")
+          name = "drop-spoke-a-prefix"
+          matchCriteria = @([pscustomobject]@{ matchCondition = "Contains"; routePrefix = @("10.61.0.0/16") })
+          actions = @([pscustomobject]@{ type = "Drop" })
+          nextStepIfMatched = "Terminate"
+        },
+        [pscustomobject]@{
+          name = "allow-all-others"
+          matchCriteria = @([pscustomobject]@{ matchCondition = "Contains"; routePrefix = @("0.0.0.0/0") })
+          actions = @()
+          nextStepIfMatched = "Continue"
         }
       )
-      actions = @(
-        [pscustomobject]@{
-          type = "Drop"
-        }
-      )
-      nextStepIfMatched = "Terminate"
-    },
-    [pscustomobject]@{
-      name = "allow-all-others"
-      matchCriteria = @(
-        [pscustomobject]@{
-          matchCondition = "Contains"
-          routePrefix    = @("0.0.0.0/0")
-        }
-      )
-      actions           = @()
-      nextStepIfMatched = "Continue"
     }
-  )
+  }
   $tmpFilter = [System.IO.Path]::GetTempFileName()
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($tmpFilter, ($rmFilterRules | ConvertTo-Json -Depth 10 -Compress), $utf8NoBom)
+  [System.IO.File]::WriteAllText($tmpFilter, ($rmFilterBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
 
+  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmFilterName}?api-version=2023-09-01"
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az network vhub route-map create `
-    --name $RmFilterName `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --rules "@$tmpFilter" `
-    --output none 2>&1
+  $rmOut = az rest --method PUT --uri $rmUri `
+    --body "@$tmpFilter" --headers "Content-Type=application/json" 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpFilter -Force -ErrorAction SilentlyContinue
   if ($rmExit -ne 0) {
-    Write-Host "        Error output:" -ForegroundColor Red
+    Write-Host "        Error:" -ForegroundColor Red
     $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
     throw "Failed to create route map $RmFilterName (exit $rmExit)"
   }
@@ -523,43 +500,32 @@ $ErrorActionPreference = $oldEP
 if ($existingRmPrepend) {
   Write-Host "        Already exists, skipping." -ForegroundColor DarkGray
 } else {
-  $rmPrependRules = @(
-    [pscustomobject]@{
-      name = "prepend-as-path"
-      matchCriteria = @(
+  $rmPrependBody = @{
+    properties = @{
+      rules = @(
         [pscustomobject]@{
-          matchCondition = "Contains"
-          routePrefix    = @("0.0.0.0/0")
+          name = "prepend-as-path"
+          matchCriteria = @([pscustomobject]@{ matchCondition = "Contains"; routePrefix = @("0.0.0.0/0") })
+          actions = @([pscustomobject]@{ type = "Add"; parameter = [pscustomobject]@{ asPath = @("65010", "65010") } })
+          nextStepIfMatched = "Continue"
         }
       )
-      actions = @(
-        [pscustomobject]@{
-          type      = "Add"
-          parameter = [pscustomobject]@{
-            asPath = @("65010", "65010")
-          }
-        }
-      )
-      nextStepIfMatched = "Continue"
     }
-  )
+  }
   $tmpPrepend = [System.IO.Path]::GetTempFileName()
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($tmpPrepend, ($rmPrependRules | ConvertTo-Json -Depth 10 -Compress), $utf8NoBom)
+  [System.IO.File]::WriteAllText($tmpPrepend, ($rmPrependBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
 
+  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmPrependName}?api-version=2023-09-01"
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az network vhub route-map create `
-    --name $RmPrependName `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --rules "@$tmpPrepend" `
-    --output none 2>&1
+  $rmOut = az rest --method PUT --uri $rmUri `
+    --body "@$tmpPrepend" --headers "Content-Type=application/json" 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
 
   Remove-Item -Path $tmpPrepend -Force -ErrorAction SilentlyContinue
   if ($rmExit -ne 0) {
-    Write-Host "        Error output:" -ForegroundColor Red
+    Write-Host "        Error:" -ForegroundColor Red
     $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
     throw "Failed to create route map $RmPrependName (exit $rmExit)"
   }
