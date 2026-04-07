@@ -418,9 +418,9 @@ if ($existingRmTag) {
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($tmpTag, ($rmTagBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
 
-  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/$RmTagName"
+  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmTagName}?api-version=2023-09-01"
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az rest --method PUT --uri $rmUri --api-version "2023-09-01" `
+  $rmOut = az rest --method PUT --uri $rmUri `
     --body "@$tmpTag" --headers "Content-Type=application/json" 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
@@ -470,9 +470,9 @@ if ($existingRmFilter) {
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($tmpFilter, ($rmFilterBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
 
-  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/$RmFilterName"
+  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmFilterName}?api-version=2023-09-01"
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az rest --method PUT --uri $rmUri --api-version "2023-09-01" `
+  $rmOut = az rest --method PUT --uri $rmUri `
     --body "@$tmpFilter" --headers "Content-Type=application/json" 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
@@ -516,9 +516,9 @@ if ($existingRmPrepend) {
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($tmpPrepend, ($rmPrependBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
 
-  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/$RmPrependName"
+  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmPrependName}?api-version=2023-09-01"
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az rest --method PUT --uri $rmUri --api-version "2023-09-01" `
+  $rmOut = az rest --method PUT --uri $rmUri `
     --body "@$tmpPrepend" --headers "Content-Type=application/json" 2>&1
   $rmExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
