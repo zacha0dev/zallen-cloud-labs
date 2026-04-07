@@ -183,6 +183,23 @@ $tagArgs = @("project=azure-labs", "lab=lab-008", "owner=$Owner", "environment=l
 az group update --name $rg --tags @tagArgs
 ```
 
+### Use `Get-LabTags` / `Get-LabTagString` / `Get-LabTagArgs` for all tagging
+
+Never build tag strings manually in lab scripts. Use the helpers from `scripts/labs-common.ps1`. They enforce the five required tags (`project`, `lab`, `owner`, `environment`, `cost-center`) and handle the string-vs-array distinction correctly.
+
+```powershell
+# Correct pattern — load once in Phase 0 after $Owner is resolved:
+$tags    = Get-LabTags    -LabId "lab-010" -Owner $Owner
+$tagStr  = Get-LabTagString -Tags $tags    # for az create / az resource create
+$tagArgs = Get-LabTagArgs   -Tags $tags    # for az group update (array-splat)
+
+az group create --name $rg --location $Location --tags $tagStr
+az group update --name $rg --tags @tagArgs
+az network vwan create --tags $tagStr ...
+```
+
+Full schema in `docs/REFERENCE.md` under **Tagging Schema**.
+
 ### `az vm run-command` output requires stripping Azure wrapper labels
 
 `az vm run-command invoke` wraps script stdout/stderr in `[stdout]` and `[stderr]` labels inside `value[0].message`. Pattern matching against raw output silently fails because the IP or text appears after the label prefix.
