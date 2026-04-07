@@ -402,6 +402,36 @@ $armHeaders = @{
 }
 $armBase = "https://management.azure.com"
 
+# Pre-cleanup: a Failed connection that references a route map causes Azure to also
+# mark the route map as Failed. Delete any Failed connections first so that route
+# map cleanup and recreation can succeed cleanly.
+Write-Host "  Pre-cleanup: checking for failed connections..." -ForegroundColor DarkGray
+foreach ($preConnName in @($ConnAName, $ConnBName)) {
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $preConn = $null
+  $preConn = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $preConnName -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if ($preConn -and $preConn.provisioningState -eq "Failed") {
+    Write-Host "    Deleting failed connection '$preConnName' so route maps can be cleaned up." -ForegroundColor DarkGray
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    az network vhub connection delete -g $ResourceGroup --vhub-name $VhubName -n $preConnName --yes -o none 2>$null
+    $ErrorActionPreference = $oldEP
+    # Wait for gone
+    $preDelAttempt = 0
+    while ($preDelAttempt -lt 24) {
+      $preDelAttempt++
+      Start-Sleep -Seconds 10
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $preCheck = $null
+      $preCheck = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $preConnName -o json 2>$null | ConvertFrom-Json
+      $ErrorActionPreference = $oldEP
+      if (-not $preCheck) { break }
+    }
+    Write-Host "    $preConnName deleted." -ForegroundColor DarkGray
+  }
+}
+Write-Host ""
+
 function Invoke-RouteMapPut {
   param(
     [string]$MapName,
@@ -429,6 +459,28 @@ function Invoke-RouteMapPut {
   }
 }
 
+# Wait for a route map to reach Succeeded after a PUT. Route maps are fast to
+# provision but the ARM operation is async. If we start Phase 4 before the route
+# map is Succeeded, the connection referencing it will also fail.
+function Wait-RouteMapSucceeded {
+  param([string]$MapName, [datetime]$StartTime, [int]$MaxAttempts = 20)
+  $attempt = 0
+  while ($attempt -lt $MaxAttempts) {
+    $attempt++
+    Start-Sleep -Seconds 10
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $rm = $null
+    $rm = az network vhub route-map show -g $ResourceGroup --vhub-name $VhubName -n $MapName -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldEP
+    if ($rm -and $rm.provisioningState -eq "Succeeded") { return }
+    if ($rm -and $rm.provisioningState -eq "Failed")    { throw "Route Map $MapName reached Failed state during provisioning" }
+    $elapsed = Get-ElapsedTime -StartTime $StartTime
+    $state = if ($rm) { $rm.provisioningState } else { "Pending" }
+    Write-Host "        [$elapsed] $MapName state: $state ($attempt/$MaxAttempts)" -ForegroundColor DarkGray
+  }
+  throw "Route Map $MapName did not reach Succeeded within timeout"
+}
+
 $vhubArmBase = "$armBase/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName"
 
 # --- Route Map 1: Community Tag (Inbound on Spoke-A) ---
@@ -444,11 +496,19 @@ if ($existingRmTag -and $existingRmTag.provisioningState -eq "Succeeded") {
   Write-Host "        Already exists (Succeeded), skipping." -ForegroundColor DarkGray
 } else {
   if ($existingRmTag) {
-    Write-Host "        Exists but state='$($existingRmTag.provisioningState)' - recreating." -ForegroundColor DarkGray
+    Write-Host "        Exists but state='$($existingRmTag.provisioningState)' - deleting to recreate." -ForegroundColor DarkGray
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az network vhub route-map delete -g $ResourceGroup --vhub-name $VhubName -n $RmTagName --yes -o none 2>$null
     $ErrorActionPreference = $oldEP
-    Start-Sleep -Seconds 5
+    $rmTagDelAttempt = 0
+    while ($rmTagDelAttempt -lt 12) {
+      $rmTagDelAttempt++; Start-Sleep -Seconds 10
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $rmTagCheck = $null
+      $rmTagCheck = az network vhub route-map show -g $ResourceGroup --vhub-name $VhubName -n $RmTagName -o json 2>$null | ConvertFrom-Json
+      $ErrorActionPreference = $oldEP
+      if (-not $rmTagCheck) { break }
+    }
   }
   $rmTagBody = @{
     properties = @{
@@ -464,7 +524,8 @@ if ($existingRmTag -and $existingRmTag.provisioningState -eq "Succeeded") {
   }
   Invoke-RouteMapPut -MapName $RmTagName -Body $rmTagBody -Headers $armHeaders -BaseUri $vhubArmBase
   Write-Log "Route Map created: $RmTagName"
-  Write-Host "        Created." -ForegroundColor Green
+  Wait-RouteMapSucceeded -MapName $RmTagName -StartTime $phase3Start
+  Write-Host "        Created (Succeeded)." -ForegroundColor Green
 }
 
 # --- Route Map 2: Route Filter (Outbound on Spoke-B) ---
@@ -481,11 +542,19 @@ if ($existingRmFilter -and $existingRmFilter.provisioningState -eq "Succeeded") 
   Write-Host "        Already exists (Succeeded), skipping." -ForegroundColor DarkGray
 } else {
   if ($existingRmFilter) {
-    Write-Host "        Exists but state='$($existingRmFilter.provisioningState)' - recreating." -ForegroundColor DarkGray
+    Write-Host "        Exists but state='$($existingRmFilter.provisioningState)' - deleting to recreate." -ForegroundColor DarkGray
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az network vhub route-map delete -g $ResourceGroup --vhub-name $VhubName -n $RmFilterName --yes -o none 2>$null
     $ErrorActionPreference = $oldEP
-    Start-Sleep -Seconds 5
+    $rmFilterDelAttempt = 0
+    while ($rmFilterDelAttempt -lt 12) {
+      $rmFilterDelAttempt++; Start-Sleep -Seconds 10
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $rmFilterCheck = $null
+      $rmFilterCheck = az network vhub route-map show -g $ResourceGroup --vhub-name $VhubName -n $RmFilterName -o json 2>$null | ConvertFrom-Json
+      $ErrorActionPreference = $oldEP
+      if (-not $rmFilterCheck) { break }
+    }
   }
   $rmFilterBody = @{
     properties = @{
@@ -507,7 +576,8 @@ if ($existingRmFilter -and $existingRmFilter.provisioningState -eq "Succeeded") 
   }
   Invoke-RouteMapPut -MapName $RmFilterName -Body $rmFilterBody -Headers $armHeaders -BaseUri $vhubArmBase
   Write-Log "Route Map created: $RmFilterName"
-  Write-Host "        Created." -ForegroundColor Green
+  Wait-RouteMapSucceeded -MapName $RmFilterName -StartTime $phase3Start
+  Write-Host "        Created (Succeeded)." -ForegroundColor Green
 }
 
 # --- Route Map 3: AS Path Prepend (Outbound on Spoke-A) ---
@@ -524,11 +594,19 @@ if ($existingRmPrepend -and $existingRmPrepend.provisioningState -eq "Succeeded"
   Write-Host "        Already exists (Succeeded), skipping." -ForegroundColor DarkGray
 } else {
   if ($existingRmPrepend) {
-    Write-Host "        Exists but state='$($existingRmPrepend.provisioningState)' - recreating." -ForegroundColor DarkGray
+    Write-Host "        Exists but state='$($existingRmPrepend.provisioningState)' - deleting to recreate." -ForegroundColor DarkGray
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     az network vhub route-map delete -g $ResourceGroup --vhub-name $VhubName -n $RmPrependName --yes -o none 2>$null
     $ErrorActionPreference = $oldEP
-    Start-Sleep -Seconds 5
+    $rmPrependDelAttempt = 0
+    while ($rmPrependDelAttempt -lt 12) {
+      $rmPrependDelAttempt++; Start-Sleep -Seconds 10
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $rmPrependCheck = $null
+      $rmPrependCheck = az network vhub route-map show -g $ResourceGroup --vhub-name $VhubName -n $RmPrependName -o json 2>$null | ConvertFrom-Json
+      $ErrorActionPreference = $oldEP
+      if (-not $rmPrependCheck) { break }
+    }
   }
   $rmPrependBody = @{
     properties = @{
@@ -544,7 +622,8 @@ if ($existingRmPrepend -and $existingRmPrepend.provisioningState -eq "Succeeded"
   }
   Invoke-RouteMapPut -MapName $RmPrependName -Body $rmPrependBody -Headers $armHeaders -BaseUri $vhubArmBase
   Write-Log "Route Map created: $RmPrependName"
-  Write-Host "        Created." -ForegroundColor Green
+  Wait-RouteMapSucceeded -MapName $RmPrependName -StartTime $phase3Start
+  Write-Host "        Created (Succeeded)." -ForegroundColor Green
 }
 
 $phase3Elapsed = Get-ElapsedTime -StartTime $phase3Start
@@ -687,8 +766,9 @@ function Ensure-HubConnectionWithRouteMaps {
   # Check if already fully configured correctly
   if ($existing -and $existing.provisioningState -eq "Succeeded") {
     $rc = $existing.routingConfiguration
-    $hasInbound  = (-not $InboundRmName)  -or ($rc -and $rc.inboundRouteMap  -and $rc.inboundRouteMap.id  -match $InboundRmName)
-    $hasOutbound = (-not $OutboundRmName) -or ($rc -and $rc.outboundRouteMap -and $rc.outboundRouteMap.id -match $OutboundRmName)
+    # Use PSObject.Properties to safely check for inbound/outboundRouteMap under Set-StrictMode
+    $hasInbound  = (-not $InboundRmName)  -or ($rc -and ($rc.PSObject.Properties.Name -contains "inboundRouteMap")  -and $rc.inboundRouteMap  -and $rc.inboundRouteMap.id  -match $InboundRmName)
+    $hasOutbound = (-not $OutboundRmName) -or ($rc -and ($rc.PSObject.Properties.Name -contains "outboundRouteMap") -and $rc.outboundRouteMap -and $rc.outboundRouteMap.id -match $OutboundRmName)
     if ($hasInbound -and $hasOutbound) {
       Write-Host "  Already connected with correct route maps (Succeeded), skipping." -ForegroundColor DarkGray
       return
