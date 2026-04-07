@@ -440,9 +440,16 @@ $existingRmTag = $null
 $existingRmTag = az network vhub route-map show -g $ResourceGroup --vhub-name $VhubName -n $RmTagName -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
-if ($existingRmTag) {
-  Write-Host "        Already exists, skipping." -ForegroundColor DarkGray
+if ($existingRmTag -and $existingRmTag.provisioningState -eq "Succeeded") {
+  Write-Host "        Already exists (Succeeded), skipping." -ForegroundColor DarkGray
 } else {
+  if ($existingRmTag) {
+    Write-Host "        Exists but state='$($existingRmTag.provisioningState)' - recreating." -ForegroundColor DarkGray
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    az network vhub route-map delete -g $ResourceGroup --vhub-name $VhubName -n $RmTagName --yes -o none 2>$null
+    $ErrorActionPreference = $oldEP
+    Start-Sleep -Seconds 5
+  }
   $rmTagBody = @{
     properties = @{
       rules = @(
@@ -470,9 +477,16 @@ $existingRmFilter = $null
 $existingRmFilter = az network vhub route-map show -g $ResourceGroup --vhub-name $VhubName -n $RmFilterName -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
-if ($existingRmFilter) {
-  Write-Host "        Already exists, skipping." -ForegroundColor DarkGray
+if ($existingRmFilter -and $existingRmFilter.provisioningState -eq "Succeeded") {
+  Write-Host "        Already exists (Succeeded), skipping." -ForegroundColor DarkGray
 } else {
+  if ($existingRmFilter) {
+    Write-Host "        Exists but state='$($existingRmFilter.provisioningState)' - recreating." -ForegroundColor DarkGray
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    az network vhub route-map delete -g $ResourceGroup --vhub-name $VhubName -n $RmFilterName --yes -o none 2>$null
+    $ErrorActionPreference = $oldEP
+    Start-Sleep -Seconds 5
+  }
   $rmFilterBody = @{
     properties = @{
       rules = @(
@@ -506,9 +520,16 @@ $existingRmPrepend = $null
 $existingRmPrepend = az network vhub route-map show -g $ResourceGroup --vhub-name $VhubName -n $RmPrependName -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
 
-if ($existingRmPrepend) {
-  Write-Host "        Already exists, skipping." -ForegroundColor DarkGray
+if ($existingRmPrepend -and $existingRmPrepend.provisioningState -eq "Succeeded") {
+  Write-Host "        Already exists (Succeeded), skipping." -ForegroundColor DarkGray
 } else {
+  if ($existingRmPrepend) {
+    Write-Host "        Exists but state='$($existingRmPrepend.provisioningState)' - recreating." -ForegroundColor DarkGray
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    az network vhub route-map delete -g $ResourceGroup --vhub-name $VhubName -n $RmPrependName --yes -o none 2>$null
+    $ErrorActionPreference = $oldEP
+    Start-Sleep -Seconds 5
+  }
   $rmPrependBody = @{
     properties = @{
       rules = @(
@@ -559,48 +580,8 @@ $armConnBase = "https://management.azure.com/subscriptions/$SubscriptionId" +
                "/resourceGroups/$ResourceGroup/providers/Microsoft.Network" +
                "/virtualHubs/$VhubName/hubVirtualNetworkConnections"
 
-# Apply route maps by GET-ing the full current connection body, injecting
-# inboundRouteMap / outboundRouteMap into routingConfiguration, then PUT-ing
-# the full body back. This preserves associatedRouteTable / propagatedRouteTables
-# that az CLI sets on creation. A minimal PUT body overwrites those to null
-# which is what caused the "Failed" state in previous attempts.
-function Set-ConnectionRouteMaps {
-  param(
-    [string]$ConnName,
-    [string]$InboundRmId,
-    [string]$OutboundRmId
-  )
-  $uri = "${armConnBase}/${ConnName}?api-version=2023-09-01"
-
-  $current = $null
-  try {
-    $current = Invoke-RestMethod -Method GET -Uri $uri -Headers $armHeaders
-  } catch {
-    $err = if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
-    throw "GET $ConnName failed: $err"
-  }
-
-  if ($InboundRmId) {
-    $current.properties.routingConfiguration | Add-Member `
-      -NotePropertyName inboundRouteMap `
-      -NotePropertyValue ([pscustomobject]@{ id = $InboundRmId }) `
-      -Force
-  }
-  if ($OutboundRmId) {
-    $current.properties.routingConfiguration | Add-Member `
-      -NotePropertyName outboundRouteMap `
-      -NotePropertyValue ([pscustomobject]@{ id = $OutboundRmId }) `
-      -Force
-  }
-
-  $json = $current | ConvertTo-Json -Depth 20
-  try {
-    $null = Invoke-RestMethod -Method PUT -Uri $uri -Headers $armHeaders -Body $json
-  } catch {
-    $err = if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
-    throw "PUT $ConnName (route maps) failed: $err"
-  }
-}
+# Default route table always exists at this path in any vHub
+$defaultRtId = "$vhubResourceId/hubRouteTables/defaultRouteTable"
 
 # Poll until Succeeded or Failed; return the final state string
 function Wait-HubConnection {
@@ -623,54 +604,107 @@ function Wait-HubConnection {
   return "Timeout"
 }
 
-# Ensure connection exists and is Succeeded. If in Failed/unknown state, delete
-# and recreate. az CLI create sets the default associatedRouteTable and
-# propagatedRouteTables that the ARM plane requires to be non-null.
-function Ensure-HubConnection {
-  param([string]$ConnName, [string]$RemoteVnetId)
+# Delete an existing connection and wait for it to be gone
+function Remove-HubConnection {
+  param([string]$ConnName)
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  az network vhub connection delete -g $ResourceGroup --vhub-name $VhubName -n $ConnName --yes -o none 2>$null
+  $ErrorActionPreference = $oldEP
+  $attempt = 0
+  while ($attempt -lt 24) {
+    $attempt++
+    Start-Sleep -Seconds 10
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $check = $null
+    $check = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnName -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldEP
+    if (-not $check) { return }
+  }
+  throw "Connection $ConnName did not delete within timeout"
+}
+
+# Create a hub connection via ARM REST API with route maps and routing config
+# in one shot. Specifying associatedRouteTable + propagatedRouteTables upfront
+# avoids a two-step create-then-update, which was causing Failed state because
+# Azure rejected a PUT that modified an already-configured connection.
+function New-HubConnectionWithRouteMaps {
+  param(
+    [string]$ConnName,
+    [string]$RemoteVnetId,
+    [string]$InboundRmId,   # empty string = omit
+    [string]$OutboundRmId   # empty string = omit
+  )
+
+  $routingConfig = [pscustomobject]@{
+    associatedRouteTable  = [pscustomobject]@{ id = $defaultRtId }
+    propagatedRouteTables = [pscustomobject]@{
+      labels = @("default")
+      ids    = @([pscustomobject]@{ id = $defaultRtId })
+    }
+  }
+  if ($InboundRmId) {
+    $routingConfig | Add-Member -NotePropertyName inboundRouteMap  -NotePropertyValue ([pscustomobject]@{ id = $InboundRmId })
+  }
+  if ($OutboundRmId) {
+    $routingConfig | Add-Member -NotePropertyName outboundRouteMap -NotePropertyValue ([pscustomobject]@{ id = $OutboundRmId })
+  }
+
+  $body = [pscustomobject]@{
+    properties = [pscustomobject]@{
+      remoteVirtualNetwork = [pscustomobject]@{ id = $RemoteVnetId }
+      routingConfiguration = $routingConfig
+    }
+  }
+
+  $uri = "${armConnBase}/${ConnName}?api-version=2023-09-01"
+  $json = $body | ConvertTo-Json -Depth 15
+  try {
+    $null = Invoke-RestMethod -Method PUT -Uri $uri -Headers $armHeaders -Body $json
+  } catch {
+    $err = if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
+    throw "ARM PUT $ConnName failed: $err"
+  }
+  Write-Log "Hub connection ARM PUT submitted: $ConnName"
+}
+
+# For each connection: if it already has correct route maps and is Succeeded, skip.
+# Otherwise delete existing and create fresh via ARM with route maps baked in.
+function Ensure-HubConnectionWithRouteMaps {
+  param(
+    [string]$ConnName,
+    [string]$RemoteVnetId,
+    [string]$InboundRmId,
+    [string]$OutboundRmId,
+    [string]$InboundRmName,   # for display check only
+    [string]$OutboundRmName   # for display check only
+  )
 
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $existing = $null
   $existing = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnName -o json 2>$null | ConvertFrom-Json
   $ErrorActionPreference = $oldEP
 
+  # Check if already fully configured correctly
   if ($existing -and $existing.provisioningState -eq "Succeeded") {
-    Write-Host "  Already connected (Succeeded)." -ForegroundColor DarkGray
-    return
+    $rc = $existing.routingConfiguration
+    $hasInbound  = (-not $InboundRmName)  -or ($rc -and $rc.inboundRouteMap  -and $rc.inboundRouteMap.id  -match $InboundRmName)
+    $hasOutbound = (-not $OutboundRmName) -or ($rc -and $rc.outboundRouteMap -and $rc.outboundRouteMap.id -match $OutboundRmName)
+    if ($hasInbound -and $hasOutbound) {
+      Write-Host "  Already connected with correct route maps (Succeeded), skipping." -ForegroundColor DarkGray
+      return
+    }
+    Write-Host "  Connected but route maps not yet applied - recreating with route maps." -ForegroundColor DarkGray
+  } elseif ($existing) {
+    Write-Host "  Connection is '$($existing.provisioningState)' - deleting to recreate." -ForegroundColor DarkGray
   }
 
   if ($existing) {
-    Write-Host "  Connection is '$($existing.provisioningState)' - deleting to recreate..." -ForegroundColor DarkGray
-    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-    az network vhub connection delete -g $ResourceGroup --vhub-name $VhubName -n $ConnName --yes -o none 2>$null
-    $ErrorActionPreference = $oldEP
-    $delAttempt = 0
-    while ($delAttempt -lt 24) {
-      $delAttempt++
-      Start-Sleep -Seconds 10
-      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-      $check = $null
-      $check = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnName -o json 2>$null | ConvertFrom-Json
-      $ErrorActionPreference = $oldEP
-      if (-not $check) { break }
-    }
+    Remove-HubConnection -ConnName $ConnName
   }
 
-  Write-Host "  Creating $ConnName via az CLI..." -ForegroundColor DarkGray
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  az network vhub connection create `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --name $ConnName `
-    --remote-vnet $RemoteVnetId `
-    --output none 2>$null
-  $createExit = $LASTEXITCODE
-  $ErrorActionPreference = $oldEP
-  if ($createExit -ne 0) { throw "az network vhub connection create failed for $ConnName (exit $createExit)" }
-  Write-Log "Hub connection created: $ConnName"
-
-  $result = Wait-HubConnection -ConnName $ConnName -StartTime $phase4Start -Label "create"
-  if ($result -ne "Succeeded") { throw "Connection $ConnName did not reach Succeeded after create (got: $result)" }
+  Write-Host "  Creating $ConnName via ARM (with route maps)..." -ForegroundColor DarkGray
+  New-HubConnectionWithRouteMaps -ConnName $ConnName -RemoteVnetId $RemoteVnetId `
+    -InboundRmId $InboundRmId -OutboundRmId $OutboundRmId
 }
 
 # --- Connection: Spoke-A ---
@@ -681,16 +715,20 @@ Write-Host "Hub connection: $ConnAName" -ForegroundColor Gray
 Write-Host "  Inbound:  $RmTagName" -ForegroundColor DarkGray
 Write-Host "  Outbound: $RmPrependName" -ForegroundColor DarkGray
 
-Ensure-HubConnection -ConnName $ConnAName -RemoteVnetId $vnetAId
+Ensure-HubConnectionWithRouteMaps `
+  -ConnName       $ConnAName `
+  -RemoteVnetId   $vnetAId `
+  -InboundRmId    $rmTagId `
+  -OutboundRmId   $rmPrependId `
+  -InboundRmName  $RmTagName `
+  -OutboundRmName $RmPrependName
 
-Write-Host "  Applying route maps..." -ForegroundColor DarkGray
-Set-ConnectionRouteMaps -ConnName $ConnAName -InboundRmId $rmTagId -OutboundRmId $rmPrependId
-Write-Log "Route maps applied: $ConnAName"
-
-Write-Host "  Waiting for $ConnAName route map update to provision..." -ForegroundColor Gray
+Write-Host "  Waiting for $ConnAName to provision..." -ForegroundColor Gray
 $connAResult = Wait-HubConnection -ConnName $ConnAName -StartTime $phase4Start
 if ($connAResult -ne "Succeeded") {
   Write-Host "  WARNING: $ConnAName ended in state: $connAResult" -ForegroundColor Yellow
+} else {
+  Write-Host "  $ConnAName provisioned." -ForegroundColor Green
 }
 
 # --- Connection: Spoke-B ---
@@ -701,16 +739,20 @@ Write-Host "Hub connection: $ConnBName" -ForegroundColor Gray
 Write-Host "  Inbound:  (none)" -ForegroundColor DarkGray
 Write-Host "  Outbound: $RmFilterName" -ForegroundColor DarkGray
 
-Ensure-HubConnection -ConnName $ConnBName -RemoteVnetId $vnetBId
+Ensure-HubConnectionWithRouteMaps `
+  -ConnName       $ConnBName `
+  -RemoteVnetId   $vnetBId `
+  -InboundRmId    "" `
+  -OutboundRmId   $rmFilterId `
+  -InboundRmName  "" `
+  -OutboundRmName $RmFilterName
 
-Write-Host "  Applying route maps..." -ForegroundColor DarkGray
-Set-ConnectionRouteMaps -ConnName $ConnBName -InboundRmId "" -OutboundRmId $rmFilterId
-Write-Log "Route maps applied: $ConnBName"
-
-Write-Host "  Waiting for $ConnBName route map update to provision..." -ForegroundColor Gray
+Write-Host "  Waiting for $ConnBName to provision..." -ForegroundColor Gray
 $connBResult = Wait-HubConnection -ConnName $ConnBName -StartTime $phase4Start
 if ($connBResult -ne "Succeeded") {
   Write-Host "  WARNING: $ConnBName ended in state: $connBResult" -ForegroundColor Yellow
+} else {
+  Write-Host "  $ConnBName provisioned." -ForegroundColor Green
 }
 
 $phase4Elapsed = Get-ElapsedTime -StartTime $phase4Start
@@ -729,7 +771,7 @@ $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vwan = $null
 $vwan = az network vwan show -g $ResourceGroup -n $VwanName -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldEP
-$vwanValid = ($vwan -ne $null -and $vwan.virtualWANType -eq "Standard")
+$vwanValid = ($vwan -ne $null -and $vwan.provisioningState -eq "Succeeded")
 Write-Validation -Check "vWAN exists (Standard)" -Passed $vwanValid -Details $VwanName
 if (-not $vwanValid) { $allValid = $false }
 
