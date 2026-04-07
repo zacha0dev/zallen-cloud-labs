@@ -543,7 +543,7 @@ $vnetBId = az network vnet show -g $ResourceGroup -n $VnetBName --query id -o ts
 if (-not $vnetAId) { throw "Could not resolve VNet ID for $VnetAName" }
 if (-not $vnetBId) { throw "Could not resolve VNet ID for $VnetBName" }
 
-# Resolve Route Map IDs
+# Resolve vHub resource ID (needed to build route map ARM IDs)
 $vhubObj = $null
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vhubObj = az network vhub show -g $ResourceGroup -n $VhubName -o json 2>$null | ConvertFrom-Json
@@ -555,6 +555,48 @@ $rmTagId     = "$vhubResourceId/routeMaps/$RmTagName"
 $rmFilterId  = "$vhubResourceId/routeMaps/$RmFilterName"
 $rmPrependId = "$vhubResourceId/routeMaps/$RmPrependName"
 
+# Use ARM REST API for connection create/update with route maps.
+# az network vhub connection create/update does not expose --inbound-route-map /
+# --outbound-route-map in all CLI versions, so we go directly to the ARM plane
+# (same approach used in Phase 3 for route map creation).
+
+function Invoke-HubConnectionPut {
+  param(
+    [string]$ConnName,
+    [hashtable]$Body,
+    [hashtable]$Headers,
+    [string]$SubId,
+    [string]$Rg,
+    [string]$Hub
+  )
+  $uri = "https://management.azure.com/subscriptions/$SubId/resourceGroups/$Rg" +
+         "/providers/Microsoft.Network/virtualHubs/$Hub" +
+         "/hubVirtualNetworkConnections/${ConnName}?api-version=2023-09-01"
+  $json = $Body | ConvertTo-Json -Depth 15
+  try {
+    $null = Invoke-RestMethod -Method PUT -Uri $uri -Headers $Headers -Body $json
+  } catch {
+    $errMsg = $_.Exception.Message
+    if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+      $errMsg = $_.ErrorDetails.Message
+    } elseif ($_.Exception.Response) {
+      try {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        $errMsg = $reader.ReadToEnd()
+      } catch {}
+    }
+    throw "Failed to create/update connection $ConnName : $errMsg"
+  }
+}
+
+$connPutParams = @{
+  Headers = $armHeaders
+  SubId   = $SubscriptionId
+  Rg      = $ResourceGroup
+  Hub     = $VhubName
+}
+
 # --- Connection: Spoke-A ---
 # Inbound:  rm-community-tag  (tag routes entering hub from Spoke-A)
 # Outbound: rm-as-prepend     (prepend AS on routes hub sends to Spoke-A)
@@ -563,35 +605,17 @@ Write-Host "Creating/updating hub connection: $ConnAName" -ForegroundColor Gray
 Write-Host "  Inbound:  $RmTagName" -ForegroundColor DarkGray
 Write-Host "  Outbound: $RmPrependName" -ForegroundColor DarkGray
 
-$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$existingConnA = $null
-$existingConnA = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnAName -o json 2>$null | ConvertFrom-Json
-$ErrorActionPreference = $oldEP
-
-$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-if ($existingConnA -and $existingConnA.provisioningState -eq "Succeeded") {
-  Write-Host "  Already connected. Updating route maps..." -ForegroundColor DarkGray
-  az network vhub connection update `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --name $ConnAName `
-    --route-map-inbound $rmTagId `
-    --route-map-outbound $rmPrependId `
-    --output none 2>$null
-} else {
-  az network vhub connection create `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --name $ConnAName `
-    --remote-vnet $vnetAId `
-    --route-map-inbound $rmTagId `
-    --route-map-outbound $rmPrependId `
-    --output none 2>$null
-  Write-Log "Spoke-A hub connection created: $ConnAName"
+$connABody = @{
+  properties = @{
+    remoteVirtualNetwork   = @{ id = $vnetAId }
+    routingConfiguration   = @{
+      inboundRouteMap  = @{ id = $rmTagId }
+      outboundRouteMap = @{ id = $rmPrependId }
+    }
+  }
 }
-$connAExit = $LASTEXITCODE
-$ErrorActionPreference = $oldEP
-if ($connAExit -ne 0) { throw "Failed to create/update connection $ConnAName (exit $connAExit)" }
+Invoke-HubConnectionPut -ConnName $ConnAName -Body $connABody @connPutParams
+Write-Log "Spoke-A hub connection PUT submitted: $ConnAName"
 
 # Wait for Spoke-A connection
 Write-Host "  Waiting for $ConnAName to provision..." -ForegroundColor Gray
@@ -604,7 +628,8 @@ while ($connAttempt -lt 40) {
   $ErrorActionPreference = $oldEP
   if ($connA -and $connA.provisioningState -eq "Succeeded") { break }
   $elapsed = Get-ElapsedTime -StartTime $phase4Start
-  Write-Host "    [$elapsed] $ConnAName state: $($connA.provisioningState) ($connAttempt/40)" -ForegroundColor DarkGray
+  $state = if ($connA) { $connA.provisioningState } else { "Pending" }
+  Write-Host "    [$elapsed] $ConnAName state: $state ($connAttempt/40)" -ForegroundColor DarkGray
   Start-Sleep -Seconds 10
 }
 
@@ -616,33 +641,16 @@ Write-Host "Creating/updating hub connection: $ConnBName" -ForegroundColor Gray
 Write-Host "  Inbound:  (none)" -ForegroundColor DarkGray
 Write-Host "  Outbound: $RmFilterName" -ForegroundColor DarkGray
 
-$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$existingConnB = $null
-$existingConnB = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnBName -o json 2>$null | ConvertFrom-Json
-$ErrorActionPreference = $oldEP
-
-$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-if ($existingConnB -and $existingConnB.provisioningState -eq "Succeeded") {
-  Write-Host "  Already connected. Updating route maps..." -ForegroundColor DarkGray
-  az network vhub connection update `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --name $ConnBName `
-    --route-map-outbound $rmFilterId `
-    --output none 2>$null
-} else {
-  az network vhub connection create `
-    --resource-group $ResourceGroup `
-    --vhub-name $VhubName `
-    --name $ConnBName `
-    --remote-vnet $vnetBId `
-    --route-map-outbound $rmFilterId `
-    --output none 2>$null
-  Write-Log "Spoke-B hub connection created: $ConnBName"
+$connBBody = @{
+  properties = @{
+    remoteVirtualNetwork   = @{ id = $vnetBId }
+    routingConfiguration   = @{
+      outboundRouteMap = @{ id = $rmFilterId }
+    }
+  }
 }
-$connBExit = $LASTEXITCODE
-$ErrorActionPreference = $oldEP
-if ($connBExit -ne 0) { throw "Failed to create/update connection $ConnBName (exit $connBExit)" }
+Invoke-HubConnectionPut -ConnName $ConnBName -Body $connBBody @connPutParams
+Write-Log "Spoke-B hub connection PUT submitted: $ConnBName"
 
 # Wait for Spoke-B connection
 Write-Host "  Waiting for $ConnBName to provision..." -ForegroundColor Gray
@@ -655,7 +663,8 @@ while ($connBAttempt -lt 40) {
   $ErrorActionPreference = $oldEP
   if ($connB -and $connB.provisioningState -eq "Succeeded") { break }
   $elapsed = Get-ElapsedTime -StartTime $phase4Start
-  Write-Host "    [$elapsed] $ConnBName state: $($connB.provisioningState) ($connBAttempt/40)" -ForegroundColor DarkGray
+  $state = if ($connB) { $connB.provisioningState } else { "Pending" }
+  Write-Host "    [$elapsed] $ConnBName state: $state ($connBAttempt/40)" -ForegroundColor DarkGray
   Start-Sleep -Seconds 10
 }
 
