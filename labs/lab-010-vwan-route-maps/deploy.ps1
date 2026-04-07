@@ -388,6 +388,46 @@ $phase3Start = Get-Date
 Write-Host "Creating Route Maps on hub: $VhubName" -ForegroundColor Gray
 Write-Host ""
 
+# Acquire ARM access token via az CLI - use Invoke-RestMethod (native PS) to avoid
+# az rest @file path issues on Windows PS5.1 (backslashes, temp dir spaces, etc.)
+Write-Host "  Acquiring ARM token..." -ForegroundColor DarkGray
+$armTokenResult = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$armTokenResult = az account get-access-token --resource https://management.azure.com/ -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
+if (-not $armTokenResult) { throw "Failed to acquire ARM access token for route map creation" }
+$armHeaders = @{
+  "Authorization" = "Bearer $($armTokenResult.accessToken)"
+  "Content-Type"  = "application/json"
+}
+$armBase = "https://management.azure.com"
+
+function Invoke-RouteMapPut {
+  param(
+    [string]$MapName,
+    [hashtable]$Body,
+    [hashtable]$Headers,
+    [string]$BaseUri
+  )
+  $uri = "$BaseUri/routeMaps/${MapName}?api-version=2023-09-01"
+  $json = $Body | ConvertTo-Json -Depth 15
+  try {
+    $null = Invoke-RestMethod -Method PUT -Uri $uri -Headers $Headers -Body $json
+  } catch {
+    $errMsg = $_.Exception.Message
+    if ($_.Exception.Response) {
+      try {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        $errMsg = $reader.ReadToEnd()
+      } catch {}
+    }
+    throw "Failed to create route map $MapName : $errMsg"
+  }
+}
+
+$vhubArmBase = "$armBase/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName"
+
 # --- Route Map 1: Community Tag (Inbound on Spoke-A) ---
 Write-Host "  [1/3] $RmTagName - Community Tagging (inbound on Spoke-A)" -ForegroundColor White
 Write-Host "        Match: any prefix  ->  Add community 65010:100" -ForegroundColor DarkGray
@@ -400,8 +440,6 @@ $ErrorActionPreference = $oldEP
 if ($existingRmTag) {
   Write-Host "        Already exists, skipping." -ForegroundColor DarkGray
 } else {
-  # az network vhub route-map create --rules does not support @file on Windows PS5.1.
-  # Use az rest PUT to the ARM endpoint instead - --body @file is explicitly supported.
   $rmTagBody = @{
     properties = @{
       rules = @(
@@ -414,23 +452,7 @@ if ($existingRmTag) {
       )
     }
   }
-  $tmpTag = [System.IO.Path]::GetTempFileName()
-  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($tmpTag, ($rmTagBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
-
-  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmTagName}?api-version=2023-09-01"
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az rest --method PUT --uri $rmUri `
-    --body "@$tmpTag" --headers "Content-Type=application/json" 2>&1
-  $rmExit = $LASTEXITCODE
-  $ErrorActionPreference = $oldEP
-
-  Remove-Item -Path $tmpTag -Force -ErrorAction SilentlyContinue
-  if ($rmExit -ne 0) {
-    Write-Host "        Error:" -ForegroundColor Red
-    $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
-    throw "Failed to create route map $RmTagName (exit $rmExit)"
-  }
+  Invoke-RouteMapPut -MapName $RmTagName -Body $rmTagBody -Headers $armHeaders -BaseUri $vhubArmBase
   Write-Log "Route Map created: $RmTagName"
   Write-Host "        Created." -ForegroundColor Green
 }
@@ -466,23 +488,7 @@ if ($existingRmFilter) {
       )
     }
   }
-  $tmpFilter = [System.IO.Path]::GetTempFileName()
-  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($tmpFilter, ($rmFilterBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
-
-  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmFilterName}?api-version=2023-09-01"
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az rest --method PUT --uri $rmUri `
-    --body "@$tmpFilter" --headers "Content-Type=application/json" 2>&1
-  $rmExit = $LASTEXITCODE
-  $ErrorActionPreference = $oldEP
-
-  Remove-Item -Path $tmpFilter -Force -ErrorAction SilentlyContinue
-  if ($rmExit -ne 0) {
-    Write-Host "        Error:" -ForegroundColor Red
-    $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
-    throw "Failed to create route map $RmFilterName (exit $rmExit)"
-  }
+  Invoke-RouteMapPut -MapName $RmFilterName -Body $rmFilterBody -Headers $armHeaders -BaseUri $vhubArmBase
   Write-Log "Route Map created: $RmFilterName"
   Write-Host "        Created." -ForegroundColor Green
 }
@@ -512,23 +518,7 @@ if ($existingRmPrepend) {
       )
     }
   }
-  $tmpPrepend = [System.IO.Path]::GetTempFileName()
-  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($tmpPrepend, ($rmPrependBody | ConvertTo-Json -Depth 15 -Compress), $utf8NoBom)
-
-  $rmUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/virtualHubs/$VhubName/routeMaps/${RmPrependName}?api-version=2023-09-01"
-  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  $rmOut = az rest --method PUT --uri $rmUri `
-    --body "@$tmpPrepend" --headers "Content-Type=application/json" 2>&1
-  $rmExit = $LASTEXITCODE
-  $ErrorActionPreference = $oldEP
-
-  Remove-Item -Path $tmpPrepend -Force -ErrorAction SilentlyContinue
-  if ($rmExit -ne 0) {
-    Write-Host "        Error:" -ForegroundColor Red
-    $rmOut | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
-    throw "Failed to create route map $RmPrependName (exit $rmExit)"
-  }
+  Invoke-RouteMapPut -MapName $RmPrependName -Body $rmPrependBody -Headers $armHeaders -BaseUri $vhubArmBase
   Write-Log "Route Map created: $RmPrependName"
   Write-Host "        Created." -ForegroundColor Green
 }
