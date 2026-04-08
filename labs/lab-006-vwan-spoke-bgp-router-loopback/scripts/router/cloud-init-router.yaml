@@ -38,7 +38,9 @@ write_files:
        !
        ! vHub active-active BGP peers (deploy.ps1 Phase 4 overwrites with actual IPs)
        neighbor 10.0.0.69 remote-as 65515
+       neighbor 10.0.0.69 ebgp-multihop 5
        neighbor 10.0.0.70 remote-as 65515
+       neighbor 10.0.0.70 ebgp-multihop 5
        !
        address-family ipv4 unicast
         network 10.61.250.1/32
