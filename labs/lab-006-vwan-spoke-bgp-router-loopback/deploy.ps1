@@ -831,16 +831,13 @@ Write-Validation -Check "Client B VM provisioned" -Passed $allReady -Details $Cl
 Write-Log "Phase 3 completed in $phase3Elapsed" "SUCCESS"
 
 # ============================================
-# PHASE 4: Router Config (FRR + Loopback via cloud-init)
+# PHASE 4: Router Config (FRR + Loopback)
 # ============================================
 Write-Phase -Number 4 -Title "Router Config (FRR + Loopback)"
 
 $phase4Start = Get-Date
 
-# cloud-init handles: FRR install, bgpd=yes, IP forwarding, loopback interface.
-# The cloud-init frr.conf has placeholder vHub IPs. We now push the REAL ones
-# discovered in Phase 1 ($hubRouterIps) so BGP comes up without manual SSH.
-
+# Resolve router hub-side IP (NIC1)
 $routerHubIp = $nic1Ip
 if (-not $routerHubIp) {
   $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
@@ -865,14 +862,71 @@ Write-Host "Router BGP ASN     : $RouterBgpAsn" -ForegroundColor Gray
 Write-Host "Hub router IPs     : $($hubRouterIps -join ', ')" -ForegroundColor Gray
 Write-Host "Hub ASN            : $actualHubAsn" -ForegroundColor Gray
 
+# --- Wait for cloud-init to complete before pushing FRR config ---
+# VM provisioningState=Succeeded fires ~2 min before cloud-init finishes installing
+# FRR packages. Pushing config while apt is still running silently fails.
+# Standard cloud-init writes /var/lib/cloud/instance/boot-finished when done.
+Write-Host ""
+Write-Host "Waiting for cloud-init to complete on router VM (up to ~10 min)..." -ForegroundColor Gray
+$cloudInitDone = $false
+$maxCloudInitTries = 20
+for ($ci = 1; $ci -le $maxCloudInitTries; $ci++) {
+  if ($ci -gt 1) { Start-Sleep -Seconds 30 }
+
+  $ciResult = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $ciResult = az vm run-command invoke `
+    --resource-group $ResourceGroup `
+    --name $RouterVmName `
+    --command-id RunShellScript `
+    --scripts "test -f /var/lib/cloud/instance/boot-finished && echo CI_DONE || echo CI_PENDING" `
+    -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+
+  if (-not ($ciResult -and $ciResult.value -and $ciResult.value.Count -gt 0)) {
+    Write-Host "  [$ci/$maxCloudInitTries] No response from run-command yet, retrying..." -ForegroundColor DarkGray
+    continue
+  }
+
+  $ciRaw = $ciResult.value[0].message
+  $ciClean = ($ciRaw -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
+
+  if ($ciClean -match "This is a sample script") {
+    Write-Host "  [$ci/$maxCloudInitTries] RunShellScript extension still initializing..." -ForegroundColor DarkGray
+    continue
+  }
+
+  if ($ciClean -match "CI_DONE") {
+    $cloudInitDone = $true
+    $ciElapsed = Get-ElapsedTime -StartTime $phase4Start
+    Write-Host "  Cloud-init complete ($ciElapsed)." -ForegroundColor Green
+    break
+  }
+
+  $ciElapsed = Get-ElapsedTime -StartTime $phase4Start
+  Write-Host "  [$ciElapsed] Cloud-init still running... ($ci/$maxCloudInitTries)" -ForegroundColor DarkGray
+}
+
+if (-not $cloudInitDone) {
+  Write-Log "Cloud-init did not signal completion within timeout. Proceeding anyway." "WARN"
+}
+
+# --- Push FRR config with real vHub peer IPs ---
+# Retry loop required: first run-command may return RunShellScript health-check output
+# ("This is a sample script") while the extension is still enabling on a new VM.
+# Per CLAUDE.md: always retry with detection and strip [stdout]/[stderr] labels.
+$frrUpdateExit = -1
+$frrPushOk = $false
+
 if ($hubRouterIps.Count -ge 2) {
   $vhubPeerIp0 = $hubRouterIps[0]
   $vhubPeerIp1 = $hubRouterIps[1]
 
-  # Write FRR update script to a temp file, then invoke via RunCommand.
-  # This avoids quoting issues -- the script is a plain file, no shell metacharacter problems.
-  Write-Host "Pushing FRR config with real vHub peer IPs to router VM..." -ForegroundColor Gray
+  Write-Host "Pushing FRR config with real vHub peer IPs..." -ForegroundColor Gray
 
+  # Build the FRR update script. ebgp-multihop 5 is REQUIRED: vHub BGP IPs
+  # (10.0.0.x) are not in the router's directly-connected subnet (10.61.1.0/24).
+  # Without ebgp-multihop, FRR rejects TCP 179 from non-directly-connected peers.
   Ensure-Directory $LogsDir
   $frrUpdateScript = Join-Path $LogsDir "frr-update-temp.sh"
   $frrScriptContent = @"
@@ -895,7 +949,9 @@ router bgp $RouterBgpAsn
  no bgp ebgp-requires-policy
  !
  neighbor $vhubPeerIp0 remote-as $actualHubAsn
+ neighbor $vhubPeerIp0 ebgp-multihop 5
  neighbor $vhubPeerIp1 remote-as $actualHubAsn
+ neighbor $vhubPeerIp1 ebgp-multihop 5
  !
  address-family ipv4 unicast
   network $LoopbackInsideVnet
@@ -921,46 +977,81 @@ sysctl -w net.ipv4.ip_forward=1
 systemctl enable frr
 systemctl restart frr
 
-# Brief wait then report
 sleep 3
+echo "FRR_CONFIGURED"
 echo "=== bgpd daemon ==="
 systemctl is-active frr
-echo "=== FRR config neighbors ==="
+echo "=== neighbors configured ==="
 grep 'neighbor.*remote-as' /etc/frr/frr.conf
-echo "=== BGP Summary ==="
-vtysh -c 'show bgp summary' 2>/dev/null || echo 'BGP not converged yet'
 "@
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($frrUpdateScript, $frrScriptContent, $utf8NoBom)
 
-  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-  az vm run-command invoke `
-    --resource-group $ResourceGroup `
-    --name $RouterVmName `
-    --command-id RunShellScript `
-    --scripts @$frrUpdateScript `
-    --output none 2>$null
-  $frrUpdateExit = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrPref
+  # Retry loop with "sample script" detection (CLAUDE.md pattern)
+  $maxFrrTries = 4
+  for ($frrTry = 1; $frrTry -le $maxFrrTries; $frrTry++) {
+    if ($frrTry -gt 1) { Start-Sleep -Seconds 30 }
+
+    $frrResult = $null
+    $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $frrScriptArg = "@" + $frrUpdateScript
+    $frrResult = az vm run-command invoke `
+      --resource-group $ResourceGroup `
+      --name $RouterVmName `
+      --command-id RunShellScript `
+      --scripts $frrScriptArg `
+      -o json 2>$null | ConvertFrom-Json
+    $frrRunExit = $LASTEXITCODE
+    $ErrorActionPreference = $oldEP
+
+    if (-not ($frrResult -and $frrResult.value -and $frrResult.value.Count -gt 0)) {
+      Write-Host "  [try $frrTry/$maxFrrTries] No response from run-command." -ForegroundColor Yellow
+      continue
+    }
+
+    $frrRaw = $frrResult.value[0].message
+    $frrClean = ($frrRaw -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
+
+    if ($frrClean -match "This is a sample script") {
+      Write-Host "  [try $frrTry/$maxFrrTries] Extension still initializing, retrying in 30s..." -ForegroundColor DarkGray
+      continue
+    }
+
+    if ($frrClean -match "FRR_CONFIGURED") {
+      $frrPushOk = $true
+      $frrUpdateExit = 0
+      Write-Host "  FRR config pushed and FRR restarted." -ForegroundColor Green
+      # Show first 400 chars of output for confirmation
+      $preview = $frrClean.Substring(0, [Math]::Min(400, $frrClean.Length))
+      Write-Host "  $preview" -ForegroundColor DarkGray
+      break
+    }
+
+    # Got a real response but no FRR_CONFIGURED marker -- still counts as push attempt
+    Write-Log "FRR push try $frrTry output (no FRR_CONFIGURED marker): $frrClean" "WARN"
+    $frrUpdateExit = $frrRunExit
+    break
+  }
+
   Remove-Item $frrUpdateScript -Force -ErrorAction SilentlyContinue
 
-  if ($frrUpdateExit -eq 0) {
-    Write-Log "FRR config pushed with vHub peers: $vhubPeerIp0, $vhubPeerIp1"
-  } else {
-    Write-Log "FRR config push may have failed (exit $frrUpdateExit). Verify manually." "WARN"
+  if (-not $frrPushOk) {
+    Write-Log "FRR config push did not confirm success after $maxFrrTries tries. Verify manually." "WARN"
   }
 } else {
   Write-Host "  [WARN] Hub router IPs not available. Cloud-init placeholder config will be used." -ForegroundColor Yellow
-  Write-Host "  FRR BGP may not converge until IPs are corrected." -ForegroundColor Yellow
-  $frrUpdateExit = -1
+  Write-Host "  FRR BGP will not converge until IPs are corrected." -ForegroundColor Yellow
+  $vhubPeerIp0 = ""
+  $vhubPeerIp1 = ""
 }
 
 $phase4Elapsed = Get-ElapsedTime -StartTime $phase4Start
 Write-Host ""
 Write-Host "Phase 4 Validation:" -ForegroundColor Yellow
 Write-Validation -Check "Router hub-side IP resolved" -Passed ([bool]$routerHubIp) -Details "$routerHubIp (NIC: $routerNic1)"
+Write-Validation -Check "Cloud-init completed" -Passed $cloudInitDone -Details "boot-finished marker present"
 if ($hubRouterIps.Count -ge 2) {
-  Write-Validation -Check "FRR config pushed (real vHub IPs)" -Passed ($frrUpdateExit -eq 0) -Details "Neighbors: $vhubPeerIp0, $vhubPeerIp1 (ASN $actualHubAsn)"
+  Write-Validation -Check "FRR config pushed (ebgp-multihop + real vHub IPs)" -Passed $frrPushOk -Details "Peers: $vhubPeerIp0, $vhubPeerIp1 (ASN $actualHubAsn)"
 } else {
   Write-Validation -Check "FRR config pushed (real vHub IPs)" -Passed $false -Details "Hub router IPs not available"
 }
@@ -1161,39 +1252,59 @@ if ($bgpListRaw) {
   Write-JsonWithoutBom -Path $bgpListPath -Content $bgpListRaw
 }
 
-# Lightweight BGP adjacency check via RunCommand (best-effort, non-blocking)
+# BGP adjacency check via RunCommand -- retry loop required.
+# BGP needs 30-60s to converge after FRR restart. Running once immediately
+# always shows 0 established. Also apply "sample script" detection per CLAUDE.md.
 Write-Host ""
-Write-Host "Checking BGP adjacency on router (best-effort)..." -ForegroundColor Gray
-Start-Sleep -Seconds 10
+Write-Host "Checking BGP adjacency on router (up to ~3 min for convergence)..." -ForegroundColor Gray
 
 $bgpEstablishedCount = 0
-$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-$bgpCheckRaw = az vm run-command invoke `
-  --resource-group $ResourceGroup `
-  --name $RouterVmName `
-  --command-id RunShellScript `
-  --scripts "vtysh -c 'show bgp summary json'" `
-  -o json 2>$null
-$ErrorActionPreference = $oldErrPref
+$maxBgpCheckTries = 6
+for ($bgpCheck = 1; $bgpCheck -le $maxBgpCheckTries; $bgpCheck++) {
+  if ($bgpCheck -gt 1) { Start-Sleep -Seconds 30 }
 
-if ($bgpCheckRaw) {
-  try {
-    $bgpCheckObj = $bgpCheckRaw | ConvertFrom-Json
-    $bgpStdout = $bgpCheckObj.value[0].message
-    if ($bgpStdout) {
-      $peerMatches = [regex]::Matches($bgpStdout, '"state"\s*:\s*"Established"')
-      $bgpEstablishedCount = $peerMatches.Count
-      $estColor = if ($bgpEstablishedCount -ge 2) { "Green" } else { "Yellow" }
-      Write-Host "  BGP established peers on router: $bgpEstablishedCount" -ForegroundColor $estColor
-    }
-  } catch {
-    Write-Host "  Could not parse BGP summary from router (non-fatal)" -ForegroundColor DarkGray
+  $bgpCheckResult = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $bgpCheckResult = az vm run-command invoke `
+    --resource-group $ResourceGroup `
+    --name $RouterVmName `
+    --command-id RunShellScript `
+    --scripts "vtysh -c 'show bgp summary json' 2>/dev/null || echo BGP_NOT_READY" `
+    -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+
+  if (-not ($bgpCheckResult -and $bgpCheckResult.value -and $bgpCheckResult.value.Count -gt 0)) {
+    Write-Host "  [$bgpCheck/$maxBgpCheckTries] No response from run-command." -ForegroundColor DarkGray
+    continue
   }
+
+  $bgpRaw = $bgpCheckResult.value[0].message
+  $bgpClean = ($bgpRaw -replace '\[stdout\]', '' -replace '\[stderr\]', '').Trim()
+
+  if ($bgpClean -match "This is a sample script") {
+    Write-Host "  [$bgpCheck/$maxBgpCheckTries] Extension still initializing." -ForegroundColor DarkGray
+    continue
+  }
+
+  if ($bgpClean -match "BGP_NOT_READY" -or $bgpClean -match "vtysh: command not found") {
+    Write-Host "  [$bgpCheck/$maxBgpCheckTries] FRR/vtysh not ready yet (cloud-init may still be finishing)." -ForegroundColor DarkGray
+    continue
+  }
+
+  $estMatches = [regex]::Matches($bgpClean, '"state"\s*:\s*"Established"')
+  $bgpEstablishedCount = $estMatches.Count
+
+  if ($bgpEstablishedCount -ge 2) {
+    Write-Host "  BGP established with $bgpEstablishedCount peers." -ForegroundColor Green
+    break
+  }
+
+  Write-Host "  [$bgpCheck/$maxBgpCheckTries] BGP established: $bgpEstablishedCount/2 (still converging...)" -ForegroundColor Yellow
 }
 
 if ($bgpEstablishedCount -lt 2) {
-  Write-Host "  [INFO] BGP may still be converging. Allow 30-60s after FRR restart." -ForegroundColor Yellow
-  Write-Host "  Check: az vm run-command invoke -g $ResourceGroup -n $RouterVmName --command-id RunShellScript --scripts ""vtysh -c 'show bgp summary'""" -ForegroundColor DarkGray
+  Write-Host "  [INFO] BGP not yet at 2 established after retries. May still converge." -ForegroundColor Yellow
+  Write-Host "  Manual check: az vm run-command invoke -g $ResourceGroup -n $RouterVmName --command-id RunShellScript --scripts `"vtysh -c 'show bgp summary'`"" -ForegroundColor DarkGray
 }
 
 $phase5Elapsed = Get-ElapsedTime -StartTime $phase5Start
