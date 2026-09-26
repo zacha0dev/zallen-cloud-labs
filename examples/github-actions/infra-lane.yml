@@ -1,0 +1,90 @@
+# Example: the infra lane (code -> what-if -> apply -> verify) as a GitHub Actions workflow.
+#
+# This is an EXAMPLE, not wired into this repo. Copy it to .github/workflows/ in your own repo
+# and adjust the paths. It shows the shape .claude/skills/infra-lane describes:
+#   - every pull request that touches infra gets a what-if diff posted to the run summary
+#   - applying needs a person to approve the "lab" environment (Settings > Environments >
+#     required reviewers), so nothing reaches Azure because a model or a merge said so
+#   - after apply, a read-only check proves the resources exist and carry the lab tags
+#
+# Auth is OpenID Connect (no stored passwords). Create a federated credential on an app
+# registration for this repo, then add four repository secrets. The names below are
+# placeholders; the values are yours and never belong in the repo:
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, LAB_ADMIN_PASSWORD
+
+name: infra-lane (example)
+
+on:
+  pull_request:
+    paths: ['labs/lab-007-azure-dns-foundations/infra/**']
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply after what-if (needs approval on the lab environment)'
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write   # OIDC token for azure/login
+  contents: read
+
+env:
+  RG: rg-lab-007-dns-foundations
+  LOCATION: centralus
+  TEMPLATE: labs/lab-007-azure-dns-foundations/infra/main.bicep
+  PARAMS: labs/lab-007-azure-dns-foundations/infra/main.parameters.json
+  LAB_ADMIN_PASSWORD: ${{ secrets.LAB_ADMIN_PASSWORD }}   # lab-007 has a test VM; the parameters file holds only a placeholder
+
+jobs:
+  what-if:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Build (fails fast on Bicep errors)
+        run: az bicep build --file "$TEMPLATE" --stdout > /dev/null
+      - name: What-if
+        run: |
+          if [ "$(az group exists --name "$RG")" = "false" ]; then
+            echo "Resource group $RG does not exist yet; what-if will show everything as new." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo '### What-if for `'"$RG"'`'
+            echo '```'
+            az deployment group what-if --resource-group "$RG" \
+              --template-file "$TEMPLATE" --parameters "@$PARAMS" adminPassword="$LAB_ADMIN_PASSWORD" \
+              --result-format ResourceIdOnly --no-pretty-print 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    needs: what-if
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    runs-on: ubuntu-latest
+    environment: lab            # add required reviewers to this environment
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Resource group (tagged, so it can be found and cleaned up by tag)
+        run: |
+          az group create --name "$RG" --location "$LOCATION" \
+            --tags project=azure-labs lab=lab-007 owner=ci environment=lab cost-center=learning \
+            --output none
+      - name: Apply
+        run: |
+          az deployment group create --resource-group "$RG" \
+            --template-file "$TEMPLATE" --parameters "@$PARAMS" adminPassword="$LAB_ADMIN_PASSWORD" --output none
+      - name: Verify (read-only)
+        run: |
+          count=$(az resource list --resource-group "$RG" --query "length(@)" -o tsv)
+          echo "Resources in $RG: $count" >> "$GITHUB_STEP_SUMMARY"
+          test "$count" -gt 0

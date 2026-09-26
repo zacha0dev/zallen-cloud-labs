@@ -1,0 +1,29 @@
+# AI-Driven Cloud Labs (zallen-cloud-labs)
+
+> Personal Azure networking labs (Virtual WAN, BGP, S2S VPN, Azure DNS, Private Resolver, AVNM, Route Maps) that deploy, validate and destroy with one PowerShell CLI, plus a Claude Code package for running them by prompt: agents that plan with confirm steps, preview changes with what-if, apply only on an explicit yes, and prove every claim with a read-only measurement.
+
+Keywords: Claude Code Azure infrastructure, prompt-based infrastructure management, agentic IaC, AI-driven cloud operations lab, Azure Virtual WAN lab, BGP APIPA lab, Bicep, PowerShell 5.1.
+
+## Start here
+- [README](README.md): what the labs are, costs, quick start
+- [Agentic ops guide](docs/AGENTIC-OPS.md): the problem, 5-minute quickstart, prompts, how to adapt
+- [Claude Code package](.claude/README.md): agents, skills, rules, hooks
+
+## Claude Code package
+- [Safety rules](.claude/rules/safety.md): no cloud change without an explicit ask; no identifiers in commits
+- [Scope rules](.claude/rules/scope.md): what the repo owns (rg-lab-NNN-*, tag schema, lab.ps1)
+- [Infra lane skill](.claude/skills/infra-lane/SKILL.md): code, what-if, apply, verify
+- [Measure before claiming](.claude/skills/measure-before-claiming/SKILL.md): claim-to-check table
+- [Tagging as addressing](.claude/skills/tagging-as-addressing/SKILL.md): find everything by tag
+- [Cost guard](.claude/skills/cost-guard/SKILL.md): before, after and leftover scans
+- [CI example](examples/github-actions/infra-lane.yml): what-if on PR, approved apply, OIDC
+
+## Labs
+- [Lab catalog](docs/LABS/README.md): all labs with goal, cost, prerequisites
+- [Lab standard](docs/ops/LAB-STANDARD.md): phases 0-6, required files, parameters
+- [vWAN concepts](docs/DOMAINS/vwan.md)
+- [Known issues](docs/AUDIT.md)
+
+## Optional
+- [Changelog](docs/CHANGELOG.md)
+- [Contributing / building your own labs with AI](CONTRIBUTING.md)
