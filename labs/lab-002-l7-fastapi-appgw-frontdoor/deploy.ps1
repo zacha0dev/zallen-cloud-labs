@@ -176,9 +176,9 @@ Write-Log "Preflight checks passed" "SUCCESS"
 
 # Cost warning
 Write-Host ""
-Write-Host "Cost estimate: ~`$0.50/hour" -ForegroundColor Yellow
+Write-Host "Cost estimate: ~`$0.31/hour" -ForegroundColor Yellow
 Write-Host "  Application Gateway (Standard_v2): ~`$0.25/hr" -ForegroundColor Gray
-Write-Host "  Azure Front Door (Standard): ~`$0.22/hr" -ForegroundColor Gray
+Write-Host "  Azure Front Door (Standard): ~`$0.05/hr (`$35/month base fee) + requests/data" -ForegroundColor Gray
 Write-Host "  VM (Standard_B1s): ~`$0.01/hr" -ForegroundColor Gray
 Write-Host "  VNets: minimal" -ForegroundColor Gray
 Write-Host ""
@@ -208,7 +208,9 @@ Write-Phase -Number 1 -Title "Core Fabric (VNet + Subnets)"
 $phase1Start = Get-Date
 
 # Build tags
-$tagsString = "project=azure-labs lab=lab-002 owner=$Owner environment=lab cost-center=learning"
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-002" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 # Create Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
@@ -219,7 +221,7 @@ $ErrorActionPreference = $oldErrPref
 if ($existingRg) {
   Write-Host "  Resource group already exists, skipping..." -ForegroundColor DarkGray
 } else {
-  az group create --name $ResourceGroup --location $Location --tags $tagsString --output none
+  az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
   Write-Log "Resource group created: $ResourceGroup"
 }
 
@@ -237,7 +239,7 @@ if ($existingVnet) {
     --name $VnetName `
     --location $Location `
     --address-prefixes $VnetCidr `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "VNet created: $VnetName"
 }
@@ -291,7 +293,7 @@ if ($existingNsg) {
     --resource-group $ResourceGroup `
     --name $NsgName `
     --location $Location `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   az network vnet subnet update `
     --resource-group $ResourceGroup `
@@ -317,7 +319,7 @@ if ($existingPip) {
     --name $pipName `
     --sku Standard `
     --allocation-method Static `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "Public IP created: $pipName"
 }
@@ -350,7 +352,7 @@ if ($existingAgw -and $existingAgw.provisioningState -eq "Succeeded") {
     --vnet-name $VnetName `
     --subnet $SubnetAgwName `
     --public-ip-address $pipName `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "Application Gateway created: $AgwName"
 }
@@ -437,15 +439,22 @@ SVCEOF
     --authentication-type password `
     --custom-data $cloudInitPath `
     --nsg-rule NONE `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "FastAPI VM created: $VmName"
 }
 
 # Get VM private IP
+$vmNicId = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vmNicId = az vm show -g $ResourceGroup -n $VmName --query "networkProfile.networkInterfaces[0].id" -o tsv
+$ErrorActionPreference = $oldEap
+if (-not $vmNicId) { throw "Could not resolve NIC for VM $VmName." }
 $vmNicName = ($vmNicId.Split("/") | Select-Object -Last 1)
+$vmPrivateIp = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vmPrivateIp = az network nic show -g $ResourceGroup -n $vmNicName --query "ipConfigurations[0].privateIPAddress" -o tsv
+$ErrorActionPreference = $oldEap
 if (-not $vmPrivateIp) { throw "Could not resolve VM private IP." }
 
 Write-Host "  VM Private IP: $vmPrivateIp" -ForegroundColor Gray
@@ -532,7 +541,11 @@ if (-not $existingFePort) {
 }
 
 # Listener
+$feIpName = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $feIpName = az network application-gateway show -g $ResourceGroup -n $AgwName --query "frontendIPConfigurations[0].name" -o tsv
+$ErrorActionPreference = $oldEap
+if (-not $feIpName) { throw "Could not resolve frontend IP config for $AgwName." }
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingListener = az network application-gateway http-listener show -g $ResourceGroup --gateway-name $AgwName -n listener-80 -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldErrPref
@@ -569,7 +582,10 @@ if (-not $existingRule) {
 }
 
 # Get AGW public IP
+$agwPublicIp = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $agwPublicIp = az network public-ip show -g $ResourceGroup -n $pipName --query ipAddress -o tsv
+$ErrorActionPreference = $oldEap
 Write-Host "  Application Gateway Public IP: $agwPublicIp" -ForegroundColor Gray
 
 # Create Azure Front Door
@@ -668,7 +684,10 @@ if (-not $existingRoute) {
 }
 
 # Get Front Door hostname
+$afdHost = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $afdHost = az afd endpoint show -g $ResourceGroup --profile-name $AfdProfile --endpoint-name $endpointName --query hostName -o tsv
+$ErrorActionPreference = $oldEap
 
 $phase4Elapsed = Get-ElapsedTime -StartTime $phase4Start
 Write-Log "Phase 4 completed in $phase4Elapsed" "SUCCESS"
@@ -686,31 +705,46 @@ Write-Host ""
 $allValid = $true
 
 # Validate VNet
+$vnet = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vnet = az network vnet show -g $ResourceGroup -n $VnetName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $vnetValid = ($vnet -ne $null)
 Write-Validation -Check "VNet exists" -Passed $vnetValid -Details $VnetName
 if (-not $vnetValid) { $allValid = $false }
 
 # Validate Application Gateway
+$agw = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $agw = az network application-gateway show -g $ResourceGroup -n $AgwName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $agwValid = ($agw -ne $null -and $agw.provisioningState -eq "Succeeded")
 Write-Validation -Check "Application Gateway provisioned" -Passed $agwValid -Details "$AgwName (Standard_v2)"
 if (-not $agwValid) { $allValid = $false }
 
 # Validate VM
+$vm = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vm = az vm show -g $ResourceGroup -n $VmName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $vmValid = ($vm -ne $null)
 Write-Validation -Check "FastAPI VM exists" -Passed $vmValid -Details "$VmName (IP: $vmPrivateIp)"
 if (-not $vmValid) { $allValid = $false }
 
 # Validate Front Door
+$afd = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $afd = az afd profile show -g $ResourceGroup --profile-name $AfdProfile -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $afdValid = ($afd -ne $null)
 Write-Validation -Check "Front Door profile exists" -Passed $afdValid -Details $AfdProfile
 if (-not $afdValid) { $allValid = $false }
 
 # Validate tags
+$rg = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $rg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $rgTags = $rg.tags
 $tagsValid = ($rgTags.project -eq "azure-labs" -and $rgTags.lab -eq "lab-002")
 Write-Validation -Check "Tags applied correctly" -Passed $tagsValid -Details "project=azure-labs, lab=lab-002"

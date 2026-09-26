@@ -1,4 +1,4 @@
-# Agentic ops with Claude Code
+# Agentic Ops with Claude Code
 
 How to run this repo's Azure labs by prompt, safely: plan in plain words, preview every change,
 apply only when you say so, and prove each result with a measurement.
@@ -9,13 +9,13 @@ them into your own repos.
 
 ---
 
-## What problem this solves
+## What Problem This Solves
 
 Letting an AI agent touch real cloud infrastructure goes wrong in predictable ways:
 
 | Failure | What it looks like | What stops it here |
 |---|---|---|
-| **Silent changes** | The agent "fixes" something with a raw `az ... delete` | A pre-tool hook pauses any direct cloud-changing command and asks you ([`hooks/guard-cloud-changes.mjs`](../.claude/hooks/guard-cloud-changes.mjs)) |
+| **Silent changes** | The agent "fixes" something with a raw `az ... delete` | A pre-tool hook pauses direct cloud-changing commands run through the Bash or PowerShell tools and asks you ([`hooks/guard-cloud-changes.mjs`](../.claude/hooks/guard-cloud-changes.mjs)) |
 | **Confident, wrong claims** | "Deployed and working!" when BGP never came up | Every claim needs a measurement; a `measurer` agent runs read-only checks and reports PASS/FAIL |
 | **Forgotten resources** | A lab left running over a weekend | A session-start briefing lists live labs by tag; `cost-guard` and `session-closeout` check before and after |
 | **Drift** | Portal clicks nobody wrote down | One path for change: code, what-if, apply, verify (`skills/infra-lane`) |
@@ -23,7 +23,7 @@ Letting an AI agent touch real cloud infrastructure goes wrong in predictable wa
 
 ---
 
-## Five-minute quickstart (free)
+## Five-Minute Quickstart (Free)
 
 `lab-000` is a resource group and a VNet. It costs nothing, so it is the right first run.
 
@@ -51,7 +51,7 @@ What you should see:
 
 ---
 
-## Prompts that work well
+## Prompts That Work Well
 
 | You want | Say |
 |---|---|
@@ -66,16 +66,16 @@ What you should see:
 
 ---
 
-## How it fits together
+## How It Fits Together
 
 ```
-you ──prompt──▶ orchestrator ──plan with [CONFIRM] steps──▶ you say yes
+you ──prompt──> orchestrator ──plan with [CONFIRM] steps──> you say yes
                      │
       ┌──────────────┼──────────────────────┬──────────────────┐
   infra lane     deploy lane           records-librarian    claim-auditor
   code→what-if   build→gate→roll       README, VERSION,     no unmeasured claims,
   →apply→verify  →verify               CHANGELOG in step    no identifiers
-      └──────────────┴────────▶ measurer (read-only) ◀──────┘
+      └──────────────┴────────> measurer (read-only) <──────┘
                                  CLAIM / CHECK / RESULT / VERDICT
 ```
 
@@ -88,7 +88,7 @@ you ──prompt──▶ orchestrator ──plan with [CONFIRM] steps──▶ 
 - **Hooks** (`.claude/hooks/`) are the guard rails that do not depend on the model remembering
   a rule.
 
-### Tags are the address book
+### Tags Are the Address Book
 
 Every resource carries `project=azure-labs`, `lab=<lab-id>`, `owner`, `environment=lab` and
 `cost-center=learning`. That one convention is what makes "what's live?", "what does this lab
@@ -101,7 +101,7 @@ az resource list --tag lab=lab-007 -o table
 
 ---
 
-## Taking it to CI
+## Taking It to CI
 
 [`examples/github-actions/infra-lane.yml`](../examples/github-actions/infra-lane.yml) is the same
 lane as a workflow: what-if on every pull request, apply only after a person approves the `lab`
@@ -110,7 +110,7 @@ in the repo.
 
 ---
 
-## Adapting it to your own repo
+## Adapting It to Your Own Repo
 
 1. Copy `.claude/` into your repo.
 2. Edit `rules/scope.md`: your resource-group pattern, your tag schema, where your IaC lives,
@@ -121,7 +121,7 @@ in the repo.
 
 ---
 
-## Lessons worth keeping
+## Lessons Worth Keeping
 
 - **A hook beats a rule.** Rules in prompts get skipped under pressure; a pre-tool hook that
   pauses `az ... delete` does not.

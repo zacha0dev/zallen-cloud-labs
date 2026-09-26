@@ -225,7 +225,7 @@ aws sso login --profile aws-labs
 
 ## 5. Lab-003 Configuration
 
-Lab-003 uses the profile from its config file. Copy the template before first run:
+lab-003 uses the profile from its config file. Copy the template before first run:
 
 ```powershell
 copy .data\accounts.aws.template.json .data\accounts.aws.json

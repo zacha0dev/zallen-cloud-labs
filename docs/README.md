@@ -16,17 +16,11 @@
 
 ## 2. Labs
 
-| Lab | Description | Cloud | Est. Cost |
-|-----|-------------|-------|-----------|
-| [lab-000](../labs/lab-000_resource-group/README.md) | Resource Group + VNet baseline | Azure | Free |
-| [lab-001](../labs/lab-001-virtual-wan-hub-routing/README.md) | vWAN hub routing | Azure | ~$0.26/hr |
-| [lab-002](../labs/lab-002-l7-fastapi-appgw-frontdoor/README.md) | App Gateway + Front Door | Azure | ~$0.30/hr |
-| [lab-003](../labs/lab-003-vwan-aws-bgp-apipa/README.md) | vWAN to AWS VPN (BGP/APIPA) | Azure + AWS | ~$0.70/hr |
-| [lab-004](../labs/lab-004-vwan-default-route-propagation/README.md) | vWAN default route propagation | Azure | ~$0.60/hr |
-| [lab-005](../labs/lab-005-vwan-s2s-bgp-apipa/README.md) | vWAN S2S BGP/APIPA reference | Azure | ~$0.61/hr |
-| [lab-006](../labs/lab-006-vwan-spoke-bgp-router-loopback/README.md) | vWAN spoke BGP router + loopback | Azure | ~$0.37/hr |
+Eleven labs, lab-000 (free) to lab-010. Goals, costs, prerequisites and the recommended run
+order live in one place: **[LABS/README.md](LABS/README.md)**.
 
-Full catalog with prereqs and status: [LABS/README.md](LABS/README.md)
+To run them by prompt with Claude Code, see **[AGENTIC-OPS.md](AGENTIC-OPS.md)** and the
+package in [`.claude/`](../.claude/README.md).
 
 ---
 
@@ -38,6 +32,7 @@ Conceptual and operational guides organized by technology area.
 |--------|-------------|
 | [vWAN](DOMAINS/vwan.md) | Azure Virtual WAN concepts, routing, BGP, APIPA |
 | [AWS Hybrid](DOMAINS/aws-hybrid.md) | AWS account, Identity Center, CLI profile, lab-003 setup, troubleshooting |
+| [Azure DNS](DOMAINS/dns.md) | Private DNS zones, Private Resolver, forwarding rulesets, DNS Security Policy |
 | [Observability](DOMAINS/observability.md) | 3-gate health model, validation patterns, what not to do |
 
 Adding a new domain? Use [DOMAINS/_template.md](DOMAINS/_template.md).
@@ -51,6 +46,7 @@ Shared patterns and quick-reference material that applies across labs and domain
 | Reference | Description |
 |-----------|-------------|
 | [REFERENCE.md](REFERENCE.md) | BGP ASNs, cost safety, cleanup discipline, subscription schema, git workflow |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version |
 
 ---
 

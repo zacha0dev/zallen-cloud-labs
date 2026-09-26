@@ -15,7 +15,8 @@
 
 [CmdletBinding()]
 param(
-  [string]$RepoRoot
+  [string]$RepoRoot,
+  [switch]$Force   # skip the confirmation before untracked files are deleted
 )
 
 Set-StrictMode -Version Latest
@@ -100,7 +101,7 @@ try {
   $localHash = (git rev-parse HEAD 2>&1).ToString().Trim()
   $ErrorActionPreference = $oldErrPref
 
-  # ── Determine which remote ref to compare against ───────────────────────────
+  # -- Determine which remote ref to compare against ---------------------------
   # Problem: a user may have cloned when the default branch was 'master', but
   # the repo has since moved to 'main'.  If we blindly use origin/$branch we
   # compare against origin/master (which is stale / identical) and always say
@@ -110,7 +111,7 @@ try {
   #   1. Use the configured upstream tracking branch for the current branch.
   #   2. Fall back to origin's symbolic HEAD (the repo default branch).
   #   3. Try origin/main then origin/master as last-resort candidates.
-  # ────────────────────────────────────────────────────────────────────────────
+  # ----------------------------------------------------------------------------
   $remoteRef  = ""
   $updateNote = ""  # shown when pulling from a different branch than the local one
 
@@ -123,7 +124,7 @@ try {
     $remoteRef = $trackingRef.ToString().Trim()
   }
 
-  # 2. No tracking branch — resolve origin's symbolic HEAD
+  # 2. No tracking branch - resolve origin's symbolic HEAD
   if (-not $remoteRef) {
     $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $symHead = git symbolic-ref refs/remotes/origin/HEAD 2>$null
@@ -135,7 +136,7 @@ try {
     }
   }
 
-  # 3. Last resort — try origin/main then origin/master
+  # 3. Last resort - try origin/main then origin/master
   if (-not $remoteRef) {
     $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     foreach ($candidate in @("origin/main", "origin/master")) {
@@ -233,8 +234,31 @@ if ($hasLocalChanges) {
     Write-Host "  Overriding local changes with latest..." -ForegroundColor Yellow
     Push-Location $RepoRoot
     try {
+      # Preview what git clean would delete (untracked, non-ignored files -
+      # e.g. new scripts or notes you created under labs/)
+      $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $toDelete = @(git clean -nd 2>$null)
+      $ErrorActionPreference = $oldErrPref
+      $runClean = $true
+      if ($toDelete.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  WARNING: untracked files (including any you added under labs/) will be DELETED:" -ForegroundColor Red
+        foreach ($line in $toDelete) {
+          Write-Host "    $($line -replace '^Would remove ', '')" -ForegroundColor Yellow
+        }
+        Write-Host ""
+        if (-not $Force) {
+          $confirmClean = Read-Host "  Type DELETE to delete these files (anything else keeps them)"
+          if ($confirmClean -ne "DELETE") {
+            $runClean = $false
+            Write-Host "  Keeping untracked files. Only tracked files will be reset." -ForegroundColor DarkGray
+          }
+        }
+      }
       git checkout -- . 2>&1 | Out-Null
-      git clean -fd 2>&1 | Out-Null
+      if ($runClean) {
+        git clean -fd 2>&1 | Out-Null
+      }
     } finally {
       Pop-Location
     }
@@ -269,7 +293,7 @@ if ($hasLocalChanges) {
 }
 
 # Pull latest
-# $remoteRef is e.g. "origin/main" or "origin/master" — split into remote + branch
+# $remoteRef is e.g. "origin/main" or "origin/master" - split into remote + branch
 $remoteName   = ($remoteRef -split '/')[0]
 $remoteBranch = ($remoteRef -split '/', 2)[1]
 
@@ -281,7 +305,7 @@ try {
   $pullOk = ($LASTEXITCODE -eq 0)
 
   if (-not $pullOk) {
-    # ff-only failed (diverged history) — try rebase
+    # ff-only failed (diverged history) - try rebase
     $pullOutput = git pull --rebase $remoteName $remoteBranch 2>&1
     $pullOk = ($LASTEXITCODE -eq 0)
   }

@@ -241,13 +241,6 @@ lab-006-vwan-spoke-bgp-router-loopback/
 │   ├── validation.md            # CLI commands + PASS/FAIL criteria
 │   ├── observability.md         # Health gates + triage table
 │   └── experiments.md           # Loopback propagation tests
-├── infra/                       # Bicep modules (placeholders)
-│   ├── main.bicep
-│   └── modules/
-│       ├── vwan.bicep
-│       ├── spoke-a.bicep
-│       ├── spoke-b.bicep
-│       └── compute.bicep
 └── scripts/router/              # Router VM bootstrap
     ├── cloud-init-router.yaml   # FRR + loopback + IP forwarding
     ├── cloud-init-client.yaml   # Basic network tools

@@ -1,23 +1,26 @@
 # Audit - Living Log
 
 > Single source of truth for repository health, findings, and open issues.
-> See [audit/AUDIT-REPORT.md](audit/AUDIT-REPORT.md) for the full v0.6.0 snapshot.
+> See [audit/AUDIT-REPORT.md](audit/AUDIT-REPORT.md) for the historical v0.6.0 snapshot (2026-03).
 
 ---
 
 ## Current Status
 
+Last checked 2026-09-26 against the working tree (VERSION 0.11.0).
+
 | Area | Status | Last Checked |
 |------|--------|-------------|
-| Security (secrets) | PASS - no secrets committed | 2026-03-02 |
-| Azure setup flow | PASS - guided wizard in place | 2026-03-02 |
-| AWS isolation | PASS - optional, flag-gated | 2026-03-02 |
-| Lab scripts (PS 5.1) | PASS - no breaking syntax found | 2026-03-02 |
-| Cost-check references | PASS - all billable lab READMEs updated | 2026-03-02 |
-| Doc structure | PASS - canonical tree established | 2026-03-02 |
-| Stale links / stub docs | PASS - all stubs deleted, links fixed | 2026-03-02 |
-| Lab outputs.json | PARTIAL - schema defined; older labs partial | 2026-03-02 |
-| inspect.ps1 coverage | PARTIAL - labs 001, 006 only | 2026-03-02 |
+| Security (secrets) | PASS - `git grep` for GUIDs finds only placeholder and example IDs | 2026-09-26 |
+| Azure setup flow | PASS - `Invoke-SubsWizard` still in `setup.ps1` | 2026-09-26 |
+| AWS isolation | PASS - AWS setup still gated behind `setup.ps1 -Aws` | 2026-09-26 |
+| Lab scripts (PS 5.1) | PASS - all 47 `.ps1` files parse under Windows PowerShell 5.1; no en/em dashes in any `.ps1` (parse check only, not a run) | 2026-09-26 |
+| Cost-check references | PARTIAL - billable labs 001-007 and 009 cite `cost-check.ps1`; lab-008 and lab-010 READMEs do not (L-007) | 2026-09-26 |
+| Doc structure | PASS - canonical tree in place | 2026-09-26 |
+| Stale links / stub docs | PASS - no broken relative links in `docs/` or `labs/` Markdown (placeholders in `docs/DOMAINS/_template.md` aside) | 2026-09-26 |
+| Lab outputs.json | PARTIAL - all 11 labs write one; lab-004 writes to its own `outputs/` folder instead of `.data/lab-004/` | 2026-09-26 |
+| inspect.ps1 coverage | PARTIAL - labs 001, 006, 008, 009, 010; missing for 000, 002, 003, 004, 005, 007 (M-007) | 2026-09-26 |
+| Region allowlist (Phase 0) | PARTIAL - missing in labs 004 and 008 (M-008) | 2026-09-26 |
 
 ---
 
@@ -36,11 +39,13 @@
 | ID | Finding | File(s) | Status |
 |----|---------|---------|--------|
 | M-001 | No single onboarding doc for Azure-only path | `docs/` | FIXED - added `docs/ops/ONBOARDING.md` (2026-03-02) |
-| M-002 | Cost-check tool not referenced in lab READMEs | `labs/lab-00[1-6]/README.md` | FIXED (2026-03-02) |
+| M-002 | Cost-check tool not referenced in lab READMEs | `labs/lab-00[1-6]/README.md` | FIXED for labs 001-006 (2026-03-02); newer gaps tracked as L-007 |
 | M-003 | Doc sprawl: 5 separate AWS docs with overlapping content | `docs/aws-*.md` | FIXED - merged to `docs/DOMAINS/aws-hybrid.md` (2026-03-02) |
 | M-004 | No lab catalog with status/cost overview | `docs/` | FIXED - added `docs/LABS/README.md` (2026-03-02) |
-| M-005 | `inspect.ps1` missing for labs 002, 003, 004, 005 | `labs/lab-00[2-5]/` | OPEN |
-| M-006 | `outputs.json` schema partially implemented in older labs | `labs/lab-00[1-5]/` | OPEN |
+| M-005 | `inspect.ps1` missing for labs 002, 003, 004, 005 | `labs/lab-00[2-5]/` | SUPERSEDED by M-007 (2026-09-26) |
+| M-006 | `outputs.json` schema partially implemented in older labs | `labs/lab-00[1-5]/` | OPEN - lab-004 also writes outside `.data/` (checked 2026-09-26) |
+| M-007 | `inspect.ps1` missing for labs 000, 002, 003, 004, 005, 007 | `labs/lab-000_resource-group/`, `labs/lab-00[2-5]-*/`, `labs/lab-007-*/` | OPEN (2026-09-26) |
+| M-008 | No region allowlist in Phase 0. lab-004 never had one; lab-008 lost it when `deploy.ps1` was simplified (4db69b2). lab-003 does have one. | `labs/lab-004-*/deploy.ps1`, `labs/lab-008-*/deploy.ps1` | OPEN (2026-09-26) |
 
 ### LOW
 
@@ -49,7 +54,11 @@
 | L-001 | `git-&-github.md` is minimal / low-value | `docs/git-&-github.md` | DELETED (2026-03-02) |
 | L-002 | `setup-overview.md` duplicates ONBOARDING.md after update | `docs/setup-overview.md` | DELETED (2026-03-02) |
 | L-003 | `labs-config.md` duplicates ONBOARDING.md content | `docs/labs-config.md` | DELETED (2026-03-02) |
-| L-004 | Lab READMEs repeat vWAN concepts inline | `labs/lab-001,004,005,006/README.md` | PARTIAL - links added |
+| L-004 | Lab READMEs repeat vWAN concepts inline | `labs/lab-001,004,005,006/README.md` | PARTIAL - labs 001, 004, 006 link `DOMAINS/vwan.md`; lab-005 does not (checked 2026-09-26) |
+| L-005 | Duplicate helpers. `.packages/` (5 scripts) is referenced only by its own files. `tools/update-azure-labs.ps1` is referenced only by itself, while `setup.ps1` and `lab.ps1` call `scripts/update-labs.ps1`. | `.packages/`, `tools/update-azure-labs.ps1`, `scripts/update-labs.ps1` | OPEN (2026-09-26) |
+| L-006 | lab-000 folder uses an underscore (`lab-000_resource-group`); every other lab uses hyphens | `labs/lab-000_resource-group/` | OPEN (2026-09-26) |
+| L-007 | lab-008 and lab-010 READMEs do not mention `tools/cost-check.ps1` | `labs/lab-008-*/README.md`, `labs/lab-010-*/README.md` | OPEN (2026-09-26) |
+| L-008 | `lab.ps1 -Research` has no scenarios to run since lab-008's `research/` folder was removed (cfba7eb) | `lab.ps1` | OPEN (2026-09-26) |
 
 ---
 
@@ -108,8 +117,11 @@ Things that are correct today but tend to break over time without maintenance:
 
 ## Next Actions
 
-- [ ] **M-005**: Add `inspect.ps1` to labs 002, 003, 004, 005 (one per sprint)
+- [ ] **M-007**: Add `inspect.ps1` to labs 000, 002, 003, 004, 005, 007 (as time allows)
+- [ ] **M-008**: Add a Phase 0 region allowlist to labs 004 and 008
 - [ ] **M-006**: Align `outputs.json` schema across labs 001-005 per LAB-STANDARD.md
+- [ ] **L-005**: Remove or document `.packages/` and `tools/update-azure-labs.ps1`
+- [ ] **L-007**: Add the cost-check step to lab-008 and lab-010 READMEs
 - [ ] Add `docs/DOMAINS/app-gateway.md` when lab-002 is expanded
 - [ ] Add `docs/DOMAINS/bgp.md` for BGP concepts shared by labs 003, 005, 006
 - [ ] Add ADR for APIPA address range allocation (why 169.254.21.x and 169.254.22.x)

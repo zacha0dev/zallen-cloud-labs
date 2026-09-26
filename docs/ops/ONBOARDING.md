@@ -32,7 +32,7 @@ cd zallen-cloud-labs
 ### Step 2 - Set up Azure tools + subscription
 
 ```powershell
-.\setup.ps1 -Azure
+.\lab.ps1 -Setup          # same as .\setup.ps1 -Azure
 ```
 
 This will:
@@ -57,9 +57,8 @@ To set a specific subscription ID directly (non-interactive):
 ### Step 3 - Run the baseline lab
 
 ```powershell
-cd labs\lab-000_resource-group
-.\deploy.ps1
-.\destroy.ps1     # Always clean up!
+.\lab.ps1 -Deploy lab-000
+.\lab.ps1 -Destroy lab-000     # Always clean up!
 ```
 
 Lab 000 is free and takes about 20 seconds. Use it to verify everything is wired up correctly before running billable labs.
@@ -140,16 +139,17 @@ See [docs/DOMAINS/aws-hybrid.md](../DOMAINS/aws-hybrid.md) for detailed instruct
 
 ## Cost Safety
 
-Labs deploy real Azure resources. **Always run `.\destroy.ps1` when done.**
+Labs deploy real Azure resources. **Always run `.\lab.ps1 -Destroy <lab-id>` when done.**
 
 - **Free**: lab-000 (resource group + VNet only)
-- **Low cost (~$0.25-0.60/hr)**: lab-001, lab-002, lab-004, lab-005, lab-006
-- **Moderate cost (~$0.70/hr)**: lab-003 (Azure + AWS charges)
+- **Pennies per hour (~$0.01-0.03/hr)**: lab-007, lab-008, lab-009
+- **Low cost (~$0.26-0.61/hr)**: lab-001, lab-002, lab-004, lab-005, lab-006, lab-010
+- **Moderate cost (~$0.71/hr)**: lab-003 (Azure + AWS charges)
 
-To check for leftover billable resources:
+Exact figures per lab: [docs/LABS/README.md](../LABS/README.md). To check for leftover billable resources:
 
 ```powershell
-.\tools\cost-check.ps1
+.\lab.ps1 -Cost
 ```
 
 This is read-only and safe to run at any time.
@@ -240,8 +240,9 @@ If a script fails on PS 5.1 with a syntax error, please open an issue with the e
 
 | Goal | Command |
 |------|---------|
-| First lab (free, ~20s) | `cd labs\lab-000_resource-group && .\deploy.ps1` |
-| vWAN basics | `cd labs\lab-001-virtual-wan-hub-routing && .\deploy.ps1` |
-| Check running costs | `.\tools\cost-check.ps1` |
-| Clean up a lab | `.\destroy.ps1` (inside the lab directory) |
-| Full status check | `.\setup.ps1 -Status` |
+| First lab (free, ~20s) | `.\lab.ps1 -Deploy lab-000` |
+| vWAN basics | `.\lab.ps1 -Deploy lab-001` |
+| Check running costs | `.\lab.ps1 -Cost` |
+| Clean up a lab | `.\lab.ps1 -Destroy <lab-id>` |
+| Full status check | `.\lab.ps1 -Status` |
+| Run labs by prompt | [docs/AGENTIC-OPS.md](../AGENTIC-OPS.md) |

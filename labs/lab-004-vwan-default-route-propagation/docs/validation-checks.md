@@ -1,6 +1,6 @@
 # Validation Checks Explained
 
-This document explains each validation check in `validate.ps1` and the Azure networking concepts behind them.
+This document explains each validation check in Phase 5 (Validation) of `deploy.ps1` and the Azure networking concepts behind them.
 
 ## Overview
 

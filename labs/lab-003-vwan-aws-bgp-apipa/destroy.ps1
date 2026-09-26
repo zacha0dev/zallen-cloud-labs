@@ -37,6 +37,8 @@ Write-Host "===========================" -ForegroundColor Cyan
 Write-Host ""
 
 $destroyStartTime = Get-Date
+$azureStillDeleting = $false
+$azureCancelled = $false
 
 # ============================================
 # Azure Cleanup
@@ -55,13 +57,12 @@ if (-not $AwsOnly) {
   Ensure-AzureAuth -DoLogin
   az account set --subscription $SubscriptionId | Out-Null
 
-  # Check if resource group exists (use 'exists' to avoid error on missing RG)
-  $rgExists = $false
-  try {
-    $rgExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
-  } catch {
-    $rgExists = $false
-  }
+  # Check if resource group exists ('exists' never errors; EAP toggle as a safety net)
+  $rgExistsRaw = $null
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $rgExistsRaw = az group exists -n $ResourceGroup 2>$null
+  $ErrorActionPreference = $oldErrPref
+  $rgExists = ($rgExistsRaw -eq "true")
 
   if (-not $rgExists) {
     Write-Host "Azure resource group '$ResourceGroup' does not exist. Skipping Azure cleanup." -ForegroundColor Yellow
@@ -73,7 +74,10 @@ if (-not $AwsOnly) {
     Write-Host ""
 
     # List resources in the group
+    $resources = $null
+    $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     $resources = az resource list -g $ResourceGroup --query "[].{Name:name, Type:type}" -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = $oldErrPref
     if ($resources) {
       Write-Host "Resources in group:" -ForegroundColor White
       foreach ($r in $resources) {
@@ -83,69 +87,67 @@ if (-not $AwsOnly) {
     }
 
     # Confirmation
+    $deleteAzure = $true
     if (-not $Force) {
       Write-Host "WARNING: This will permanently delete all Azure resources!" -ForegroundColor Red
       $confirm = Read-Host "Type DELETE to confirm Azure deletion"
       if ($confirm -ne "DELETE") {
+        $deleteAzure = $false
+        $azureCancelled = $true
         Write-Host "Azure deletion cancelled." -ForegroundColor Yellow
         if (-not $AzureOnly) {
           Write-Host "Continuing to AWS cleanup..." -ForegroundColor Gray
         } else {
           exit 0
         }
-      } else {
-        # Delete resource group
-        Write-Host ""
-        Write-Host "Deleting Azure resource group: $ResourceGroup" -ForegroundColor Yellow
-        Write-Host "This may take 5-10 minutes..." -ForegroundColor Gray
-
-        $azureStartTime = Get-Date
-
-        az group delete --name $ResourceGroup --yes --no-wait
-
-        # Wait for deletion
-        Write-Host "Waiting for Azure deletion to complete..." -ForegroundColor Gray
-        $maxAttempts = 60
-        $attempt = 0
-
-        while ($attempt -lt $maxAttempts) {
-          $attempt++
-          $rgExists = az group exists -n $ResourceGroup 2>$null
-          if ($rgExists -eq "false") {
-            break
-          }
-
-          $elapsed = Get-ElapsedTime -StartTime $azureStartTime
-          Write-Host "  [$elapsed] Still deleting... (attempt $attempt/$maxAttempts)" -ForegroundColor DarkGray
-          Start-Sleep -Seconds 15
-        }
-
-        $azureElapsed = Get-ElapsedTime -StartTime $azureStartTime
-        Write-Host ""
-        Write-Host "Azure resource group deleted in $azureElapsed" -ForegroundColor Green
       }
-    } else {
-      # Force mode - delete immediately
-      Write-Host "Deleting Azure resource group: $ResourceGroup (Force mode)" -ForegroundColor Yellow
+    }
+
+    if ($deleteAzure) {
+      Write-Host ""
+      Write-Host "Deleting Azure resource group: $ResourceGroup" -ForegroundColor Yellow
+      Write-Host "This may take 5-10 minutes..." -ForegroundColor Gray
+
+      $azureStartTime = Get-Date
+
       az group delete --name $ResourceGroup --yes --no-wait
 
+      # Wait for deletion
+      Write-Host "Waiting for Azure deletion to complete..." -ForegroundColor Gray
       $maxAttempts = 60
       $attempt = 0
-      $azureStartTime = Get-Date
 
       while ($attempt -lt $maxAttempts) {
         $attempt++
-        $rgExists = az group exists -n $ResourceGroup 2>$null
-        if ($rgExists -eq "false") {
+        $rgExistsRaw = $null
+        $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+        $rgExistsRaw = az group exists -n $ResourceGroup 2>$null
+        $ErrorActionPreference = $oldErrPref
+        if ($rgExistsRaw -eq "false") {
           break
         }
+
         $elapsed = Get-ElapsedTime -StartTime $azureStartTime
         Write-Host "  [$elapsed] Still deleting... (attempt $attempt/$maxAttempts)" -ForegroundColor DarkGray
         Start-Sleep -Seconds 15
       }
 
       $azureElapsed = Get-ElapsedTime -StartTime $azureStartTime
-      Write-Host "Azure resource group deleted in $azureElapsed" -ForegroundColor Green
+
+      # Final verification
+      $rgExistsRaw = $null
+      $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $rgExistsRaw = az group exists -n $ResourceGroup 2>$null
+      $ErrorActionPreference = $oldErrPref
+
+      Write-Host ""
+      if ($rgExistsRaw -eq "false") {
+        Write-Host "  [PASS] Azure resource group deleted in $azureElapsed" -ForegroundColor Green
+      } else {
+        $azureStillDeleting = $true
+        Write-Host "  [WAIT] Azure resource group is still deleting after $azureElapsed - $ResourceGroup" -ForegroundColor Yellow
+        Write-Host "         Azure finishes the delete in the background." -ForegroundColor DarkGray
+      }
     }
   }
 }
@@ -214,6 +216,7 @@ if (-not $AzureOnly) {
         Write-Host ""
 
         # Confirmation
+        $deleteAws = $false
         if (-not $Force) {
           Write-Host "WARNING: This will permanently delete all AWS resources!" -ForegroundColor Red
           $confirm = Read-Host "Type DELETE to confirm AWS deletion"
@@ -363,10 +366,22 @@ if (-not $AzureOnly) {
 Write-Host ""
 Write-Host "==> Local Data Cleanup" -ForegroundColor Yellow
 
-$dataDir = Join-Path $RepoRoot ".data\lab-003"
-if (Test-Path $dataDir) {
-  Write-Host "Cleaning up local data: $dataDir" -ForegroundColor Gray
-  Remove-Item -Path $dataDir -Recurse -Force
+if ($azureStillDeleting -or $azureCancelled) {
+  Write-Host "Azure resource group still exists - keeping local outputs." -ForegroundColor Yellow
+  Write-Host "  Check progress with:  .\lab.ps1 -Cost -Lab lab-003" -ForegroundColor DarkGray
+  Write-Host "  Then re-run destroy to finish local cleanup." -ForegroundColor DarkGray
+} else {
+  # Remove generated files only. config.template.json is tracked in git and
+  # config.json is the user's own copy - both are kept.
+  $dataDir = Join-Path $RepoRoot ".data\lab-003"
+  $keepFiles = @("config.template.json", "config.json")
+  if (Test-Path $dataDir) {
+    $generated = @(Get-ChildItem -Path $dataDir -Force -ErrorAction SilentlyContinue | Where-Object { $keepFiles -notcontains $_.Name })
+    if ($generated.Count -gt 0) {
+      Write-Host "Removing $($generated.Count) generated file(s) from: $dataDir" -ForegroundColor Gray
+      $generated | Remove-Item -Recurse -Force
+    }
+  }
 }
 
 # Optionally clean up logs
@@ -382,6 +397,18 @@ if (-not $KeepLogs) {
 }
 
 $totalElapsed = Get-ElapsedTime -StartTime $destroyStartTime
+
+if ($azureStillDeleting) {
+  Write-Host ""
+  Write-Host ("=" * 60) -ForegroundColor Yellow
+  Write-Host "Azure resource group is still deleting." -ForegroundColor Yellow
+  Write-Host ("=" * 60) -ForegroundColor Yellow
+  Write-Host ""
+  Write-Host "Re-check with: .\lab.ps1 -Cost -Lab lab-003" -ForegroundColor Gray
+  Write-Host "Total time so far: $totalElapsed" -ForegroundColor Gray
+  Write-Host ""
+  exit 1
+}
 
 Write-Host ""
 Write-Host ("=" * 60) -ForegroundColor Green

@@ -263,7 +263,9 @@ Write-Log "Phase 0 completed in $phase0Elapsed" "SUCCESS"
 Write-Phase -Number 1 -Title "Core Fabric (vWAN + vHub)"
 
 $phase1Start = Get-Date
-$tagsString = "project=azure-labs lab=lab-010 owner=$Owner environment=lab cost-center=learning"
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-010" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 # Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
@@ -274,7 +276,7 @@ $ErrorActionPreference = $oldEP
 if ($existingRg) {
   Write-Host "  Already exists, skipping." -ForegroundColor DarkGray
 } else {
-  az group create --name $ResourceGroup --location $Location --tags $tagsString --output none
+  az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
   Write-Log "Resource group created: $ResourceGroup"
 }
 
@@ -292,7 +294,7 @@ if ($existingVwan) {
     --resource-group $ResourceGroup `
     --location $Location `
     --type Standard `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "vWAN created: $VwanName"
 }
@@ -314,7 +316,7 @@ if ($existingVhub -and $existingVhub.provisioningState -eq "Succeeded") {
       --vwan $VwanName `
       --location $Location `
       --address-prefix $VhubCidr `
-      --tags $tagsString `
+      --tags @tagArgs `
       --output none
     Write-Log "vHub creation started: $VhubName"
   }
@@ -349,7 +351,7 @@ if ($existingVnetA) {
     --address-prefixes $VnetACidr `
     --subnet-name $SubnetAName `
     --subnet-prefixes $SubnetACidr `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "Spoke-A VNet created: $VnetAName"
 }
@@ -370,7 +372,7 @@ if ($existingVnetB) {
     --address-prefixes $VnetBCidr `
     --subnet-name $SubnetBName `
     --subnet-prefixes $SubnetBCidr `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "Spoke-B VNet created: $VnetBName"
 }
@@ -637,8 +639,14 @@ Write-Phase -Number 4 -Title "Hub Connections + Route Map Assignment"
 $phase4Start = Get-Date
 
 # Resolve VNet IDs
-$vnetAId = az network vnet show -g $ResourceGroup -n $VnetAName --query id -o tsv
-$vnetBId = az network vnet show -g $ResourceGroup -n $VnetBName --query id -o tsv
+$vnetAId = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$vnetAId = az network vnet show -g $ResourceGroup -n $VnetAName --query id -o tsv --only-show-errors
+$ErrorActionPreference = $oldEap
+$vnetBId = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$vnetBId = az network vnet show -g $ResourceGroup -n $VnetBName --query id -o tsv --only-show-errors
+$ErrorActionPreference = $oldEap
 
 if (-not $vnetAId) { throw "Could not resolve VNet ID for $VnetAName" }
 if (-not $vnetBId) { throw "Could not resolve VNet ID for $VnetBName" }

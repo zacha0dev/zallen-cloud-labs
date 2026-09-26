@@ -247,8 +247,14 @@ Common errors and how to resolve them.
 All resources must be tagged at the resource group level at minimum:
 
 ```powershell
-$tags = "project=azure-labs lab=lab-NNN owner=$Owner environment=lab cost-center=learning"
+. (Join-Path $RepoRoot "scripts\labs-common.ps1")
+$tagArgs = Get-LabTagArgs (Get-LabTags -LabId "lab-NNN" -Owner $Owner)
+az group create --name $ResourceGroup --location $Location --tags @tagArgs
 ```
+
+Tags: `project=azure-labs lab=lab-NNN owner=<owner> environment=lab cost-center=learning`. Pass
+them as separate arguments (the helper does this); one space-separated string is unreliable on
+Windows (see CLAUDE.md).
 
 ---
 
@@ -263,3 +269,10 @@ $tags = "project=azure-labs lab=lab-NNN owner=$Owner environment=lab cost-center
 | lab-004 | Yes | Yes | - | Yes | Yes | Partial |
 | lab-005 | Yes | Yes | - | Yes | Yes | Partial |
 | lab-006 | Yes | Yes | Yes | Yes | Yes | Yes |
+| lab-007 | Yes | Yes | - | Yes | Yes | Yes |
+| lab-008 | Yes | Yes | Yes | Yes (no region allowlist) | Yes | Yes |
+| lab-009 | Yes | Yes | Yes | Yes | Yes | Yes |
+| lab-010 | Yes | Yes | Yes | Yes | Yes | Yes |
+
+Last reviewed 2026-09-26. Labs without `inspect.ps1` validate in deploy Phase 5; open gaps are
+tracked in [docs/AUDIT.md](../AUDIT.md).

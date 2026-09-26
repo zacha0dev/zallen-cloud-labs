@@ -135,10 +135,15 @@ Write-Phase "Phase 1: Core Fabric (Resource Group + VNets)"
 $phase1Start = Get-Date
 
 if (-not $Owner) {
+  $Owner = $null
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $Owner = (az account show --query "user.name" -o tsv 2>$null)
+  $ErrorActionPreference = $oldEap
   if (-not $Owner) { $Owner = "lab-owner" }
 }
-$Tags = "project=azure-labs lab=lab-009 owner=$Owner environment=lab cost-center=learning"
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-009" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 # Resource Group
 $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
@@ -151,7 +156,7 @@ if ($existingRg) {
   az group create `
     --name $ResourceGroup `
     --location $Location `
-    --tags $Tags | Out-Null
+    --tags @tagArgs | Out-Null
   Write-Pass "Created: $ResourceGroup ($Location)"
 }
 
@@ -178,7 +183,7 @@ foreach ($v in $vnets) {
       --address-prefixes $v.Prefix `
       --subnet-name "snet-default" `
       --subnet-prefixes $v.Subnet `
-      --tags $Tags | Out-Null
+      --tags @tagArgs | Out-Null
     Write-Pass "Created: $($v.Name)"
   }
 }

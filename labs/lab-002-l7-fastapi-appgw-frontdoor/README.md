@@ -97,10 +97,10 @@ cd labs/lab-002-l7-fastapi-appgw-frontdoor
 | Resource | Approximate Cost |
 |----------|------------------|
 | Application Gateway (Standard_v2) | ~$0.25/hour |
-| Front Door (Standard) | ~$0.03/hour + data |
+| Front Door (Standard) | ~$0.05/hour ($35/month base fee) + requests/data |
 | VM (Standard_B1s) | ~$0.01/hour |
 
-**Estimated total: ~$0.30/hour (~$7.20/day)**
+**Estimated total: ~$0.31/hour (~$7.44/day)**
 
 Run `destroy.ps1` when done to avoid ongoing charges.
 

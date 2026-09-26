@@ -10,8 +10,7 @@
 [CmdletBinding()]
 param(
   [string]$SubscriptionKey,
-  [switch]$Force,
-  [switch]$KeepLogs
+  [switch]$Force
 )
 
 Set-StrictMode -Version Latest
@@ -56,7 +55,10 @@ if (-not $existingRg) {
 }
 
 # List current resources for confirmation
+$resources = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $resources = az resource list -g $ResourceGroup --query "[].{Name:name, Type:type}" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 Write-Host "Resources to delete:" -ForegroundColor Yellow
 Write-Host "  Resource Group  : $ResourceGroup" -ForegroundColor Gray
 Write-Host "  Subscription    : $SubscriptionId" -ForegroundColor Gray
@@ -101,11 +103,14 @@ $ErrorActionPreference = $oldEP
 if ($avnmExists) {
   # Determine which regions have active deployments
   $activeRegions = @()
+  $activeConnConfigs = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $activeConnConfigs = az network manager list-deploy-status `
     --network-manager-name $AvnmName `
     --resource-group $ResourceGroup `
     --regions "eastus" "westus2" "eastus2" "westeurope" `
     -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
 
   if ($activeConnConfigs -and $activeConnConfigs.value) {
     foreach ($dep in $activeConnConfigs.value) {
@@ -156,7 +161,10 @@ $attempt     = 0
 
 while ($attempt -lt $maxAttempts) {
   $attempt++
+  $rgExists = $null
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rgExists = az group exists -n $ResourceGroup 2>$null
+  $ErrorActionPreference = $oldEap
   if ($rgExists -eq "false") { break }
 
   $elapsed = Get-ElapsedTime -StartTime $deleteStart
@@ -165,7 +173,10 @@ while ($attempt -lt $maxAttempts) {
 }
 
 $deleteElapsed = Get-ElapsedTime -StartTime $deleteStart
+$rgStillExists = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $rgStillExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
+$ErrorActionPreference = $oldEap
 
 if (-not $rgStillExists) {
   Write-Host "  [PASS] Resource group deleted: $ResourceGroup" -ForegroundColor Green

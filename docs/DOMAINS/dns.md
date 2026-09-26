@@ -95,7 +95,7 @@ VM query → Azure DNS → ruleset evaluation → [policy check] → block/pass
 
 ### Cache persistence (sticky block behavior)
 
-Even when a policy blocks a domain, cached responses at the resolver or client may persist for their TTL. This leads to what practitioners call **sticky block behavior**:
+Even when a policy blocks a domain, cached responses at the resolver or client may persist for their TTL. This leads to what this repo calls **sticky block behavior**:
 
 1. Client resolves `app.internal.lab` → answer cached with TTL = 30s
 2. Policy is applied: block `app.internal.lab`
@@ -117,11 +117,7 @@ To isolate cache behavior:
 
 ### Lab reference
 
-[lab-008 StickyBlock mode](../../labs/lab-008-azure-dns-private-resolver/README.md#dns-security-policy--sticky-block) runs this test automatically:
-- Seeds a test DNS record
-- Applies a block (DNS Security Policy or forwarding rule redirect to RFC 5737 TEST-NET)
-- Queries before/after/post-removal in a loop
-- Emits structured evidence JSON to `.data/lab-008/test-results.json`
+[lab-008](../../labs/lab-008-azure-dns-private-resolver/README.md) deploys the DNS Security Policy and a blocked-domain list, so you can reproduce this by hand from the test VM: query a name, add it to the domain list, query again inside and after the TTL window. An automated version of this test (the former StickyBlock mode) was removed when lab-008 became a clean deployment reference.
 
 ---
 

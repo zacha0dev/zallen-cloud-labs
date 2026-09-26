@@ -1,5 +1,5 @@
 <#
-lab.ps1 - Azure Cloud Labs CLI
+lab.ps1 - AI-Driven Cloud Labs CLI
 
 Single entry point for all lab operations. Wraps setup, deployment, cost
 checking, and inspection tooling into one place for fast onboarding and
@@ -15,15 +15,14 @@ Usage:
   .\lab.ps1 -List                        # List all labs with cost and cloud
   .\lab.ps1 -Deploy lab-001                         # Deploy a lab
   .\lab.ps1 -Deploy lab-001 -Force                  # Deploy without confirmation prompts
-  .\lab.ps1 -Deploy lab-001 -AdminPassword "P@ss1"  # Supply VM password upfront
+  .\lab.ps1 -Deploy lab-001 -AdminPassword "<password>"  # Supply VM password upfront
   .\lab.ps1 -Deploy lab-009 -Location2 westeurope   # Override second region (lab-009)
-  .\lab.ps1 -Deploy lab-008 -Mode StickyBlock       # Select lab mode variant (lab-008)
-  .\lab.ps1 -Deploy lab-008 -SkipTests              # Deploy infra only, skip validation phases
   .\lab.ps1 -Destroy lab-001             # Destroy a lab
   .\lab.ps1 -Inspect lab-001             # Run post-deploy inspection
-  .\lab.ps1 -Research lab-008                        # List research scenarios for a lab
-  .\lab.ps1 -Research lab-008 -Scenario cache-recovery             # Run a scenario
-  .\lab.ps1 -Research lab-008 -Scenario cache-recovery -Background # Run in background
+  .\lab.ps1 -Validate lab-001            # Alias for -Inspect
+  .\lab.ps1 -Research <lab-id>                      # List research scenarios (labs/<lab>/research/*.ps1)
+  .\lab.ps1 -Research <lab-id> -Scenario <name>     # Run a scenario
+  .\lab.ps1 -Research <lab-id> -Scenario <name> -Background # Run in background
   .\lab.ps1 -Cost                        # Scan for billable resources (all labs)
   .\lab.ps1 -Cost -Lab lab-003           # Cost check for a specific lab
   .\lab.ps1 -Cost -AwsProfile aws-labs   # Include AWS in cost check
@@ -42,6 +41,7 @@ param(
   [switch]$Deploy,
   [switch]$Destroy,
   [switch]$Inspect,
+  [switch]$Validate,                    # Alias for -Inspect
   [switch]$Cost,
   [switch]$Settings,
   [switch]$Update,
@@ -57,12 +57,12 @@ param(
   [string]$Location2,                   # Second region (lab-009 dual-region)
   [string]$AdminPassword,               # VM admin password (labs with VMs)
   [string]$AdminUser,                   # VM admin username (default per-lab: azureuser)
-  [string]$Mode,                        # Lab mode variant (lab-008: Base|StickyBlock|ForwardingVariants)
+  [string]$Mode,                        # Lab mode variant; passed only to labs whose deploy.ps1 declares -Mode (none today)
   [switch]$Force,                       # Skip confirmation prompts
   [string]$AwsProfile = "aws-labs",     # AWS CLI profile (used with -Cost / lab-003)
   [string]$Scenario,                    # Research scenario name (used with -Research)
   [switch]$Background,                  # Run research scenario as a background job
-  [switch]$SkipTests,                   # Skip validation phases (deploy.ps1 -SkipTests pass-through)
+  [switch]$SkipTests,                   # Passed only to labs whose deploy.ps1 declares -SkipTests (none today)
 
   # Watch-Endpoint pass-through (used with -Watch)
   [switch]$Watch,                       # Watch an endpoint for DNS/TCP/TLS/HTTP behavior
@@ -71,7 +71,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$env:PYTHONWARNINGS = "ignore::UserWarning"
+$env:PYTHONWARNINGS = "ignore"   # also silences OpenSSL warnings from 32-bit az Python
 
 $RepoRoot = $PSScriptRoot
 
@@ -82,14 +82,15 @@ $RepoRoot = $PSScriptRoot
 $LabCatalog = @{
   "lab-000" = @{ Desc = "Resource Group + VNet baseline";                Cost = "Free";       Cloud = "Azure";       CostPerHr = 0.00 }
   "lab-001" = @{ Desc = "vWAN hub routing";                              Cost = "~`$0.26/hr"; Cloud = "Azure";       CostPerHr = 0.26 }
-  "lab-002" = @{ Desc = "App Gateway + Front Door (L7 LB)";             Cost = "~`$0.30/hr"; Cloud = "Azure";       CostPerHr = 0.30 }
-  "lab-003" = @{ Desc = "vWAN to AWS VPN - BGP/APIPA";                  Cost = "~`$0.70/hr"; Cloud = "Azure + AWS"; CostPerHr = 0.70 }
+  "lab-002" = @{ Desc = "App Gateway + Front Door (L7 LB)";             Cost = "~`$0.31/hr"; Cloud = "Azure";       CostPerHr = 0.31 }
+  "lab-003" = @{ Desc = "vWAN to AWS VPN - BGP/APIPA";                  Cost = "~`$0.71/hr"; Cloud = "Azure + AWS"; CostPerHr = 0.71 }
   "lab-004" = @{ Desc = "vWAN default route propagation";               Cost = "~`$0.60/hr"; Cloud = "Azure";       CostPerHr = 0.60 }
   "lab-005" = @{ Desc = "vWAN S2S BGP/APIPA reference";                 Cost = "~`$0.61/hr"; Cloud = "Azure";       CostPerHr = 0.61 }
   "lab-006" = @{ Desc = "vWAN spoke BGP router + loopback";             Cost = "~`$0.37/hr"; Cloud = "Azure";       CostPerHr = 0.37 }
   "lab-007" = @{ Desc = "Azure Private DNS Zones + auto-registration";  Cost = "~`$0.02/hr"; Cloud = "Azure";       CostPerHr = 0.02 }
-  "lab-008" = @{ Desc = "DNS Private Resolver + forwarding ruleset";    Cost = "~`$0.03/hr"; Cloud = "Azure";       CostPerHr = 0.03 }
+  "lab-008" = @{ Desc = "DNS Private Resolver + DNS Security Policy";   Cost = "~`$0.03/hr"; Cloud = "Azure";       CostPerHr = 0.03 }
   "lab-009" = @{ Desc = "AVNM dual-region hub-spoke + Global Mesh";    Cost = "~`$0.01/hr"; Cloud = "Azure";       CostPerHr = 0.01 }
+  "lab-010" = @{ Desc = "vWAN Route Maps";                              Cost = "~`$0.26/hr"; Cloud = "Azure";       CostPerHr = 0.26 }
 }
 
 # =============================================================================
@@ -200,7 +201,7 @@ function Discover-Labs {
 
 function Show-Help {
   Write-Host ""
-  Write-Host "Azure Cloud Labs CLI" -ForegroundColor Cyan
+  Write-Host "AI-Driven Cloud Labs CLI" -ForegroundColor Cyan
   Write-Host "====================" -ForegroundColor Cyan
   Write-Host ""
   Write-Host "USAGE" -ForegroundColor White
@@ -217,6 +218,7 @@ function Show-Help {
   Write-Host "  -Deploy <lab-id>            Deploy a lab (e.g. -Deploy lab-001)"
   Write-Host "  -Destroy <lab-id>           Tear down a lab cleanly"
   Write-Host "  -Inspect <lab-id>           Run post-deploy validation on a lab"
+  Write-Host "  -Validate <lab-id>          Alias for -Inspect"
   Write-Host ""
   Write-Host "RESEARCH" -ForegroundColor White
   Write-Host "  -Research <lab-id>                    List available research scenarios for a lab"
@@ -245,7 +247,6 @@ function Show-Help {
   Write-Host "  -AdminPassword <pwd>        VM admin password (prompted if needed and omitted)"
   Write-Host "  -AdminUser <name>           VM admin username (default: azureuser)"
   Write-Host "  -Location2 <region>         Second region for lab-009 (default: westus2)"
-  Write-Host "  -Mode <variant>             Lab mode for lab-008 (Base|StickyBlock|ForwardingVariants)"
   Write-Host "  -Scenario <name>            Research scenario name (used with -Research)"
   Write-Host "  -Background                 Run research scenario as a background job"
   Write-Host ""
@@ -258,12 +259,10 @@ function Show-Help {
   Write-Host "  .\lab.ps1 -Destroy lab-001            # Clean up after a lab session"
   Write-Host "  .\lab.ps1 -Cost                       # Check for leftover billable resources"
   Write-Host "  .\lab.ps1 -Cost -AwsProfile aws-labs  # Cost check including AWS"
-  Write-Host "  .\lab.ps1 -Research lab-008            # List research scenarios for lab-008"
-  Write-Host "  .\lab.ps1 -Research lab-008 -Scenario cache-recovery             # Run scenario"
-  Write-Host "  .\lab.ps1 -Research lab-008 -Scenario cache-recovery -Background # Background"
+  Write-Host "  .\lab.ps1 -Research <lab-id>          # List research scenarios (labs/<lab>/research/*.ps1)"
   Write-Host ""
   Write-Host "RECOMMENDED RUN ORDER" -ForegroundColor DarkGray
-  Write-Host "  lab-000 (free) -> lab-001 -> lab-006 -> lab-004/005 -> lab-002 -> lab-003 -> lab-007 -> lab-008 -> lab-009" -ForegroundColor DarkGray
+  Write-Host "  lab-000 (free) -> lab-001 -> lab-006 -> lab-004/005 -> lab-002 -> lab-003 -> lab-007 -> lab-008 -> lab-009 -> lab-010" -ForegroundColor DarkGray
   Write-Host ""
   Write-Host "  Always run -Destroy after each lab session to avoid charges." -ForegroundColor Yellow
   Write-Host ""
@@ -911,7 +910,7 @@ function Invoke-Research {
 
 function Invoke-Watch {
   if (-not $WatchTarget) {
-    Write-Err "-Watch requires a target.  Example: .\lab.ps1 -Watch -WatchTarget myapp.azure.com"
+    Write-Err "-Watch requires a target.  Example: .\lab.ps1 -Watch -WatchTarget myapp.example.com"
     Write-Warn "For full parameter control, run: .\tools\Watch-Endpoint.ps1 -?"
     exit 1
   }
@@ -949,7 +948,7 @@ function Invoke-Update {
 $LabTarget = $Lab
 
 # If no action switch is set, show help
-$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Cost -or $Settings -or $Update -or $Research -or $Watch
+$anyAction = $Help -or $Status -or $Login -or $Setup -or $List -or $Deploy -or $Destroy -or $Inspect -or $Validate -or $Cost -or $Settings -or $Update -or $Research -or $Watch
 if (-not $anyAction) {
   Show-Help
   exit 0
@@ -962,7 +961,7 @@ if ($Setup)    { Invoke-Setup }
 if ($List)     { Invoke-List }
 if ($Deploy)   { Invoke-Deploy -LabId $LabTarget }
 if ($Destroy)  { Invoke-Destroy -LabId $LabTarget }
-if ($Inspect)  { Invoke-Inspect -LabId $LabTarget }
+if ($Inspect -or $Validate)  { Invoke-Inspect -LabId $LabTarget }
 if ($Cost)     { Invoke-Cost }
 if ($Settings) { Invoke-Settings }
 if ($Update)   { Invoke-Update }

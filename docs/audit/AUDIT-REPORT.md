@@ -1,10 +1,11 @@
+> Historical snapshot (2026-03). Superseded by [docs/AUDIT.md](../AUDIT.md); kept for the record.
+
 # Repository Audit Report
 
 **Date:** 2026-03-02
 **Repo:** `zacha0dev/zallen-cloud-labs`
 **Version:** 0.6.0
 **Scope:** Full repository — labs, scripts, tooling, documentation, security posture
-**Audience:** Public — safe to share with any engineer, vendor-neutral, no internal references
 
 ---
 
@@ -13,10 +14,10 @@
 - **What it is:** A personal hands-on cloud-networking lab collection focused on Azure Virtual WAN (vWAN), BGP routing, hybrid cloud connectivity, and Layer-7 load balancing. One lab covers Azure–AWS hybrid VPN via BGP over APIPA.
 - **Who it's for:** Cloud/network engineers learning Azure networking from first principles, or those validating vWAN routing behavior in a reproducible, cost-safe sandbox.
 - **Current maturity:** Functional and deployable (v0.6.0). Six substantive labs plus a baseline. Platform scripting is solid. Documentation is above average for a personal lab repo but has notable gaps in consistency.
-- **Public-safety posture:** Good. Gitignore patterns are thorough; all templates use placeholder GUIDs; no customer data or internal references found in any tracked file.
+- **Public-safety posture:** Good. Gitignore patterns are thorough; all templates use placeholder GUIDs; no real IDs or secrets found in any tracked file.
 - **Top risks:** Naming inconsistency in lab-000 (underscore vs. hyphen), missing `inspect.ps1` in most labs, stale path references in docs, Bicep IaC only partially adopted, no cross-lab dependency documentation, and no CI pipeline.
 - **Cost posture:** Honest and visible in every lab README. The `cost-check.ps1` tool closes the loop. No issues found.
-- **PowerShell 5.1 hardening:** Lab-006 is fully hardened; earlier labs may have partial coverage. The common library (`labs-common.ps1`) applies the key mitigations.
+- **PowerShell 5.1 hardening:** lab-006 is fully hardened; earlier labs may have partial coverage. The common library (`labs-common.ps1`) applies the key mitigations.
 - **Key wins:** Phased deployment pattern, idempotent redeploy support, `[PASS]/[FAIL]` validation gates, and a shared helpers library are all well-executed.
 - **Key gaps:** No standard script interface enforced across all labs; lab-000 naming anomaly; no required `inspect.ps1`; docs reference nonexistent `run.ps1` and `scripts/setup.ps1 -DoLogin`; Bicep IaC exists only in labs 004 and 006.
 - **Recommended first action:** Standardize the per-lab interface (deploy / destroy / inspect) and enforce it via a lab README template before adding more labs.
@@ -28,20 +29,19 @@
 | Severity | ID | Finding |
 |----------|----|---------|
 | [HIGH] | F-01 | `lab-000` folder name uses underscore (`lab-000_resource-group`) while all other labs use hyphens (`lab-001-...`). This breaks any glob/automation that assumes a consistent pattern. |
-| [HIGH] | F-02 | `docs/setup-overview.md` references `.\run.ps1 status` (line 96) — this file does not exist. Engineers following this guide will immediately fail. |
-| [HIGH] | F-03 | `docs/setup-overview.md` references `.\validate.ps1` per-lab (line 102) — no lab exposes this entry point; validation is embedded inside `deploy.ps1` Phase 5. |
-| [HIGH] | F-04 | `docs/setup-overview.md` references `.\scripts\setup.ps1 -DoLogin` (line 99) — `setup.ps1` lives at repo root, not `scripts/`; the `-DoLogin` flag is on `labs-common.ps1:Ensure-AzureAuth` but not exposed as a root `setup.ps1` parameter. |
-| [MED] | F-05 | `inspect.ps1` only exists in labs 001 and 006. Labs 002–005 have no inspection entry point; engineers must compose ad-hoc `az` commands, negating the "observable by default" goal. |
+| [HIGH] | F-02 | ~~`docs/setup-overview.md` references `.\run.ps1 status` (line 96) — this file does not exist. Engineers following this guide will immediately fail.~~ **Done:** `docs/setup-overview.md` deleted in v0.7.0 (a3b8efb). |
+| [HIGH] | F-03 | ~~`docs/setup-overview.md` references `.\validate.ps1` per-lab (line 102) — no lab exposes this entry point; validation is embedded inside `deploy.ps1` Phase 5.~~ **Done:** file deleted in v0.7.0. |
+| [HIGH] | F-04 | ~~`docs/setup-overview.md` references `.\scripts\setup.ps1 -DoLogin` (line 99) — `setup.ps1` lives at repo root, not `scripts/`; the `-DoLogin` flag is on `labs-common.ps1:Ensure-AzureAuth` but not exposed as a root `setup.ps1` parameter.~~ **Done:** file deleted in v0.7.0. |
+| [MED] | F-05 | **Partly done (2026-09-26):** labs 008, 009, 010 now have `inspect.ps1`; still missing for 000, 002–005, 007 (M-007 in docs/AUDIT.md). Original finding: `inspect.ps1` only exists in labs 001 and 006. Labs 002–005 have no inspection entry point; engineers must compose ad-hoc `az` commands, negating the "observable by default" goal. |
 | [MED] | F-06 | No Bicep/IaC source in labs 000–003, 005. Labs 001–003 deploy purely via inline `az` CLI calls in PowerShell. This makes diff-based review and ARM what-if analysis impossible for those labs. |
-| [MED] | F-07 | Lab-005 README says "Validate customer configurations" and "Train on vWAN S2S architecture." While harmless in context, language like "customer configurations" can blur the public/internal line. Recommend rewording to "validate your own VPN configurations." |
 | [MED] | F-08 | `outputs.json` written to `.data/` by labs 000 and 006 contains `subscriptionId` and `subscriptionName`. The `.gitignore` pattern `.data/**/outputs.json` correctly excludes this — but the pattern is on line 23 while the template exception on line 11 (`!.data/lab-003/`) creates a subtle conflict risk if new lab-specific subdirs are added without matching excludes. |
 | [MED] | F-09 | `tools/update-azure-labs.ps1` and `scripts/update-labs.ps1` both appear to serve an "update check" role but are separate files with unclear ownership split. No documentation explains which to use when. |
-| [LOW] | F-10 | `lab-000` README footer references `.\scripts\setup.ps1 -DoLogin` (Troubleshooting section, line 117) — same broken path as F-04. |
+| [LOW] | F-10 | ~~`lab-000` README footer references `.\scripts\setup.ps1 -DoLogin` (Troubleshooting section, line 117) — same broken path as F-04.~~ **Done:** fixed in v0.7.0; no `scripts\setup.ps1 -DoLogin` left in any README (checked 2026-09-26). |
 | [LOW] | F-11 | `lab-001` README validation snippet (line 116) embeds a literal `<sub>` placeholder in the `az network vhub get-effective-routes` command. New engineers will copy-paste this and fail silently. |
 | [LOW] | F-12 | AWS region hardcoded to `us-east-2` in multiple places (`cost-check.ps1`, `setup.ps1`, lab-003 README). No single source of truth. |
-| [LOW] | F-13 | No `CHANGELOG.md` or release notes. The `VERSION` file shows `0.6.0` but there is no history of what changed between versions. |
-| [LOW] | F-14 | Lab-004 Bicep (`infra/main.bicep`) deploys 7 VMs with password auth. The `adminPassword` parameter is marked `@secure()` which is correct, but there is no NSG on the spoke subnets and no guidance on SSH/RDP access patterns. |
-| [LOW] | F-15 | `lab-006/docs/audit.md` is an excellent internal audit checklist but reads as a development working document, not user-facing docs. It could confuse engineers who find it. Recommend renaming or moving to a `docs/dev/` subdirectory. |
+| [LOW] | F-13 | ~~No `CHANGELOG.md` or release notes. The `VERSION` file shows `0.6.0` but there is no history of what changed between versions.~~ **Done:** `docs/CHANGELOG.md` added in v0.7.0. |
+| [LOW] | F-14 | lab-004 Bicep (`infra/main.bicep`) deploys 7 VMs with password auth. The `adminPassword` parameter is marked `@secure()` which is correct, but there is no NSG on the spoke subnets and no guidance on SSH/RDP access patterns. |
+| [LOW] | F-15 | `lab-006/docs/audit.md` is an excellent audit checklist but reads as a development working document, not user-facing docs. It could confuse engineers who find it. Recommend renaming or moving to a `docs/dev/` subdirectory. |
 
 ---
 
@@ -113,13 +113,13 @@ zallen-cloud-labs/
 
 | Lab | Name | Cloud | Cost/hr | Deploy | Destroy | Inspect | Bicep/IaC | Doc Quality |
 |-----|------|-------|---------|--------|---------|---------|-----------|-------------|
-| 000 | Resource Group + VNet Baseline | Azure | Free | ✅ | ✅ | ❌ | ❌ | Good |
-| 001 | Virtual WAN Hub Routing | Azure | ~$0.26 | ✅ | ✅ | ✅ | ❌ | Good |
-| 002 | App Gateway + Front Door | Azure | ~$0.30 | ✅ | ✅ | ❌ | ❌ | Good |
-| 003 | vWAN ↔ AWS VPN (BGP/APIPA) | Azure+AWS | ~$0.71 | ✅ | ✅ | ❌ | ❌ | Good + extras |
-| 004 | vWAN Default Route Propagation | Azure | ~$0.60 | ✅ | ✅ | ❌ | ✅ (partial) | Good |
-| 005 | vWAN S2S BGP/APIPA Reference | Azure | ~$0.61 | ✅ | ✅ | ❌ | ❌ | Excellent |
-| 006 | Spoke BGP Router + Loopback | Azure | ~$0.37 | ✅ | ✅ | ✅ | ✅ (modular) | Excellent |
+| 000 | Resource Group + VNet Baseline | Azure | Free | Yes | Yes | No | No | Good |
+| 001 | Virtual WAN Hub Routing | Azure | ~$0.26 | Yes | Yes | Yes | No | Good |
+| 002 | App Gateway + Front Door | Azure | ~$0.30 | Yes | Yes | No | No | Good |
+| 003 | vWAN ↔ AWS VPN (BGP/APIPA) | Azure+AWS | ~$0.71 | Yes | Yes | No | No | Good + extras |
+| 004 | vWAN Default Route Propagation | Azure | ~$0.60 | Yes | Yes | No | Yes (partial) | Good |
+| 005 | vWAN S2S BGP/APIPA Reference | Azure | ~$0.61 | Yes | Yes | No | No | Excellent |
+| 006 | Spoke BGP Router + Loopback | Azure | ~$0.37 | Yes | Yes | Yes | Yes (modular) | Excellent |
 
 ### Lab-by-Lab Notes
 
@@ -165,7 +165,7 @@ zallen-cloud-labs/
 - Entry: `deploy.ps1`, `destroy.ps1`. Bicep IaC in `infra/`. Separate `scripts/` subfolder (deploy.ps1, destroy.ps1, validate.ps1).
 - Cost: ~$0.60/hr (~$14.40/day). Second-highest.
 - Idempotency: Phased.
-- Known issue: Directory structure inconsistency — lab has both a root `deploy.ps1` and a `scripts/deploy.ps1`. Unclear which is canonical. No `inspect.ps1` at root. Lab-004's Bicep deploys VMs without subnet-level NSGs (F-14). The `scripts/validate.ps1` script appears as a standalone validator but is not linked from the README.
+- Known issue: Directory structure inconsistency — lab has both a root `deploy.ps1` and a `scripts/deploy.ps1`. Unclear which is canonical. No `inspect.ps1` at root. lab-004's Bicep deploys VMs without subnet-level NSGs (F-14). The `scripts/validate.ps1` script appears as a standalone validator but is not linked from the README.
 
 **Lab 005 — vWAN S2S BGP/APIPA (Azure Reference)**
 - Goal: Reference implementation proving Azure vWAN S2S VPN dual-instance behavior with deterministic APIPA /30 allocations using placeholder sites (no real peer). All Azure, no AWS.
@@ -174,7 +174,7 @@ zallen-cloud-labs/
 - Inputs: `subs.json`, Location, Owner.
 - Cost: ~$0.61/hr.
 - Idempotency: Strong; "resume-safe" stated and implemented.
-- Lab-005 self-identifies as a public-safe gold reference. Well-documented. README mentions "Validate customer configurations" (F-07) — recommend rewording.
+- lab-005 self-identifies as a public-safe gold reference. Well-documented.
 
 **Lab 006 — vWAN Spoke BGP Router + Loopback (Most Mature)**
 - Goal: Prove a vHub learns BGP routes from a FRR (Free Range Routing) router VM and propagates them to connected spokes. Also tests loopback prefix behavior (inside-VNet vs outside-VNet).
@@ -227,7 +227,7 @@ zallen-cloud-labs/
 ### PowerShell 5.1 Compatibility
 - `labs-common.ps1` sets `$env:PYTHONWARNINGS` and uses `SilentlyContinue` wrapping — key mitigations documented in `lab-006/docs/audit.md`.
 - Core issues: PS 5.1 treats stderr from native commands as `ErrorRecord`; `2>$null` + `-o tsv` can drop stdout.
-- Lab-006 is fully hardened (uses `-o json` + `ConvertFrom-Json` everywhere).
+- lab-006 is fully hardened (uses `-o json` + `ConvertFrom-Json` everywhere).
 - Labs 000–005 have varying levels of hardening; all dot-source `labs-common.ps1` which provides baseline protection for auth flows.
 - **Recommendation:** Run all deploy/destroy scripts under PS 5.1 once to catch any remaining `-o tsv` + `2>$null` combinations (see F-findings in lab-006/docs/audit.md for exact patterns).
 
@@ -274,57 +274,16 @@ zallen-cloud-labs/
 
 ---
 
-## Security / Privacy / Ethics Review (Public Repo)
-
-### Gitignore Posture
-- **Strong overall.** Key exclusions:
-  - `.data/` (all user config) with precise template exceptions
-  - `**/subs.json`, `**/*secrets*`, `**/*.local.*`
-  - Private key formats: `*.pem`, `*.pfx`, `*.key`, `*.p12`, `id_rsa*`, `id_ed25519*`
-  - Azure auth caches: `.azure/`, `*.msalcache*`, `*.tokencache*`, `azureProfile.json`
-  - Lab outputs: `**/outputs.json`, `**/*-evidence*.json`, `**/*-vpn-dump/`
-  - Logs: `logs/*.log`, `logs/*.txt`
-  - IaC state: `*.tfstate`, `.terraform/`
-- **Potential gap (F-08):** The `.data/` blanket exclude plus the `!.data/lab-003/` exception followed by `.data/lab-003/*` is correct but fragile. If a developer adds `.data/lab-007/` without a matching exclude, that directory's contents could be committed. Recommend adding a comment explaining the pattern.
-
-### No Secrets Found in Tracked Files
-- Reviewed all tracked JSON templates: all subscription IDs and tenant IDs are `00000000-0000-0000-0000-000000000000`.
-- No real account IDs, ARNs, or API keys in any tracked file.
-- AWS `aws sts get-caller-identity` output (account number) is only ever used at runtime and printed to console — not written to any tracked file.
-
-### Outputs and Logging Risk
-- `outputs.json` files written to `.data/` contain subscription IDs and VM private IPs. These are gitignored correctly.
-- Log files written to `labs/*/logs/` are also gitignored.
-- `cost-check.ps1 -JsonOutputPath` saves to a user-specified path — if the user specifies a tracked path, it could be committed. This is low risk but worth a warning in the tool's README.
-
-### Public-Safe Language Guidelines
-The following guidelines are recommended for all lab content:
-
-1. **No internal terminology:** Avoid phrases like "as seen in production," "based on customer feedback," or references to specific engagements. Use "in a real-world scenario" or "in a production environment."
-2. **No real IDs:** Never use real subscription IDs, tenant IDs, account numbers, or resource IDs in documentation or scripts. Always use `00000000-0000-0000-0000-000000000000` or `<your-subscription-id>`.
-3. **No screenshots with real data:** If sharing screenshots, redact subscription IDs, tenant names, email addresses, and resource URLs that include real IDs.
-4. **Vendor-neutral framing:** Frame labs as "learning about Azure features" not "replicating a customer environment."
-5. **"Validate customer configurations" language (F-07):** Rewrite as "validate your own configurations" or "validate lab configurations."
-6. **Recommended disclaimer for all labs:**
-
-```
-> This lab is for educational purposes in a personal sandbox environment.
-> Deploy only in subscriptions you own. Always run `destroy.ps1` when done.
-> Cost estimates are approximate and may vary by region and pricing tier.
-```
-
----
-
 ## Reliability: Idempotency, Cleanup, and Failure Modes
 
 ### Idempotency
 - **Good:** All labs check for existing resources before creating. Re-running `deploy.ps1` picks up from existing state.
-- **Good:** Lab-006 Phase 0 explicitly documents "resume support."
-- **Gap:** No labs test idempotency from a partial-failure state in documentation. Lab-006's `docs/audit.md` documents this for that lab only.
+- **Good:** lab-006 Phase 0 explicitly documents "resume support."
+- **Gap:** No labs test idempotency from a partial-failure state in documentation. lab-006's `docs/audit.md` documents this for that lab only.
 
 ### Cleanup Reliability
 - All labs have `destroy.ps1` at root.
-- Lab-003 (Azure + AWS) requires passing `-AwsProfile` to destroy both sides — this is documented.
+- lab-003 (Azure + AWS) requires passing `-AwsProfile` to destroy both sides — this is documented.
 - Resource Group deletion is the primary cleanup mechanism for Azure resources — reliable if all resources are tagged to the same RG.
 - `cost-check.ps1` serves as a cleanup verification tool — good safety net.
 - **Leak risk:** If a `destroy.ps1` fails mid-execution (e.g., vWAN dependencies not cleaned up in order), manual cleanup is required. No labs document the manual cleanup order for partial failures.
@@ -341,7 +300,7 @@ The following guidelines are recommended for all lab content:
 | 005 | Implicit — phases are self-documenting | Good |
 | 006 | PS 5.1 stderr crash, tsv stdout loss, bgpd ordering, bgpconnection race | Excellent (docs/audit.md) |
 
-**Overall:** Lab-006's `docs/audit.md` sets the standard for failure mode documentation. Recommend bringing labs 000–005 up to a similar level.
+**Overall:** lab-006's `docs/audit.md` sets the standard for failure mode documentation. Recommend bringing labs 000–005 up to a similar level.
 
 ---
 
@@ -349,12 +308,12 @@ The following guidelines are recommended for all lab content:
 
 ### Critical (Fix Before Sharing)
 
-1. **[F-02,F-03,F-04]** Fix broken doc references in `docs/setup-overview.md`:
+1. **Done (file deleted in v0.7.0).** **[F-02,F-03,F-04]** Fix broken doc references in `docs/setup-overview.md`:
    - Remove `.\run.ps1 status` — replace with `.\setup.ps1 -Status`
    - Remove `.\validate.ps1` — replace with "validation is built into Phase 5 of deploy.ps1"
    - Fix `.\scripts\setup.ps1 -DoLogin` → `.\setup.ps1` (no `-DoLogin` flag at root)
 
-2. **[F-10]** Fix `lab-000/README.md` Troubleshooting section: `.\scripts\setup.ps1 -DoLogin` → `.\setup.ps1`
+2. **Done (v0.7.0).** **[F-10]** Fix `lab-000/README.md` Troubleshooting section: `.\scripts\setup.ps1 -DoLogin` → `.\setup.ps1`
 
 ### High Priority (Within 2 Weeks)
 
@@ -364,23 +323,21 @@ The following guidelines are recommended for all lab content:
 
 5. **[F-11]** Fix lab-001 README validation snippet: replace `<sub>` placeholder with an instruction to run `az account show --query id -o tsv` first.
 
-6. **[F-07]** Update lab-005 README: replace "Validate customer configurations" with "validate your own VPN configurations."
-
 ### Medium Priority (Within 6 Weeks)
 
-7. **[F-09]** Audit `.packages/` scripts vs. `scripts/`. Consolidate or document ownership split. Remove `tools/update-azure-labs.ps1` if duplicate.
+6. **[F-09]** Audit `.packages/` scripts vs. `scripts/`. Consolidate or document ownership split. Remove `tools/update-azure-labs.ps1` if duplicate.
 
-8. **[F-14]** Add NSG documentation to lab-004. At minimum, document that no NSG is applied (intentional for lab simplicity) and recommend adding one before adapting for production.
+7. **[F-14]** Add NSG documentation to lab-004. At minimum, document that no NSG is applied (intentional for lab simplicity) and recommend adding one before adapting for production.
 
-9. **[F-08]** Add a comment in `.gitignore` explaining the `.data/` exception pattern so future lab additions don't accidentally expose data.
+8. **[F-08]** Add a comment in `.gitignore` explaining the `.data/` exception pattern so future lab additions don't accidentally expose data.
 
-10. **[F-13]** Create `CHANGELOG.md` with a brief entry for v0.6.0 features. Helps contributors understand the history.
+9. **Done (`docs/CHANGELOG.md`).** **[F-13]** Create `CHANGELOG.md` with a brief entry for v0.6.0 features. Helps contributors understand the history.
 
-11. **[F-06]** Evaluate adding Bicep IaC to labs 001, 002, 003, 005. Even a partial Bicep template improves reviewability.
+10. **[F-06]** Evaluate adding Bicep IaC to labs 001, 002, 003, 005. Even a partial Bicep template improves reviewability.
 
-12. **[F-15]** Move `lab-006/docs/audit.md` to a `docs/dev/` subdirectory or rename to `docs/dev-notes.md` to clarify its audience.
+11. **[F-15]** Move `lab-006/docs/audit.md` to a `docs/dev/` subdirectory or rename to `docs/dev-notes.md` to clarify its audience.
 
-13. **[F-12]** Centralize AWS default region to a single constant in `labs-common.ps1` or a shared config file.
+12. **[F-12]** Centralize AWS default region to a single constant in `labs-common.ps1` or a shared config file.
 
 ---
 
@@ -388,10 +345,9 @@ The following guidelines are recommended for all lab content:
 
 ### Week 1–2 (Documentation & Quick Wins)
 
-- [ ] Fix all broken doc references in `docs/setup-overview.md` (F-02, F-03, F-04)
-- [ ] Fix `lab-000/README.md` troubleshooting reference (F-10)
+- [x] Fix all broken doc references in `docs/setup-overview.md` (F-02, F-03, F-04) - file deleted
+- [x] Fix `lab-000/README.md` troubleshooting reference (F-10)
 - [ ] Fix `lab-001/README.md` validation snippet `<sub>` placeholder (F-11)
-- [ ] Fix `lab-005/README.md` language "customer configurations" (F-07)
 - [ ] Rename `lab-000_resource-group` → `lab-000-resource-group` (F-01)
 - [ ] Update `README.md` and any scripts referencing the old lab-000 folder name
 - [ ] Add the recommended disclaimer block to all lab READMEs
@@ -403,7 +359,7 @@ The following guidelines are recommended for all lab content:
 - [ ] Write and adopt a standard script skeleton for deploy/destroy/inspect (see Appendix B)
 - [ ] Add minimal `inspect.ps1` to labs 002, 003, 004, 005 (F-05)
 - [ ] Audit `.packages/` and consolidate or document (F-09)
-- [ ] Create `CHANGELOG.md` (F-13)
+- [x] Create `CHANGELOG.md` (F-13)
 - [ ] Add `docs/dev/` folder and move lab-006 dev audit docs there (F-15)
 - [ ] Consider adding a GitHub Actions workflow for basic linting (PowerShell Script Analyzer)
 - [ ] Centralize AWS default region to avoid drift (F-12)
@@ -488,7 +444,7 @@ cd labs/lab-NNN-<name>
 az <key validation command> -o table
 ```
 
-See [docs/validation.md](docs/validation.md) for full commands.
+See `docs/validation.md` in the lab folder for full commands.
 
 ## Cleanup
 
@@ -625,4 +581,4 @@ After running `destroy.ps1`, verify:
 ---
 
 *Audit report generated 2026-03-02. Repo version 0.6.0.*
-*This report is public-safe: no real subscription IDs, tenant IDs, customer data, or internal references included.*
+*This report contains no real subscription IDs or tenant IDs.*

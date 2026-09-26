@@ -160,7 +160,9 @@ Write-Host "Portal: $portalUrl" -ForegroundColor Cyan
 # ============================================
 Write-Phase -Number 1 -Title "Deploy Infrastructure"
 
-$tagArgs = @("project=azure-labs", "lab=lab-008", "owner=$Owner", "environment=lab", "cost-center=learning")
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-008" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 $existingRg = $null
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"

@@ -22,7 +22,7 @@ Polls an endpoint repeatedly over time, building a live in-place report of DNS, 
 ./tools/Watch-Endpoint.ps1 -Target "example.com" -Tests DNS
 
 # Full suite: DNS + TCP + TLS + HTTP on port 443
-./tools/Watch-Endpoint.ps1 -Target "myapp.azure.com" -Tests ALL -Ports 443
+./tools/Watch-Endpoint.ps1 -Target "myapp.example.com" -Tests ALL -Ports 443
 
 # TCP reachability to a bare IP -- no DNS lookup needed
 ./tools/Watch-Endpoint.ps1 -Target "10.0.1.4" -Tests TCP -Ports 22,443
@@ -36,13 +36,13 @@ Polls an endpoint repeatedly over time, building a live in-place report of DNS, 
   -Tests TCP,TLS,HTTP -DurationMinutes 2 -IntervalSeconds 5
 
 # Watch a URL with default settings (ALL tests, 5 minutes, 10s interval)
-./tools/Watch-Endpoint.ps1 -Target "https://myapp.azure.com"
+./tools/Watch-Endpoint.ps1 -Target "https://myapp.example.com"
 ```
 
 Via `lab.ps1`:
 
 ```powershell
-.\lab.ps1 -Watch -WatchTarget "myapp.azure.com"
+.\lab.ps1 -Watch -WatchTarget "myapp.example.com"
 ```
 
 ### Parameters
@@ -61,7 +61,7 @@ Via `lab.ps1`:
 ### Report Format
 
 ```
-  Watch-Endpoint  |  myapp.azure.com  |  Poll 4/30  |  0m 40s
+  Watch-Endpoint  |  myapp.example.com  |  Poll 4/30  |  0m 40s
   ----------------------------------------------------------------------------
   TEST        ADDRESS/VALUE             PORT   STATUS       LATENCY  P/F
   ----------------------------------------------------------------------------
@@ -71,7 +71,7 @@ Via `lab.ps1`:
                 @10.0.0.4
   TCP         10.0.1.4                  443   CONNECTED      44ms   4/0
   TLS         10.0.1.4                  443   VALID          19ms   4/0
-                CN=myapp.azure.com  exp 2026-06-01  (62d left)
+                CN=myapp.example.com  exp 2026-06-01  (62d left)
   HTTP        https://myapp.azure...    443   200            98ms   4/0
   ----------------------------------------------------------------------------
   Last: 14:32:40  |  Next in: 7s  |  Ctrl+C to stop
@@ -90,7 +90,7 @@ The tool distinguishes between:
 - **DNS as a test** (`-Tests DNS`) -- shows DNS rows in the report
 - **DNS for discovery** -- when target is an FQDN and TCP/TLS are requested, the tool silently resolves IPs internally even if `DNS` is not in `-Tests`
 
-This means you can watch TCP/TLS behavior for `myapp.azure.com` without DNS rows cluttering the report, while still getting per-IP rows that appear as the DNS answer evolves.
+This means you can watch TCP/TLS behavior for `myapp.example.com` without DNS rows cluttering the report, while still getting per-IP rows that appear as the DNS answer evolves.
 
 ### Standalone use (outside this repo)
 
@@ -146,11 +146,11 @@ Watches Azure Front Door TLS certificate propagation across edge nodes. After at
   ----------------------------------------------------------------------------
   EDGE IP           CERT KIND              EXPIRES       CHG  SINCE
   ----------------------------------------------------------------------------
-  20.112.53.42      platform (*.azureedge) 2025-12-01      0  19:32:01
+  203.0.113.10      platform (*.azureedge) 2025-12-01      0  19:32:01
     CN=*.azureedge.net  thumb=A1B2C3D4...
-  13.107.253.41     custom (expected)      2026-09-06      0  19:30:01
+  203.0.113.11     custom (expected)      2026-09-06      0  19:30:01
     CN=myapp.azurefd.net  thumb=E5F6A7B8...
-  13.107.226.41     custom (expected)      2026-09-06      1  19:28:01
+  203.0.113.12     custom (expected)      2026-09-06      1  19:28:01
     CN=myapp.azurefd.net  thumb=E5F6A7B8...
   ----------------------------------------------------------------------------
   Last: 19:34:01  |  Next in: 28s  |  Ctrl+C to stop

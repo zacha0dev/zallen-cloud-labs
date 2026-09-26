@@ -17,9 +17,9 @@
 
 .PARAMETER Target
   Endpoint to watch. Accepts:
-    FQDN        example.com, corp.internal, myapp.azure.com
+    FQDN        example.com, corp.internal, myapp.example.com
     IP address  10.0.1.4, 192.168.0.1
-    URL         https://myapp.azure.com, http://10.0.1.4:8080/health
+    URL         https://myapp.example.com, http://10.0.1.4:8080/health
   Port and scheme are extracted from URLs automatically.
 
 .PARAMETER Tests
@@ -58,7 +58,7 @@
   .\Watch-Endpoint.ps1 -Target "example.com" -Tests DNS
 
   # Full test suite against an FQDN on port 443
-  .\Watch-Endpoint.ps1 -Target "myapp.azure.com" -Tests ALL -Ports 443
+  .\Watch-Endpoint.ps1 -Target "myapp.example.com" -Tests ALL -Ports 443
 
   # TCP reachability to a bare IP -- no DNS needed
   .\Watch-Endpoint.ps1 -Target "10.0.1.4" -Tests TCP -Ports 22,443
@@ -72,7 +72,7 @@
     -Tests TCP,TLS,HTTP -DurationMinutes 2 -IntervalSeconds 5
 
   # Watch a URL with default settings (ALL tests, 5 minutes)
-  .\Watch-Endpoint.ps1 -Target "https://myapp.azure.com"
+  .\Watch-Endpoint.ps1 -Target "https://myapp.example.com"
 #>
 
 param(

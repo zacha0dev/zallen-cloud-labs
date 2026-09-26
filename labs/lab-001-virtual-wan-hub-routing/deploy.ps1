@@ -205,7 +205,9 @@ Write-Phase -Number 1 -Title "Core Fabric (vWAN + vHub)"
 $phase1Start = Get-Date
 
 # Build tags
-$tagsString = "project=azure-labs lab=lab-001 owner=$Owner environment=lab cost-center=learning"
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-001" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 # Create Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
@@ -216,7 +218,7 @@ $ErrorActionPreference = $oldErrPref
 if ($existingRg) {
   Write-Host "  Resource group already exists, skipping..." -ForegroundColor DarkGray
 } else {
-  az group create --name $ResourceGroup --location $Location --tags $tagsString --output none
+  az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
   Write-Log "Resource group created: $ResourceGroup"
 }
 
@@ -234,7 +236,7 @@ if ($existingVwan) {
     --resource-group $ResourceGroup `
     --location $Location `
     --type Standard `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "vWAN created: $VwanName"
 }
@@ -255,7 +257,7 @@ if ($existingVhub -and $existingVhub.provisioningState -eq "Succeeded") {
       --vwan $VwanName `
       --location $Location `
       --address-prefix $VhubCidr `
-      --tags $tagsString `
+      --tags @tagArgs `
       --output none
     Write-Log "vHub creation started: $VhubName"
   }
@@ -318,7 +320,7 @@ if ($existingVnet) {
     --address-prefixes $VnetCidr `
     --subnet-name $SubnetName `
     --subnet-prefixes $SubnetCidr `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "VNet created: $VnetName"
 }
@@ -353,7 +355,7 @@ if ($existingVm) {
     --admin-username $AdminUser `
     --admin-password $AdminPassword `
     --authentication-type password `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "VM created: $VmName"
 }
@@ -369,7 +371,10 @@ Write-Phase -Number 4 -Title "Connections (Hub Connection)"
 $phase4Start = Get-Date
 
 # Get VNet ID
+$vnetId = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vnetId = az network vnet show -g $ResourceGroup -n $VnetName --query id -o tsv
+$ErrorActionPreference = $oldEap
 if (-not $vnetId) {
   throw "Failed to resolve VNet ID for $VnetName"
 }
