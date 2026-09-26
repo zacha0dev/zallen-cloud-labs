@@ -206,4 +206,4 @@ For vWAN/VPN validation: [docs/DOMAINS/observability.md](../../docs/DOMAINS/obse
 
 ## Related Labs
 
-- **Lab 005**: Azure vWAN S2S BGP over APIPA (Azure-only, reference implementation)
+- **lab-005**: Azure vWAN S2S BGP over APIPA (Azure-only, reference implementation)

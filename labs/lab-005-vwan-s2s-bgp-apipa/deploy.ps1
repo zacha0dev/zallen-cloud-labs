@@ -1,5 +1,5 @@
 # labs/lab-005-vwan-s2s-bgp-apipa/deploy.ps1
-# Deploys Azure vWAN S2S VPN Gateway with BGP over APIPA (Azure-style, no AWS)
+# Deploys Azure vWAN S2S VPN Gateway with BGP over APIPA (Azure-only, no AWS)
 #
 # This lab proves:
 # - vWAN S2S Gateway dual-instance behavior (Instance 0 vs Instance 1)
@@ -178,7 +178,7 @@ function Get-ElapsedTime {
 # ============================================
 
 Write-Host ""
-Write-Host "Lab 005: vWAN S2S BGP over APIPA (Azure-style)" -ForegroundColor Cyan
+Write-Host "Lab 005: vWAN S2S BGP over APIPA (Azure-only)" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Purpose: Prove Azure vWAN S2S VPN Gateway instance 0 vs instance 1" -ForegroundColor White
@@ -241,7 +241,7 @@ if (-not $Force) {
   Write-Host ""
   Write-Host "This creates billable resources:" -ForegroundColor Yellow
   Write-Host "  - vWAN Hub: ~`$0.25/hr" -ForegroundColor Gray
-  Write-Host "  - S2S VPN Gateway (2 scale units): ~`$0.36/hr" -ForegroundColor Gray
+  Write-Host "  - S2S VPN Gateway (1 scale unit): ~`$0.36/hr" -ForegroundColor Gray
   Write-Host "  - Estimated total: ~`$0.61/hr" -ForegroundColor Gray
   Write-Host ""
   $confirm = Read-Host "Type DEPLOY to proceed"
@@ -263,12 +263,13 @@ Write-Phase -Number 1 -Title "Core Fabric (vWAN + vHub)"
 $phase1Start = Get-Date
 
 # Build tags string (handle empty Owner)
-$baseTags = "project=azure-labs lab=lab-005 env=lab"
-if ($Owner) { $baseTags += " owner=$Owner" }
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-005" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 # Create Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
-az group create --name $ResourceGroup --location $Location --tags $baseTags --output none
+az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
 Write-Log "Resource group created: $ResourceGroup"
 
 # Create vWAN
@@ -282,7 +283,7 @@ if (-not $existingVwan) {
     --resource-group $ResourceGroup `
     --location $Location `
     --type Standard `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "vWAN created: $VwanName"
 } else {
@@ -301,7 +302,7 @@ if (-not $existingVhub) {
     --vwan $VwanName `
     --location $Location `
     --address-prefix $VhubPrefix `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "vHub created: $VhubName"
 } else {
@@ -378,7 +379,7 @@ if (-not $existingGw -or $existingGw.provisioningState -ne "Succeeded") {
     --vhub $VhubName `
     --location $Location `
     --scale-unit 1 `
-    --tags $baseTags `
+    --tags @tagArgs `
     --no-wait `
     --output none
 
@@ -414,7 +415,11 @@ if (-not $existingGw -or $existingGw.provisioningState -ne "Succeeded") {
 }
 
 # Get gateway details
+$gw = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $gw = az network vpn-gateway show -g $ResourceGroup -n $VpnGwName -o json | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
+if (-not $gw) { throw "Could not read VPN Gateway $VpnGwName." }
 
 # Extract BGP peering addresses for both instances
 $instance0BgpIps = @()
@@ -539,7 +544,11 @@ Write-Phase -Number 3 -Title "VPN Sites + Links (4 sites, 8 links)"
 $phase3Start = Get-Date
 
 # Get vWAN ID
+$vwanId = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vwanId = az network vwan show -g $ResourceGroup -n $VwanName --query id -o tsv
+$ErrorActionPreference = $oldEap
+if (-not $vwanId) { throw "Could not resolve vWAN ID for $VwanName." }
 
 # Temp directory for ARM REST API body files
 $tempDir = Join-Path $RepoRoot ".data\lab-005"

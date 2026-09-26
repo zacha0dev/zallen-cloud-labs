@@ -33,7 +33,7 @@ $DataDir  = Join-Path $RepoRoot ".data\lab-008"
 
 . (Join-Path $RepoRoot "scripts\labs-common.ps1")
 
-# ── Lab constants (must match deploy.ps1) ────────────────────────────────────
+# -- Lab constants (must match deploy.ps1) ------------------------------------
 $ResourceGroup  = "rg-lab-008-dns-resolver"
 $HubVnetName    = "vnet-hub-008"
 $SpokeVnetName  = "vnet-spoke-008"
@@ -45,7 +45,7 @@ $DnsZoneName    = "internal.lab"
 $VmSpokeName    = "vm-spoke-008"
 $ExpectedAppIp  = "10.80.1.10"
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# -- Helpers ------------------------------------------------------------------
 function Write-Section {
   param([string]$Msg)
   Write-Host ""
@@ -76,21 +76,21 @@ function Write-Info {
   Write-Host "  $Msg" -ForegroundColor Gray
 }
 
-# ── Header ───────────────────────────────────────────────────────────────────
+# -- Header -------------------------------------------------------------------
 Write-Host ""
 Write-Host "Lab 008: DNS Private Resolver - Inspection Report" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host "  Resource group : $ResourceGroup" -ForegroundColor Gray
 Write-Host "  Run time       : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Gray
 
-# ── Auth ─────────────────────────────────────────────────────────────────────
+# -- Auth ---------------------------------------------------------------------
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 $subName = az account show --query name -o tsv 2>$null
 Write-Host "  Subscription   : $subName" -ForegroundColor Gray
 
-# ── Load outputs.json if available ───────────────────────────────────────────
+# -- Load outputs.json if available -------------------------------------------
 $outputs = $null
 $outputsPath = Join-Path $DataDir "outputs.json"
 if (Test-Path $outputsPath) {
@@ -102,7 +102,7 @@ if (Test-Path $outputsPath) {
 $passCount = 0
 $failCount = 0
 
-# ── SECTION 1: Resource Group ─────────────────────────────────────────────────
+# -- SECTION 1: Resource Group -------------------------------------------------
 Write-Section "1. Resource Group + Tags"
 
 $rg = $null
@@ -130,7 +130,7 @@ if ($rg) {
   exit 1
 }
 
-# ── SECTION 2: VNets + Peering ───────────────────────────────────────────────
+# -- SECTION 2: VNets + Peering -----------------------------------------------
 Write-Section "2. VNets + Peering"
 
 $hubVnet = $null
@@ -172,7 +172,7 @@ if ($hubVnet) {
   }
 }
 
-# ── SECTION 3: DNS Private Resolver ──────────────────────────────────────────
+# -- SECTION 3: DNS Private Resolver ------------------------------------------
 Write-Section "3. DNS Private Resolver"
 
 $resolver = $null
@@ -215,7 +215,7 @@ if ($outboundEp -and $outboundEp.provisioningState -eq "Succeeded") {
   $failCount++
 }
 
-# ── SECTION 4: Forwarding Ruleset ────────────────────────────────────────────
+# -- SECTION 4: Forwarding Ruleset --------------------------------------------
 Write-Section "4. Forwarding Ruleset + Rules + VNet Link"
 
 $ruleset = $null
@@ -287,7 +287,7 @@ if ($ruleset) {
   }
 }
 
-# ── SECTION 5: Private DNS Zone + Record ─────────────────────────────────────
+# -- SECTION 5: Private DNS Zone + Record -------------------------------------
 Write-Section "5. Private DNS Zone + A Record"
 
 $zone = $null
@@ -315,7 +315,7 @@ if ($appRecord -and $appRecordIp -eq $ExpectedAppIp) {
   $failCount++
 }
 
-# ── SECTION 6: Test VM ───────────────────────────────────────────────────────
+# -- SECTION 6: Test VM -------------------------------------------------------
 Write-Section "6. Test VM (spoke)"
 
 $vm = $null
@@ -336,7 +336,7 @@ if ($vm) {
   $failCount++
 }
 
-# ── SECTION 7: Live DNS resolution (VM run-command) ──────────────────────────
+# -- SECTION 7: Live DNS resolution (VM run-command) --------------------------
 Write-Section "7. Live DNS Resolution (spoke VM run-command)"
 Write-Info "Running getent hosts app.$DnsZoneName from spoke VM..."
 
@@ -397,7 +397,7 @@ if ($appResolved) {
   Write-Info "  az vm run-command invoke -g $ResourceGroup -n $VmSpokeName --command-id RunShellScript --scripts 'getent hosts app.$DnsZoneName'"
 }
 
-# ── SECTION 8: DNS Security Policy ───────────────────────────────────────────
+# -- SECTION 8: DNS Security Policy -------------------------------------------
 $SecurityPolicyName = "dnspolicy-lab-008"
 $DomainListName     = "domainlist-lab-008-blocked"
 
@@ -466,7 +466,7 @@ if ($secPol -and $secPol.id) {
   Write-Warn "Skipping rule/link checks (policy not found or not provisioned)"
 }
 
-# ── SUMMARY ──────────────────────────────────────────────────────────────────
+# -- SUMMARY ------------------------------------------------------------------
 Write-Host ""
 Write-Host "=================================================" -ForegroundColor Cyan
 $total   = $passCount + $failCount
@@ -477,12 +477,9 @@ Write-Host "=================================================" -ForegroundColor 
 
 if ($failCount -eq 0) {
   Write-Host ""
-  Write-Host "All checks passed. Lab is healthy and ready for research scenarios." -ForegroundColor Green
+  Write-Host "All checks passed. Lab is healthy." -ForegroundColor Green
   Write-Host ""
-  Write-Host "Next steps:" -ForegroundColor Gray
-  Write-Host "  .\lab.ps1 -Research lab-008 -Scenario cache-recovery" -ForegroundColor DarkGray
-  Write-Host "  .\lab.ps1 -Deploy lab-008 -Mode StickyBlock [-Force]" -ForegroundColor DarkGray
-  Write-Host "  .\lab.ps1 -Deploy lab-008 -Mode ForwardingVariants [-Force]" -ForegroundColor DarkGray
+  Write-Host "When done:  .\lab.ps1 -Destroy lab-008" -ForegroundColor DarkGray
 } else {
   Write-Host ""
   Write-Host "Some checks failed. Review [FAIL] items above." -ForegroundColor Yellow

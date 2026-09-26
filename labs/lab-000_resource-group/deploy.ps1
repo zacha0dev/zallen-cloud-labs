@@ -190,7 +190,9 @@ Write-Phase -Number 1 -Title "Core Fabric (Resource Group + VNet)"
 $phase1Start = Get-Date
 
 # Build tags
-$tagsString = "project=azure-labs lab=lab-000 owner=$Owner environment=lab cost-center=learning"
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-000" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 # Create Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
@@ -204,7 +206,7 @@ if ($existingRg) {
   az group create `
     --name $ResourceGroup `
     --location $Location `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "Resource group created: $ResourceGroup"
 }
@@ -225,7 +227,7 @@ if ($existingVnet) {
     --address-prefixes $VnetCidr `
     --subnet-name $Subnet1Name `
     --subnet-prefixes $Subnet1Cidr `
-    --tags $tagsString `
+    --tags @tagArgs `
     --output none
   Write-Log "VNet created: $VnetName with subnet $Subnet1Name"
 }
@@ -294,24 +296,36 @@ Write-Host ""
 $allValid = $true
 
 # Validate resource group
+$rg = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $rg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $rgValid = ($rg -ne $null)
 Write-Validation -Check "Resource group exists" -Passed $rgValid -Details $ResourceGroup
 if (-not $rgValid) { $allValid = $false }
 
 # Validate VNet
+$vnet = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vnet = az network vnet show -g $ResourceGroup -n $VnetName -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $vnetValid = ($vnet -ne $null -and $vnet.addressSpace.addressPrefixes -contains $VnetCidr)
 Write-Validation -Check "VNet exists with correct CIDR" -Passed $vnetValid -Details "$VnetName ($VnetCidr)"
 if (-not $vnetValid) { $allValid = $false }
 
 # Validate subnets
+$snet1 = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $snet1 = az network vnet subnet show -g $ResourceGroup --vnet-name $VnetName -n $Subnet1Name -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $snet1Valid = ($snet1 -ne $null -and $snet1.addressPrefix -eq $Subnet1Cidr)
 Write-Validation -Check "Subnet 1 exists" -Passed $snet1Valid -Details "$Subnet1Name ($Subnet1Cidr)"
 if (-not $snet1Valid) { $allValid = $false }
 
+$snet2 = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $snet2 = az network vnet subnet show -g $ResourceGroup --vnet-name $VnetName -n $Subnet2Name -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 $snet2Valid = ($snet2 -ne $null -and $snet2.addressPrefix -eq $Subnet2Cidr)
 Write-Validation -Check "Subnet 2 exists" -Passed $snet2Valid -Details "$Subnet2Name ($Subnet2Cidr)"
 if (-not $snet2Valid) { $allValid = $false }

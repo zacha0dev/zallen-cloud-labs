@@ -14,7 +14,7 @@ This guide explains how that workflow operates, so you can fork this repo, build
 
 Not: "AI wrote everything and I clicked approve."
 
-More like: **pair programming with a senior engineer who never gets tired and doesn't charge by the hour.**
+More like: **pair programming: the AI drafts fast and remembers conventions; you bring the domain knowledge and make the calls.**
 
 The typical cycle for any lab in this repo:
 
@@ -62,19 +62,18 @@ git clone https://github.com/<your-username>/zallen-cloud-labs.git
 cd zallen-cloud-labs
 
 # 2. Set up your Azure subscription
-.\setup.ps1 -Azure
+.\lab.ps1 -Setup
 
 # 3. Run lab-000 to confirm everything works
-cd labs\lab-000_resource-group
-.\deploy.ps1
-.\destroy.ps1
+.\lab.ps1 -Deploy lab-000
+.\lab.ps1 -Destroy lab-000
 ```
 
 Then ask Claude Code to generate a new lab:
 
 ```
 I want to add a new lab to this repo. Look at the existing lab structure,
-especially lab-001 and lab-006. Then build lab-007: it should deploy an
+especially lab-001 and lab-006. Then build lab-011: it should deploy an
 Azure Load Balancer (Standard) in front of two Ubuntu VMs running a
 simple Python HTTP server. Follow the lab standard at docs/ops/LAB-STANDARD.md.
 Make it PS 5.1 compatible.
@@ -84,7 +83,7 @@ Make it PS 5.1 compatible.
 
 ## Option 2: Start a Fresh Repo with Claude Code
 
-If you want a clean slate with your own theme (different cloud focus, different company patterns, etc.):
+If you want a clean slate with your own theme (different cloud focus, different services, etc.):
 
 ```
 1. Create a new empty GitHub repo
@@ -122,7 +121,7 @@ Requirements:
 - Phase 0 must show cost estimate and require "Type DEPLOY to proceed"
 - Phase 5 must validate all resources and exit with code 1 if any check fails
 - Save outputs to .data/lab-NNN/outputs.json
-- Follow naming conventions in docs/REFERENCE.md
+- Follow naming conventions in docs/ops/LAB-STANDARD.md
 - Follow docs/ops/LAB-STANDARD.md
 
 Resources to create:
@@ -158,7 +157,7 @@ Fix them without changing the phase structure or parameter interface.
 Review this Bicep module for:
 1. Security issues (no public IPs unless required, least-privilege RBAC)
 2. Cost inefficiencies
-3. Naming convention violations per docs/REFERENCE.md
+3. Naming convention violations per docs/ops/LAB-STANDARD.md
 4. Missing outputs
 ```
 
@@ -196,7 +195,7 @@ This is an Azure networking labs repository. All labs use PowerShell (PS 5.1 + 7
 
 ## Key Conventions
 - Lab structure: docs/ops/LAB-STANDARD.md
-- Naming: docs/REFERENCE.md
+- Naming: docs/ops/LAB-STANDARD.md
 - No ternary operators, no em-dashes, no null-conditional operators
 - Azure setup: .\setup.ps1 -Azure or .\setup.ps1 -ConfigureSubs
 - Scripts load config via Get-LabConfig and Get-SubscriptionId from scripts/labs-common.ps1

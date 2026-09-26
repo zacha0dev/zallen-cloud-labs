@@ -128,7 +128,7 @@ Lab scripts enforce a region allowlist:
 centralus, eastus, eastus2, westus2, westus3, northeurope, westeurope
 ```
 
-Pass `-Location` to deploy scripts. Default is `centralus`.
+Pass `-Location` to deploy scripts. Defaults: `centralus` for most labs, `eastus2` for lab-004 and lab-008, `eastus` for lab-009. lab-005 and lab-006 allow only `centralus`, `eastus`, `eastus2`, `westus2`; lab-004 and lab-008 do not enforce an allowlist yet (see docs/AUDIT.md).
 
 ---
 

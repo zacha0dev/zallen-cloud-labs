@@ -61,7 +61,7 @@ Every hub has a **Default** route table. Standard SKU hubs support **custom** ro
 | Propagation | A connection propagates its routes to one or more route tables |
 | Static routes | Manually added prefixes to a route table (e.g., `0.0.0.0/0` for default route) |
 
-**Lab-004** specifically explores how static routes in custom route tables do NOT propagate to connections associated with a different route table.
+**lab-004** specifically explores how static routes in custom route tables do NOT propagate to connections associated with a different route table.
 
 ---
 
@@ -118,7 +118,7 @@ The `.2` and `.6` addresses (Azure side) follow from standard `/30` allocation (
 
 All connections propagate their routes to the Default route table and associate with the Default route table. This means all connected VNets and branches learn each other's routes automatically.
 
-### Custom Route Table Pattern (Lab-004)
+### Custom Route Table Pattern (lab-004)
 
 ```
 Custom RT "rt-fw-default"

@@ -5,7 +5,7 @@
 #   - Resource Group
 #   - VNet + Subnet
 #   - NSG (no public inbound)
-#   - Linux VM (Standard_B1s) — no public IP
+#   - Linux VM (Standard_B1s) - no public IP
 #   - Private DNS Zone (internal.lab)
 #   - VNet Link with auto-registration
 #   - Static A record (webserver.internal.lab)
@@ -197,7 +197,9 @@ Write-Log "Phase 0 completed in $phase0Elapsed" "SUCCESS"
 Write-Phase -Number 1 -Title "Core Fabric (Resource Group)"
 $phase1Start = Get-Date
 
-$tagsString = "project=azure-labs lab=lab-007 owner=$Owner environment=lab cost-center=learning"
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-007" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
@@ -206,7 +208,7 @@ $ErrorActionPreference = $oldEP
 if ($existingRg) {
   Write-Host "  Resource group already exists, skipping..." -ForegroundColor DarkGray
 } else {
-  az group create --name $ResourceGroup --location $Location --tags $tagsString --output none
+  az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
   Write-Log "Resource group created: $ResourceGroup"
 }
 Write-Validation -Check "Resource group exists" -Passed $true -Details $ResourceGroup
@@ -280,7 +282,7 @@ Write-Log "Phase 2 completed in $phase2Elapsed" "SUCCESS"
 # ============================================
 # PHASE 3: (No additional connections needed for lab-007)
 # ============================================
-# Skipped — single-VNet topology, all bindings handled by Bicep
+# Skipped - single-VNet topology, all bindings handled by Bicep
 
 # ============================================
 # PHASE 4: (No cross-VNet bindings)
@@ -355,7 +357,7 @@ $tagsValid = ($rg.tags.project -eq "azure-labs" -and $rg.tags.lab -eq "lab-007")
 Write-Validation -Check "Tags applied correctly" -Passed $tagsValid -Details "project=azure-labs, lab=lab-007"
 if (-not $tagsValid) { $allValid = $false }
 
-# DNS resolution summary (offline — actual test requires VM SSH or Bastion)
+# DNS resolution summary (offline - actual test requires VM SSH or Bastion)
 Write-Host ""
 Write-Host "DNS Resolution Notes:" -ForegroundColor Yellow
 Write-Host "  Zone:         $DnsZoneName" -ForegroundColor Gray

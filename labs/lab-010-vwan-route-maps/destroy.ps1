@@ -90,7 +90,10 @@ $maxAttempts = 60
 $attempt = 0
 while ($attempt -lt $maxAttempts) {
   $attempt++
+  $rgExists = $null
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rgExists = az group exists -n $ResourceGroup 2>$null
+  $ErrorActionPreference = $oldEap
   if ($rgExists -eq "false") { break }
   $elapsed = Get-ElapsedTime -StartTime $deleteStart
   Write-Host "  [$elapsed] Still deleting... ($attempt/$maxAttempts)" -ForegroundColor DarkGray

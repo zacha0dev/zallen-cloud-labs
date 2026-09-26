@@ -160,7 +160,7 @@ function Ensure-AwsAuth {
     throw "AWS profile '$Profile' not configured. Run: aws configure sso --profile $Profile"
   }
 
-  # Profile exists — check if SSO is configured
+  # Profile exists - check if SSO is configured
   $ssoStartUrl = $null
   try { $ssoStartUrl = (aws configure get sso_start_url --profile $Profile 2>$null) } catch { }
   $hasSso = (-not [string]::IsNullOrWhiteSpace($ssoStartUrl))

@@ -436,7 +436,7 @@ if (-not $Force) {
   Write-Host "This creates billable resources:" -ForegroundColor Yellow
   Write-Host "  Azure:" -ForegroundColor White
   Write-Host "    - vWAN Hub: ~`$0.25/hr" -ForegroundColor Gray
-  Write-Host "    - S2S VPN Gateway (2 scale units): ~`$0.36/hr" -ForegroundColor Gray
+  Write-Host "    - S2S VPN Gateway (1 scale unit): ~`$0.36/hr" -ForegroundColor Gray
   Write-Host "  AWS:" -ForegroundColor White
   Write-Host "    - VPN Connection (2x): ~`$0.10/hr" -ForegroundColor Gray
   Write-Host "    - VGW: included with VPN" -ForegroundColor Gray
@@ -471,12 +471,13 @@ Write-Phase -Number 1 -Title "Core Fabric (vWAN + vHub)"
 $phase1Start = Get-Date
 
 # Build tags string (handle empty Owner)
-$baseTags = "project=azure-labs lab=lab-003 env=lab"
-if ($Owner) { $baseTags += " owner=$Owner" }
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-003" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
 
 # Create Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
-az group create --name $ResourceGroup --location $Location --tags $baseTags --output none
+az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
 Write-Log "Resource group created: $ResourceGroup"
 
 # Create vWAN
@@ -490,7 +491,7 @@ if (-not $existingVwan) {
     --resource-group $ResourceGroup `
     --location $Location `
     --type Standard `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "vWAN created: $VwanName"
 } else {
@@ -509,7 +510,7 @@ if (-not $existingVhub) {
     --vwan $VwanName `
     --location $Location `
     --address-prefix $VhubPrefix `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "vHub created: $VhubName"
 } else {
@@ -586,7 +587,7 @@ if (-not $existingGw -or $existingGw.provisioningState -ne "Succeeded") {
     --vhub $VhubName `
     --location $Location `
     --scale-unit 1 `
-    --tags $baseTags `
+    --tags @tagArgs `
     --no-wait `
     --output none
 
@@ -622,7 +623,11 @@ if (-not $existingGw -or $existingGw.provisioningState -ne "Succeeded") {
 }
 
 # Get gateway details
+$gw = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $gw = az network vpn-gateway show -g $ResourceGroup -n $VpnGwName -o json | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
+if (-not $gw) { throw "Could not read VPN Gateway $VpnGwName." }
 
 # Extract public IPs and BGP settings
 $azureVpnIps = @()
@@ -767,7 +772,11 @@ Write-Phase -Number 3 -Title "VPN Sites + Links (2 sites, 4 links)"
 $phase3Start = Get-Date
 
 # Get vWAN ID
+$vwanId = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $vwanId = az network vwan show -g $ResourceGroup -n $VwanName --query id -o tsv
+$ErrorActionPreference = $oldEap
+if (-not $vwanId) { throw "Could not resolve vWAN ID for $VwanName." }
 
 # Temp directory for ARM REST API body files
 $tempDir = Join-Path $RepoRoot ".data\lab-003"
@@ -1423,7 +1432,11 @@ foreach ($site in $VpnSites) {
   $siteId = $siteObj.id
 
   # Refresh gateway info
+  $gw = $null
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $gw = az network vpn-gateway show -g $ResourceGroup -n $VpnGwName -o json | ConvertFrom-Json
+  $ErrorActionPreference = $oldEap
+  if (-not $gw) { throw "Could not read VPN Gateway $VpnGwName." }
 
   # Build link connections with APIPA custom BGP addresses
   $linkConnections = @()

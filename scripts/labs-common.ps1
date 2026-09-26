@@ -1,5 +1,5 @@
 <#+
-labs-common.ps1 — Shared helper functions for all labs.
+labs-common.ps1 - Shared helper functions for all labs.
 
 Provides:
 - Get-LabConfig: Loads and validates repo config with defensive checks

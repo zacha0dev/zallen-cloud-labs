@@ -1,3 +1,5 @@
+> Historical snapshot (2026-03). Superseded by [docs/AUDIT.md](../AUDIT.md); kept for the record.
+
 # Implementation Plan: Azure Lab Setup UX Improvements
 
 **Branch:** `claude/azure-lab-setup-uKSi2`
@@ -199,7 +201,7 @@ For lab-003 (hybrid):
 .\tools\cost-check.ps1 -AwsProfile aws-labs
 ```
 
-Lab-000 was not updated (it is free; no billable resources are created).
+lab-000 was not updated (it is free; no billable resources are created).
 
 ---
 
@@ -313,7 +315,7 @@ cat .data\subs.json
 .\setup.ps1 -Status
 ```
 
-### 4. Lab-000 Preflight Only
+### 4. lab-000 Preflight Only
 
 ```powershell
 cd labs\lab-000_resource-group
@@ -362,8 +364,8 @@ notepad deploy.ps1
 
 | Issue | Priority | Notes |
 |-------|----------|-------|
-| `inspect.ps1` missing for lab-002, lab-003, lab-004, lab-005 | Low | Lab standard defines it as "Recommended" not required |
+| `inspect.ps1` missing for lab-002, lab-003, lab-004, lab-005 | Low | Lab standard defines it as "Recommended" not required. Now tracked as M-007 in docs/AUDIT.md |
 | outputs.json schema partially implemented in some labs | Low | Lab standard defines the target schema; existing labs save partial data |
 | Cost warning in deploy scripts is text-only | Done | Phase 0 of each lab already prints cost estimate before prompting |
 | Auto-migration for schema changes | Future | `_schema_version` field added to subs.example.json to enable this |
-| `docs/labs-config.md` references remain in some places | Low | Core error paths updated; older doc file still exists for backwards compat |
+| ~~`docs/labs-config.md` references remain in some places~~ | Done | File deleted in v0.7.0 |

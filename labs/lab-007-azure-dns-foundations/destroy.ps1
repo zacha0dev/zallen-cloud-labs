@@ -50,7 +50,10 @@ Write-Host "  Resource Group: $ResourceGroup" -ForegroundColor Gray
 Write-Host "  Subscription:   $SubscriptionId" -ForegroundColor Gray
 Write-Host ""
 
+$resources = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $resources = az resource list -g $ResourceGroup --query "[].{Name:name, Type:type}" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEap
 if ($resources) {
   Write-Host "Resources in group:" -ForegroundColor White
   foreach ($r in $resources) {
@@ -81,7 +84,10 @@ $attempt     = 0
 
 while ($attempt -lt $maxAttempts) {
   $attempt++
+  $rgExists = $null
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rgExists = az group exists -n $ResourceGroup 2>$null
+  $ErrorActionPreference = $oldEap
   if ($rgExists -eq "false") { break }
 
   $elapsed = Get-ElapsedTime -StartTime $deleteStartTime
@@ -91,7 +97,10 @@ while ($attempt -lt $maxAttempts) {
 
 $deleteElapsed = Get-ElapsedTime -StartTime $deleteStartTime
 
+$rgStillExists = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $rgStillExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
+$ErrorActionPreference = $oldEap
 if (-not $rgStillExists) {
   Write-Host "  [PASS] Resource group deleted: $ResourceGroup" -ForegroundColor Green
 } else {

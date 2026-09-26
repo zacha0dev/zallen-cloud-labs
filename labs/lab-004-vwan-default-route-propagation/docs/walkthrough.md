@@ -22,12 +22,12 @@ Navigate to the lab and run deploy:
 
 ```powershell
 cd labs/lab-004-vwan-default-route-propagation
-.\scripts\deploy.ps1
+.\deploy.ps1
 ```
 
 **Using a specific subscription:**
 ```powershell
-.\scripts\deploy.ps1 -SubscriptionKey sub01
+.\deploy.ps1 -SubscriptionKey sub01
 ```
 
 Type `DEPLOY` when prompted. Takes 30-45 min (vWAN hubs are slow).
@@ -43,12 +43,9 @@ Type `DEPLOY` when prompted. Takes 30-45 min (vWAN hubs are slow).
 
 ## Step 2: Validate
 
-```powershell
-.\scripts\validate.ps1
-
-# Or with specific subscription
-.\scripts\validate.ps1 -SubscriptionKey sub01
-```
+Validation runs automatically as the last phase of `deploy.ps1` (Phase 5).
+To re-check later, re-run `.\deploy.ps1` (it skips existing resources) or use
+the commands in `validation.md`.
 
 Expected output:
 ```
@@ -70,10 +67,10 @@ Result: 6 passed, 0 failed
 ## Step 3: Clean Up
 
 ```powershell
-.\scripts\destroy.ps1
+.\destroy.ps1
 
 # Or with specific subscription
-.\scripts\destroy.ps1 -SubscriptionKey sub01
+.\destroy.ps1 -SubscriptionKey sub01
 ```
 
 Type `DELETE` when prompted (or use `-Force` to skip). Takes 10-20 min.

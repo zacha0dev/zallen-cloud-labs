@@ -277,6 +277,121 @@ for ($attempt = 1; $attempt -le $maxTries; $attempt++) {
 
 Not just `subscriptions=$SubscriptionId`.
 
+### ARM REST API via `Invoke-RestMethod` — error body location differs by PS version
+
+When `Invoke-RestMethod` throws on a non-2xx response, the ARM error body (containing the real reason) is in different places depending on PS version:
+
+- **PS7**: `$_.ErrorDetails.Message` (string, parse with `ConvertFrom-Json`)
+- **PS5.1**: `$_.Exception.Response.GetResponseStream()` (stream, must read manually)
+
+**Required catch block pattern:**
+
+```powershell
+catch {
+  $errBody = $null
+  if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+    $errBody = $_.ErrorDetails.Message
+  } elseif ($_.Exception.Response) {
+    $stream = $_.Exception.Response.GetResponseStream()
+    $reader = New-Object System.IO.StreamReader($stream)
+    $errBody = $reader.ReadToEnd()
+  }
+  $msg = if ($errBody) { $errBody } else { $_.Exception.Message }
+  throw "ARM PUT failed: $msg"
+}
+```
+
+### Azure Route Maps — circular dependency between connections and route maps
+
+When a hub VNet connection reaches `provisioningState: Failed` while a route map is assigned to it, Azure marks the route map as `Failed` too. You cannot recreate the route map while the failed connection still holds a reference, and you cannot reconnect while the route map is failed.
+
+**Break the cycle in this order:**
+1. Delete any Failed hub connections first (before touching route maps)
+2. Wait for the connection deletion to complete (poll until `az network vhub connection show` returns nothing)
+3. Delete and recreate route maps; wait for each to reach `provisioningState: Succeeded` before proceeding
+4. Create the connection with the full routing config in a single ARM PUT (do not create then update)
+
+**Phase 3 pre-cleanup pattern:**
+
+```powershell
+foreach ($preConnName in @($ConnAName, $ConnBName)) {
+  $preConn = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $preConn = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $preConnName -o json 2>$null | ConvertFrom-Json
+  $ErrorActionPreference = $oldEP
+  if ($preConn -and $preConn.provisioningState -eq "Failed") {
+    Write-Host "  Pre-cleanup: deleting Failed connection $preConnName..." -ForegroundColor Yellow
+    az network vhub connection delete -g $ResourceGroup --vhub-name $VhubName -n $preConnName --yes --no-wait 2>$null
+    # Poll until gone
+    $waitSec = 0
+    while ($waitSec -lt 120) {
+      Start-Sleep -Seconds 10; $waitSec += 10
+      $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $check = $null
+      $check = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $preConnName -o json 2>$null | ConvertFrom-Json
+      $ErrorActionPreference = $oldEP
+      if (-not $check) { break }
+    }
+  }
+}
+```
+
+### ARM hub connection PUT requires full `routingConfiguration`
+
+When creating a hub VNet connection via `Invoke-RestMethod PUT`, the body must include `associatedRouteTable` and `propagatedRouteTables` even if you just want defaults. A minimal PUT body that omits these causes the connection to provision as `Failed`.
+
+**Minimal correct body:**
+
+```powershell
+$defaultRtId = "$vhubResourceId/hubRouteTables/defaultRouteTable"
+$body = [pscustomobject]@{
+  properties = [pscustomobject]@{
+    remoteVirtualNetwork  = [pscustomobject]@{ id = $RemoteVnetId }
+    routingConfiguration  = [pscustomobject]@{
+      associatedRouteTable  = [pscustomobject]@{ id = $defaultRtId }
+      propagatedRouteTables = [pscustomobject]@{
+        labels = @("default")
+        ids    = @([pscustomobject]@{ id = $defaultRtId })
+      }
+      # add inboundRouteMap / outboundRouteMap here if needed
+    }
+  }
+}
+```
+
+### Route Map `actions[].parameters` is a plural array, not a singular object
+
+The ARM Route Map schema uses `parameters` (plural, `Parameter[]`) on each action, not `parameter` (singular). Passing a single object instead of an array causes the PUT to silently accept the request but the rules have no effect.
+
+**Correct:**
+```powershell
+actions = @([pscustomobject]@{
+  type       = "Add"
+  parameters = @([pscustomobject]@{ community = @("65010:100") })
+})
+```
+
+**Wrong (silently broken — no community is ever set):**
+```powershell
+actions = @([pscustomobject]@{
+  type      = "Add"
+  parameter = [pscustomobject]@{ community = @("65010:100") }
+})
+```
+
+### `--only-show-errors` for az commands that emit advisory warnings
+
+Some `az` commands emit non-critical advisory text to stderr (e.g. Bicep upgrade notices, Python version suggestions). Under `$ErrorActionPreference = "Stop"` on PS5.1, stderr output can trigger `NativeCommandError` before `$LASTEXITCODE` is checked.
+
+Add `--only-show-errors` to any `az` command where advisory stderr is a known issue:
+
+```powershell
+az network vnet show -g $rg -n $vnetName --query id -o tsv --only-show-errors
+az deployment group create ... --only-show-errors 2>&1
+```
+
+Do NOT add `--only-show-errors` blindly to all commands — it also suppresses real errors that should be visible.
+
 ---
 
 ## Security & Multi-User Portability
@@ -380,13 +495,14 @@ The `VERSION` file at the repo root uses **semantic versioning** (`MAJOR.MINOR.P
 | `.\lab.ps1 -List` | Scans `labs/` dir + `az group list` for live status |
 | `.\lab.ps1 -Deploy <lab>` | `labs/<lab>/deploy.ps1` |
 | `.\lab.ps1 -Destroy <lab>` | `labs/<lab>/destroy.ps1` |
-| `.\lab.ps1 -Inspect <lab>` | `labs/<lab>/inspect.ps1` |
+| `.\lab.ps1 -Inspect <lab>` (alias `-Validate`) | `labs/<lab>/inspect.ps1` |
 | `.\lab.ps1 -Research <lab> [-Scenario <name>] [-Background]` | `labs/<lab>/research/<name>.ps1` |
 | `.\lab.ps1 -Cost [-Lab] [-AwsProfile]` | `tools/cost-check.ps1` |
 | `.\lab.ps1 -Settings` | Reads `az account show` + `.data/subs.json` + git state |
 | `.\lab.ps1 -Update` | `scripts/update-labs.ps1` |
+| `.\lab.ps1 -Watch -WatchTarget <endpoint>` | `tools/Watch-Endpoint.ps1` |
 
-**Pass-through parameters** forwarded to deploy/destroy scripts: `-SubscriptionKey`, `-Location`, `-Force`.
+**Pass-through parameters** forwarded to deploy/destroy scripts when the lab's script declares them: `-SubscriptionKey`, `-Location`, `-Location2`, `-AdminPassword`, `-AdminUser`, `-Force`, plus `-Mode` and `-SkipTests` (no lab declares these today).
 
 **Lab ID resolution**: `-Deploy lab-001`, `-Deploy 001`, and `-Deploy 1` all resolve to the same lab directory. Matching is prefix-based against the `labs/` directory.
 
@@ -411,7 +527,7 @@ labs/lab-NNN-<name>/
 
 ## Research Framework
 
-Research scenarios are scripts that run on top of a deployed lab to investigate specific networking behaviors. They are invoked via `lab.ps1 -Research` and are completely separate from deploy/destroy.
+Research scenarios are scripts that run on top of a deployed lab to investigate specific networking behaviors. They are invoked via `lab.ps1 -Research` and are completely separate from deploy/destroy. **No lab ships a research scenario today** (lab-008's were removed when it became a clean deployment reference); the framework stays for new ones.
 
 ### Scenario location
 
@@ -462,15 +578,4 @@ Use `$ErrorActionPreference = "Continue"` in research scripts (not `"Stop"`). Sc
 
 ## Current Labs
 
-| Lab | Description | Cost |
-|-----|-------------|------|
-| lab-000 | Resource Group + VNet baseline | Free |
-| lab-001 | vWAN hub routing | ~$0.26/hr |
-| lab-002 | App Gateway + Front Door | ~$0.30/hr |
-| lab-003 | vWAN to AWS VPN (BGP/APIPA) | ~$0.70/hr |
-| lab-004 | vWAN default route propagation | ~$0.60/hr |
-| lab-005 | vWAN S2S BGP/APIPA reference | ~$0.61/hr |
-| lab-006 | vWAN spoke BGP router + loopback | ~$0.37/hr |
-| lab-007 | Azure Private DNS Zones + auto-registration | ~$0.02/hr |
-| lab-008 | Azure DNS Private Resolver + forwarding ruleset | ~$0.03/hr |
-| lab-009 | AVNM dual-region hub-spoke + portal Global Mesh | ~$0.01/hr |
+Canonical list with costs, prerequisites and run order: `docs/LABS/README.md`. When a lab is added or its cost changes, update that file and `$LabCatalog` in `lab.ps1` together.

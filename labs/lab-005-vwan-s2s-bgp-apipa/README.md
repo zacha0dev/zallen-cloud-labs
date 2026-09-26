@@ -1,4 +1,4 @@
-# Lab 005: vWAN S2S BGP over APIPA (Azure-style)
+# Lab 005: vWAN S2S BGP over APIPA (Azure-only)
 
 Prove correct Azure vWAN S2S VPN Gateway dual-instance behavior with deterministic APIPA /30 allocations.
 
@@ -219,7 +219,7 @@ Run the cost audit tool to confirm no billable resources remain:
 
 ## Why This Lab Matters
 
-This lab is the **gold reference** for Azure vWAN S2S VPN behavior:
+This lab is the **Azure-only reference** for Azure vWAN S2S VPN behavior:
 
 1. **Proves Instance 1 exists and works** - Many assume only Instance 0 is used
 2. **Validates custom BGP addresses** - Confirms APIPA assignments are honored
@@ -228,8 +228,8 @@ This lab is the **gold reference** for Azure vWAN S2S VPN behavior:
 
 Use this lab to:
 - Debug other hybrid VPN labs
-- Validate customer configurations
-- Train on vWAN S2S architecture
+- Check your own VPN configurations
+- Learn vWAN S2S architecture
 - Create baseline for future labs
 
 ## Security Note

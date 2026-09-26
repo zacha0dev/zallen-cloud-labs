@@ -315,12 +315,14 @@ Write-Phase -Number 1 -Title "Core Fabric (RG + vWAN + vHub)"
 $phase1Start = Get-Date
 
 # Build tags
-$baseTags = "project=azure-labs lab=lab-006 env=lab"
-if ($Owner) { $baseTags += " owner=$Owner" }
+# Standard tags (project, lab, owner, environment, cost-center) from labs-common.ps1
+$labTags = Get-LabTags -LabId "lab-006" -Owner $Owner
+$tagArgs = Get-LabTagArgs -Tags $labTags
+$tagString = Get-LabTagString -Tags $labTags  # only for Invoke-Expression command strings
 
 # Create Resource Group
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Gray
-az group create --name $ResourceGroup --location $Location --tags $baseTags --output none
+az group create --name $ResourceGroup --location $Location --tags @tagArgs --output none
 Write-Log "Resource group created: $ResourceGroup"
 
 # Create vWAN
@@ -334,7 +336,7 @@ if (-not $existingVwan) {
     --resource-group $ResourceGroup `
     --location $Location `
     --type Standard `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "vWAN created: $VwanName"
 } else {
@@ -353,7 +355,7 @@ if (-not $existingVhub) {
     --vwan $VwanName `
     --location $Location `
     --address-prefix $VhubPrefix `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "vHub creation initiated: $VhubName"
 } else {
@@ -539,7 +541,7 @@ if (-not $existingSpokeA) {
     --resource-group $ResourceGroup `
     --location $Location `
     --address-prefixes $SpokeAPrefix `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
 
   # Subnets for Spoke A
@@ -565,7 +567,7 @@ if (-not $existingSpokeB) {
     --resource-group $ResourceGroup `
     --location $Location `
     --address-prefixes $SpokeBPrefix `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
 
   az network vnet subnet create -g $ResourceGroup --vnet-name $SpokeBVnetName `
@@ -581,7 +583,11 @@ $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue
 $existingConnA = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnSpokeA -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldErrPref
 if (-not $existingConnA) {
+  $spokeAId = $null
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $spokeAId = az network vnet show -g $ResourceGroup -n $SpokeAVnetName --query id -o tsv
+  $ErrorActionPreference = $oldEap
+  if (-not $spokeAId) { throw "Could not resolve VNet ID for $SpokeAVnetName." }
   az network vhub connection create `
     --name $ConnSpokeA `
     --resource-group $ResourceGroup `
@@ -598,7 +604,11 @@ $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue
 $existingConnB = az network vhub connection show -g $ResourceGroup --vhub-name $VhubName -n $ConnSpokeB -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldErrPref
 if (-not $existingConnB) {
+  $spokeBId = $null
+  $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $spokeBId = az network vnet show -g $ResourceGroup -n $SpokeBVnetName --query id -o tsv
+  $ErrorActionPreference = $oldEap
+  if (-not $spokeBId) { throw "Could not resolve VNet ID for $SpokeBVnetName." }
   az network vhub connection create `
     --name $ConnSpokeB `
     --resource-group $ResourceGroup `
@@ -667,7 +677,7 @@ if (-not $existingNic1) {
     --vnet-name $SpokeAVnetName `
     --subnet $SpokeARouterHubSub `
     --ip-forwarding true `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "Router NIC1 (hub-side) created: $routerNic1"
 }
@@ -683,7 +693,7 @@ if (-not $existingNic2) {
     --vnet-name $SpokeAVnetName `
     --subnet $SpokeARouterSpkSub `
     --ip-forwarding true `
-    --tags $baseTags `
+    --tags @tagArgs `
     --output none
   Write-Log "Router NIC2 (spoke-side) created: $routerNic2"
 }
@@ -703,7 +713,7 @@ if (-not $existingRouterVm) {
     "--nics $routerNic1 $routerNic2 " +
     "--admin-username azurelab " +
     "--ssh-key-values `"$sshKeyPath.pub`" " +
-    "--tags $baseTags " +
+    "--tags $tagString " +
     "--no-wait " +
     "--output none"
   if (Test-Path $routerCloudInit) {
@@ -731,7 +741,7 @@ if (-not $existingClientA) {
     "--subnet $SpokeAClientSub " +
     "--admin-username azurelab " +
     "--ssh-key-values `"$sshKeyPath.pub`" " +
-    "--tags $baseTags " +
+    "--tags $tagString " +
     "--no-wait " +
     "--output none"
   if (Test-Path $clientCloudInit) {
@@ -759,7 +769,7 @@ if (-not $existingClientB) {
     "--subnet $SpokeBClientSub " +
     "--admin-username azurelab " +
     "--ssh-key-values `"$sshKeyPath.pub`" " +
-    "--tags $baseTags " +
+    "--tags $tagString " +
     "--no-wait " +
     "--output none"
   if (Test-Path $clientCloudInit) {
@@ -1331,7 +1341,12 @@ Write-Phase -Number 6 -Title "Blob-Driven Router Config (Optional)"
 $phase6Start = Get-Date
 
 # Load lab config to check if blob-driven config is enabled
-$labConfigPath = Join-Path $LabRoot "lab.config.json"
+# -ConfigPath overrides the default lab.config.json next to this script
+if ($ConfigPath) {
+  $labConfigPath = $ConfigPath
+} else {
+  $labConfigPath = Join-Path $LabRoot "lab.config.json"
+}
 $blobConfigEnabled = $false
 $blobStorageAccount = "stlab006router"
 $blobContainer = "router-config"
@@ -1366,7 +1381,7 @@ if ($blobConfigEnabled) {
       --sku Standard_LRS `
       --kind StorageV2 `
       --allow-blob-public-access false `
-      --tags $baseTags `
+      --tags @tagArgs `
       --output none 2>$null
     $ErrorActionPreference = $oldErrPref
     Write-Log "Storage account created: $blobStorageAccount"

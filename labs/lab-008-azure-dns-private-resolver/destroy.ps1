@@ -1,11 +1,9 @@
 # labs/lab-008-azure-dns-private-resolver/destroy.ps1
-# Destroys all resources created by lab-008 (any mode)
+# Destroys all resources created by lab-008
 # Idempotent: safe to run multiple times
 #
-# Cleans up all resources regardless of which -Mode was used during deploy:
-#   - Base:               resource group (all VNets, resolver, ruleset, zone, VM)
-#   - StickyBlock:        above + DNS Security Policy (if any remains)
-#   - ForwardingVariants: above + any leftover variant rules/zones/links
+# Deletes the resource group (VNets, resolver, ruleset, zone, VM, DNS Security
+# Policy). A few optional extras are removed first if an older run left them.
 
 [CmdletBinding()]
 param(
@@ -26,7 +24,7 @@ $ResourceGroup    = "rg-lab-008-dns-resolver"
 $RulesetName      = "ruleset-008"
 $DnsZoneName      = "internal.lab"
 
-# Mode-specific resource names (cleaned up if present)
+# Optional extras from older runs (cleaned up if present)
 $StickyPolicyName   = "dnspolicy-lab-008-stickyblock"
 $StickyBlockRule    = "rule-sticky-block-test"
 $VariantAZone       = "variant-a.lab"
@@ -43,14 +41,20 @@ function Get-ElapsedTime {
 function Remove-IfExists {
   param([string]$Label, [scriptblock]$CheckCmd, [scriptblock]$DeleteCmd)
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+  $exists = $null
   $exists = & $CheckCmd
   $ErrorActionPreference = $oldEP
   if ($exists) {
     Write-Host "  Removing: $Label" -ForegroundColor DarkGray
     $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
     & $DeleteCmd 2>$null
+    $deleteExit = $LASTEXITCODE
     $ErrorActionPreference = $oldEP
-    Write-Host "  [PASS] Removed: $Label" -ForegroundColor Green
+    if ($deleteExit -eq 0) {
+      Write-Host "  [PASS] Removed: $Label" -ForegroundColor Green
+    } else {
+      Write-Host "  [WARN] Delete failed (exit $deleteExit): $Label - resource group delete will retry it" -ForegroundColor Yellow
+    }
   } else {
     Write-Host "  [SKIP] Not found (already gone): $Label" -ForegroundColor DarkGray
   }
@@ -59,8 +63,6 @@ function Remove-IfExists {
 Write-Host ""
 Write-Host "Lab 008: Destroy Resources" -ForegroundColor Cyan
 Write-Host "===========================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Cleans up all resources for any deployment mode (Base, StickyBlock, ForwardingVariants)." -ForegroundColor DarkGray
 Write-Host ""
 
 $destroyStartTime = Get-Date
@@ -83,7 +85,10 @@ Write-Host "  Resource Group: $ResourceGroup" -ForegroundColor Gray
 Write-Host "  Subscription:   $SubscriptionId" -ForegroundColor Gray
 Write-Host ""
 
+$resources = $null
+$oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $resources = az resource list -g $ResourceGroup --query "[].{Name:name, Type:type}" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldEP
 if ($resources) {
   Write-Host "Resources in group:" -ForegroundColor White
   foreach ($r in $resources) {
@@ -95,7 +100,7 @@ if ($resources) {
 if (-not $Force) {
   Write-Host "WARNING: This will permanently delete all resources!" -ForegroundColor Red
   Write-Host "  Includes: DNS Private Resolver, both VNets, peerings, ruleset, zone, VM." -ForegroundColor Yellow
-  Write-Host "  Also removes DNS Security Policy, domain list, StickyBlock policies, and ForwardingVariants leftovers." -ForegroundColor Yellow
+  Write-Host "  Also removes the DNS Security Policy, domain list, and any leftovers from older runs." -ForegroundColor Yellow
   $confirm = Read-Host "Type DELETE to confirm"
   if ($confirm -ne "DELETE") {
     Write-Host "Cancelled." -ForegroundColor Yellow
@@ -104,19 +109,18 @@ if (-not $Force) {
 }
 
 # ============================================
-# Pre-deletion: clean up mode-specific resources
-# These are cleaned up explicitly first because some have dependencies
-# that can block resource group deletion if left dangling.
+# Pre-deletion: remove resources whose dependencies can block
+# resource group deletion if left dangling.
 # ============================================
 Write-Host ""
-Write-Host "Pre-deletion cleanup (mode-specific resources)..." -ForegroundColor Yellow
+Write-Host "Pre-deletion cleanup..." -ForegroundColor Yellow
 
-# StickyBlock: DNS Security Policy
+# Leftover from older runs: extra DNS Security Policy
 Remove-IfExists -Label "DNS Security Policy: $StickyPolicyName" `
   -CheckCmd  { az network dns-security-policy show --name $StickyPolicyName --resource-group $ResourceGroup -o json 2>$null | ConvertFrom-Json } `
   -DeleteCmd { az network dns-security-policy delete --name $StickyPolicyName --resource-group $ResourceGroup --yes 2>$null }
 
-# Base: DNS Security Policy VNet link (unlink before group delete to avoid dependency errors)
+# DNS Security Policy VNet link (unlink before group delete to avoid dependency errors)
 $PermPolicyName = "dnspolicy-lab-008"
 $PermDomainListName = "domainlist-lab-008-blocked"
 
@@ -142,8 +146,13 @@ if ($permPolicy -and $permPolicy.id) {
   Write-Host "  Removing: DNS Security Policy: $PermPolicyName" -ForegroundColor DarkGray
   $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   az network dns-security-policy delete --name $PermPolicyName --resource-group $ResourceGroup --yes 2>$null
+  $policyDeleteExit = $LASTEXITCODE
   $ErrorActionPreference = $oldEP
-  Write-Host "  [PASS] DNS Security Policy removed: $PermPolicyName" -ForegroundColor Green
+  if ($policyDeleteExit -eq 0) {
+    Write-Host "  [PASS] DNS Security Policy removed: $PermPolicyName" -ForegroundColor Green
+  } else {
+    Write-Host "  [WARN] DNS Security Policy delete failed (exit $policyDeleteExit): $PermPolicyName" -ForegroundColor Yellow
+  }
 } else {
   Write-Host "  [SKIP] Not found (already gone): DNS Security Policy: $PermPolicyName" -ForegroundColor DarkGray
 }
@@ -153,35 +162,35 @@ Remove-IfExists -Label "Domain list: $PermDomainListName" `
   -CheckCmd  { az resource show -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -n $PermDomainListName --api-version "2023-07-01-preview" -o json 2>$null | ConvertFrom-Json } `
   -DeleteCmd { az resource delete -g $ResourceGroup --resource-type "Microsoft.Network/dnsResolverDomainLists" -n $PermDomainListName --api-version "2023-07-01-preview" 2>$null }
 
-# StickyBlock: block forwarding rule (in case it wasn't cleaned up)
-Remove-IfExists -Label "StickyBlock forwarding rule: $StickyBlockRule" `
-  -CheckCmd  { az dns-resolver forwarding-rule show -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n $StickyBlockRule -o json 2>$null | ConvertFrom-Json } `
-  -DeleteCmd { az dns-resolver forwarding-rule delete -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n $StickyBlockRule --yes 2>$null }
+# Leftover from older runs: block forwarding rule
+Remove-IfExists -Label "Leftover forwarding rule: $StickyBlockRule" `
+  -CheckCmd  { az dns-resolver forwarding-rule show -g $ResourceGroup --ruleset-name $RulesetName -n $StickyBlockRule -o json 2>$null | ConvertFrom-Json } `
+  -DeleteCmd { az dns-resolver forwarding-rule delete -g $ResourceGroup --ruleset-name $RulesetName -n $StickyBlockRule --yes 2>$null }
 
-# StickyBlock: seeded test record (sticky.internal.lab)
-Remove-IfExists -Label "StickyBlock DNS record: sticky.$DnsZoneName" `
+# Leftover from older runs: seeded test record (sticky.internal.lab)
+Remove-IfExists -Label "Leftover DNS record: sticky.$DnsZoneName" `
   -CheckCmd  { az network private-dns record-set a show -g $ResourceGroup --zone-name $DnsZoneName -n "sticky" -o json 2>$null | ConvertFrom-Json } `
   -DeleteCmd { az network private-dns record-set a delete -g $ResourceGroup --zone-name $DnsZoneName -n "sticky" --yes 2>$null }
 
-# ForwardingVariants: Variant A rule
+# Leftover from older runs: Variant A rule
 Remove-IfExists -Label "Variant A forwarding rule: $VariantARule" `
-  -CheckCmd  { az dns-resolver forwarding-rule show -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n $VariantARule -o json 2>$null | ConvertFrom-Json } `
-  -DeleteCmd { az dns-resolver forwarding-rule delete -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n $VariantARule --yes 2>$null }
+  -CheckCmd  { az dns-resolver forwarding-rule show -g $ResourceGroup --ruleset-name $RulesetName -n $VariantARule -o json 2>$null | ConvertFrom-Json } `
+  -DeleteCmd { az dns-resolver forwarding-rule delete -g $ResourceGroup --ruleset-name $RulesetName -n $VariantARule --yes 2>$null }
 
-# ForwardingVariants: Variant A DNS zone link
+# Leftover from older runs: Variant A DNS zone link
 Remove-IfExists -Label "Variant A zone link: $VariantALink" `
   -CheckCmd  { az network private-dns link vnet show -g $ResourceGroup -n $VariantALink --zone-name $VariantAZone -o json 2>$null | ConvertFrom-Json } `
   -DeleteCmd { az network private-dns link vnet delete -g $ResourceGroup -n $VariantALink --zone-name $VariantAZone --yes 2>$null }
 
-# ForwardingVariants: Variant A DNS zone
+# Leftover from older runs: Variant A DNS zone
 Remove-IfExists -Label "Variant A DNS zone: $VariantAZone" `
   -CheckCmd  { az network private-dns zone show -g $ResourceGroup -n $VariantAZone -o json 2>$null | ConvertFrom-Json } `
   -DeleteCmd { az network private-dns zone delete -g $ResourceGroup -n $VariantAZone --yes 2>$null }
 
-# ForwardingVariants: Variant B ruleset link to hub
+# Leftover from older runs: Variant B ruleset link to hub
 Remove-IfExists -Label "Variant B hub VNet link: $VariantBLink" `
-  -CheckCmd  { az dns-resolver vnet-link show -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n $VariantBLink -o json 2>$null | ConvertFrom-Json } `
-  -DeleteCmd { az dns-resolver vnet-link delete -g $ResourceGroup --forwarding-ruleset-name $RulesetName -n $VariantBLink --yes 2>$null }
+  -CheckCmd  { az dns-resolver vnet-link show -g $ResourceGroup --ruleset-name $RulesetName -n $VariantBLink -o json 2>$null | ConvertFrom-Json } `
+  -DeleteCmd { az dns-resolver vnet-link delete -g $ResourceGroup --ruleset-name $RulesetName -n $VariantBLink --yes 2>$null }
 
 # ============================================
 # Main resource group deletion
@@ -199,7 +208,10 @@ $attempt     = 0
 
 while ($attempt -lt $maxAttempts) {
   $attempt++
+  $rgExists = $null
+  $oldEP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rgExists = az group exists -n $ResourceGroup 2>$null
+  $ErrorActionPreference = $oldEP
   if ($rgExists -eq "false") { break }
 
   $elapsed = Get-ElapsedTime -StartTime $deleteStartTime
@@ -209,7 +221,10 @@ while ($attempt -lt $maxAttempts) {
 
 $deleteElapsed = Get-ElapsedTime -StartTime $deleteStartTime
 
+$rgStillExists = $null
+$oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $rgStillExists = (az group exists -n $ResourceGroup 2>$null) -eq "true"
+$ErrorActionPreference = $oldEap
 if (-not $rgStillExists) {
   Write-Host "  [PASS] Resource group deleted: $ResourceGroup" -ForegroundColor Green
 } else {

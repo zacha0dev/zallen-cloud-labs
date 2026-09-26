@@ -20,10 +20,18 @@ $RepoRoot = Resolve-Path (Join-Path $LabRoot "..\..") | Select-Object -ExpandPro
 # Lab configuration
 $ResourceGroup = "rg-lab-005-vwan-s2s"
 
+function Get-ElapsedTime {
+  param([datetime]$StartTime)
+  $elapsed = (Get-Date) - $StartTime
+  return "$([math]::Floor($elapsed.TotalMinutes))m $($elapsed.Seconds)s"
+}
+
 Write-Host ""
 Write-Host "Lab 005: Destroy Resources" -ForegroundColor Cyan
 Write-Host "===========================" -ForegroundColor Cyan
 Write-Host ""
+
+$destroyStartTime = Get-Date
 
 # Check for Azure CLI
 if (-not (Get-Command "az" -ErrorAction SilentlyContinue)) {
@@ -35,8 +43,12 @@ $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 
-# Check if resource group exists
+# Check if resource group exists (EAP toggle so a missing group does not throw)
+$existingRg = $null
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
+
 if (-not $existingRg) {
   Write-Host "Resource group '$ResourceGroup' does not exist. Nothing to delete." -ForegroundColor Yellow
   exit 0
@@ -49,7 +61,10 @@ Write-Host "  Subscription: $SubscriptionId" -ForegroundColor Gray
 Write-Host ""
 
 # List resources in the group
+$resources = $null
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $resources = az resource list -g $ResourceGroup --query "[].{Name:name, Type:type}" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 if ($resources) {
   Write-Host "Resources in group:" -ForegroundColor White
   foreach ($r in $resources) {
@@ -72,8 +87,7 @@ if (-not $Force) {
 Write-Host ""
 Write-Host "Deleting resource group: $ResourceGroup" -ForegroundColor Yellow
 Write-Host "This may take 5-10 minutes..." -ForegroundColor Gray
-
-$startTime = Get-Date
+$deleteStartTime = Get-Date
 
 az group delete --name $ResourceGroup --yes --no-wait
 
@@ -84,42 +98,67 @@ $attempt = 0
 
 while ($attempt -lt $maxAttempts) {
   $attempt++
+  $rgExists = $null
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rgExists = az group exists -n $ResourceGroup 2>$null
+  $ErrorActionPreference = $oldErrPref
   if ($rgExists -eq "false") {
     break
   }
 
-  $elapsed = (Get-Date) - $startTime
-  $elapsedStr = "$([math]::Floor($elapsed.TotalMinutes))m $($elapsed.Seconds)s"
-  Write-Host "  [$elapsedStr] Still deleting... (attempt $attempt/$maxAttempts)" -ForegroundColor DarkGray
+  $elapsed = Get-ElapsedTime -StartTime $deleteStartTime
+  Write-Host "  [$elapsed] Still deleting... (attempt $attempt/$maxAttempts)" -ForegroundColor DarkGray
   Start-Sleep -Seconds 15
 }
 
-$totalElapsed = (Get-Date) - $startTime
-$totalStr = "$([math]::Floor($totalElapsed.TotalMinutes))m $($totalElapsed.Seconds)s"
+$deleteElapsed = Get-ElapsedTime -StartTime $deleteStartTime
 
-Write-Host ""
-Write-Host "Resource group deleted in $totalStr" -ForegroundColor Green
+# Final verification: only report success and clean up local data once the group is gone
+$rgStillExists = $null
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$rgStillExists = az group exists -n $ResourceGroup 2>$null
+$ErrorActionPreference = $oldErrPref
+
+if ($rgStillExists -ne "false") {
+  Write-Host ""
+  Write-Host "  [WAIT] Resource group is still deleting after $deleteElapsed - $ResourceGroup" -ForegroundColor Yellow
+  Write-Host "         Azure finishes the delete in the background. Local outputs were kept." -ForegroundColor DarkGray
+  Write-Host "         Check progress with:  .\lab.ps1 -Cost -Lab lab-005" -ForegroundColor DarkGray
+  Write-Host "         Then re-run destroy to finish local cleanup." -ForegroundColor DarkGray
+  Write-Host ""
+  exit 1
+}
+
+Write-Host "  [PASS] Resource group deleted: $ResourceGroup ($deleteElapsed)" -ForegroundColor Green
 
 # Clean up local data
+Write-Host ""
+Write-Host "Cleaning up local data..." -ForegroundColor Gray
+
 $dataDir = Join-Path $RepoRoot ".data\lab-005"
 if (Test-Path $dataDir) {
-  Write-Host "Cleaning up local data: $dataDir" -ForegroundColor Gray
   Remove-Item -Path $dataDir -Recurse -Force
+  Write-Host "  Removed: $dataDir" -ForegroundColor DarkGray
 }
 
 # Optionally clean up logs
 if (-not $KeepLogs) {
   $logsDir = Join-Path $LabRoot "logs"
   if (Test-Path $logsDir) {
-    $logFiles = @(Get-ChildItem -Path $logsDir -Filter "lab-005-*.log")
+    $logFiles = @(Get-ChildItem -Path $logsDir -Filter "lab-005-*.log" -ErrorAction SilentlyContinue)
     if ($logFiles.Count -gt 0) {
-      Write-Host "Cleaning up $($logFiles.Count) log file(s)..." -ForegroundColor Gray
+      Write-Host "  Removing $($logFiles.Count) log file(s)..." -ForegroundColor DarkGray
       $logFiles | Remove-Item -Force
     }
   }
 }
 
+$totalElapsed = Get-ElapsedTime -StartTime $destroyStartTime
+
 Write-Host ""
+Write-Host ("=" * 60) -ForegroundColor Green
 Write-Host "Cleanup complete!" -ForegroundColor Green
+Write-Host ("=" * 60) -ForegroundColor Green
+Write-Host ""
+Write-Host "Total cleanup time: $totalElapsed" -ForegroundColor Gray
 Write-Host ""

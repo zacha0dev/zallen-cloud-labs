@@ -33,12 +33,18 @@ Write-Host ""
 
 $destroyStartTime = Get-Date
 
+# Check for Azure CLI
+if (-not (Get-Command "az" -ErrorAction SilentlyContinue)) {
+  throw "Azure CLI not found. Install from: https://aka.ms/installazurecli"
+}
+
 # Get subscription
 $SubscriptionId = Get-SubscriptionId -Key $SubscriptionKey -RepoRoot $RepoRoot
 Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 
-# Check if resource group exists
+# Check if resource group exists (EAP toggle so a missing group does not throw)
+$existingRg = $null
 $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $existingRg = az group show -n $ResourceGroup -o json 2>$null | ConvertFrom-Json
 $ErrorActionPreference = $oldErrPref
@@ -55,7 +61,10 @@ Write-Host "  Subscription: $SubscriptionId" -ForegroundColor Gray
 Write-Host ""
 
 # List resources in the group
+$resources = $null
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
 $resources = az resource list -g $ResourceGroup --query "[].{Name:name, Type:type}" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = $oldErrPref
 if ($resources) {
   Write-Host "Resources in group:" -ForegroundColor White
   foreach ($r in $resources) {
@@ -77,7 +86,6 @@ if (-not $Force) {
 # Delete resource group
 Write-Host ""
 Write-Host "Deleting resource group: $ResourceGroup" -ForegroundColor Yellow
-
 $deleteStartTime = Get-Date
 
 az group delete --name $ResourceGroup --yes --no-wait
@@ -89,7 +97,10 @@ $attempt = 0
 
 while ($attempt -lt $maxAttempts) {
   $attempt++
+  $rgExists = $null
+  $oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
   $rgExists = az group exists -n $ResourceGroup 2>$null
+  $ErrorActionPreference = $oldErrPref
   if ($rgExists -eq "false") {
     break
   }
@@ -100,6 +111,24 @@ while ($attempt -lt $maxAttempts) {
 }
 
 $deleteElapsed = Get-ElapsedTime -StartTime $deleteStartTime
+
+# Final verification: only report success and clean up local data once the group is gone
+$rgStillExists = $null
+$oldErrPref = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+$rgStillExists = az group exists -n $ResourceGroup 2>$null
+$ErrorActionPreference = $oldErrPref
+
+if ($rgStillExists -ne "false") {
+  Write-Host ""
+  Write-Host "  [WAIT] Resource group is still deleting after $deleteElapsed - $ResourceGroup" -ForegroundColor Yellow
+  Write-Host "         Azure finishes the delete in the background. Local outputs were kept." -ForegroundColor DarkGray
+  Write-Host "         Check progress with:  .\lab.ps1 -Cost -Lab lab-000" -ForegroundColor DarkGray
+  Write-Host "         Then re-run destroy to finish local cleanup." -ForegroundColor DarkGray
+  Write-Host ""
+  exit 1
+}
+
+Write-Host "  [PASS] Resource group deleted: $ResourceGroup ($deleteElapsed)" -ForegroundColor Green
 
 # Clean up local data
 Write-Host ""

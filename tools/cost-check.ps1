@@ -346,16 +346,40 @@ if (-not $AwsProfile) {
   } else {
     Write-Check "AWS authenticated" -Details "Account: $awsAccount, Region: $AwsRegion"
 
-    # Build tag filter
-    $tagFilter = "Name=tag:project,Values=azure-labs"
+    # Build tag filters - one array element per filter so the AWS CLI sees
+    # separate arguments (a single space-joined string is one bad filter)
+    $tagFilters = @("Name=tag:project,Values=azure-labs")
     if ($Lab) {
-      $tagFilter = "Name=tag:project,Values=azure-labs Name=tag:lab,Values=$Lab"
+      $tagFilters += "Name=tag:lab,Values=$Lab"
     }
 
+    # Runs an AWS CLI query without throwing; the caller checks .Ok so a failed
+    # call is reported as an error instead of "nothing found".
+    function Invoke-AwsQuery {
+      param([string[]]$Arguments)
+      $oldEap = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+      $out = & aws @Arguments 2>$null
+      $code = $LASTEXITCODE
+      $ErrorActionPreference = $oldEap
+      return [pscustomobject]@{
+        Ok       = ($code -eq 0)
+        ExitCode = $code
+        Json     = (@($out) -join "`n")
+      }
+    }
+
+    function Write-AwsQueryError {
+      param([string]$What, [int]$ExitCode)
+      Write-Host "  [ERROR] Could not list $What (aws exit code $ExitCode) - result unknown" -ForegroundColor Red
+      $script:awsQueryErrors++
+    }
+
+    $script:awsQueryErrors = 0
     $awsBillable = @()
 
     Write-SubHeader "VPN Connections"
-    $vpnsJson = aws ec2 describe-vpn-connections --filters $tagFilter --query "VpnConnections[?State!='deleted']" --output json 2>$null
+    $vpnsResult = Invoke-AwsQuery -Arguments (@("ec2", "describe-vpn-connections", "--filters") + $tagFilters + @("--query", "VpnConnections[?State!='deleted']", "--output", "json"))
+    $vpnsJson = if ($vpnsResult.Ok) { $vpnsResult.Json } else { $null }
     if ($vpnsJson) {
       $vpns = $vpnsJson | ConvertFrom-Json
       if ($vpns.Count -gt 0) {
@@ -366,12 +390,15 @@ if (-not $AwsProfile) {
       } else {
         Write-Check "No VPN connections found"
       }
+    } elseif (-not $vpnsResult.Ok) {
+      Write-AwsQueryError -What "VPN connections" -ExitCode $vpnsResult.ExitCode
     } else {
       Write-Check "No VPN connections found"
     }
 
     Write-SubHeader "Virtual Private Gateways"
-    $vgwsJson = aws ec2 describe-vpn-gateways --filters $tagFilter --query "VpnGateways[?State!='deleted']" --output json 2>$null
+    $vgwsResult = Invoke-AwsQuery -Arguments (@("ec2", "describe-vpn-gateways", "--filters") + $tagFilters + @("--query", "VpnGateways[?State!='deleted']", "--output", "json"))
+    $vgwsJson = if ($vgwsResult.Ok) { $vgwsResult.Json } else { $null }
     if ($vgwsJson) {
       $vgws = $vgwsJson | ConvertFrom-Json
       if ($vgws.Count -gt 0) {
@@ -382,12 +409,15 @@ if (-not $AwsProfile) {
       } else {
         Write-Check "No VPN gateways found"
       }
+    } elseif (-not $vgwsResult.Ok) {
+      Write-AwsQueryError -What "VPN gateways" -ExitCode $vgwsResult.ExitCode
     } else {
       Write-Check "No VPN gateways found"
     }
 
     Write-SubHeader "Customer Gateways"
-    $cgwsJson = aws ec2 describe-customer-gateways --filters $tagFilter --query "CustomerGateways[?State!='deleted']" --output json 2>$null
+    $cgwsResult = Invoke-AwsQuery -Arguments (@("ec2", "describe-customer-gateways", "--filters") + $tagFilters + @("--query", "CustomerGateways[?State!='deleted']", "--output", "json"))
+    $cgwsJson = if ($cgwsResult.Ok) { $cgwsResult.Json } else { $null }
     if ($cgwsJson) {
       $cgws = $cgwsJson | ConvertFrom-Json
       if ($cgws.Count -gt 0) {
@@ -397,12 +427,15 @@ if (-not $AwsProfile) {
       } else {
         Write-Check "No customer gateways found"
       }
+    } elseif (-not $cgwsResult.Ok) {
+      Write-AwsQueryError -What "customer gateways" -ExitCode $cgwsResult.ExitCode
     } else {
       Write-Check "No customer gateways found"
     }
 
     Write-SubHeader "EC2 Instances"
-    $ec2sJson = aws ec2 describe-instances --filters $tagFilter "Name=instance-state-name,Values=running,stopped" --query "Reservations[].Instances[]" --output json 2>$null
+    $ec2sResult = Invoke-AwsQuery -Arguments (@("ec2", "describe-instances", "--filters") + $tagFilters + @("Name=instance-state-name,Values=running,stopped", "--query", "Reservations[].Instances[]", "--output", "json"))
+    $ec2sJson = if ($ec2sResult.Ok) { $ec2sResult.Json } else { $null }
     if ($ec2sJson) {
       $ec2s = $ec2sJson | ConvertFrom-Json
       if ($ec2s.Count -gt 0) {
@@ -413,12 +446,15 @@ if (-not $AwsProfile) {
       } else {
         Write-Check "No EC2 instances found"
       }
+    } elseif (-not $ec2sResult.Ok) {
+      Write-AwsQueryError -What "EC2 instances" -ExitCode $ec2sResult.ExitCode
     } else {
       Write-Check "No EC2 instances found"
     }
 
     Write-SubHeader "Elastic IPs"
-    $eipsJson = aws ec2 describe-addresses --filters $tagFilter --output json 2>$null
+    $eipsResult = Invoke-AwsQuery -Arguments (@("ec2", "describe-addresses", "--filters") + $tagFilters + @("--output", "json"))
+    $eipsJson = if ($eipsResult.Ok) { $eipsResult.Json } else { $null }
     if ($eipsJson) {
       $eips = ($eipsJson | ConvertFrom-Json).Addresses
       if ($eips -and $eips.Count -gt 0) {
@@ -433,12 +469,15 @@ if (-not $AwsProfile) {
       } else {
         Write-Check "No Elastic IPs found"
       }
+    } elseif (-not $eipsResult.Ok) {
+      Write-AwsQueryError -What "Elastic IPs" -ExitCode $eipsResult.ExitCode
     } else {
       Write-Check "No Elastic IPs found"
     }
 
     Write-SubHeader "NAT Gateways"
-    $natsJson = aws ec2 describe-nat-gateways --filter $tagFilter "Name=state,Values=available,pending" --output json 2>$null
+    $natsResult = Invoke-AwsQuery -Arguments (@("ec2", "describe-nat-gateways", "--filter") + $tagFilters + @("Name=state,Values=available,pending", "--output", "json"))
+    $natsJson = if ($natsResult.Ok) { $natsResult.Json } else { $null }
     if ($natsJson) {
       $nats = ($natsJson | ConvertFrom-Json).NatGateways
       if ($nats -and $nats.Count -gt 0) {
@@ -449,6 +488,8 @@ if (-not $AwsProfile) {
       } else {
         Write-Check "No NAT gateways found"
       }
+    } elseif (-not $natsResult.Ok) {
+      Write-AwsQueryError -What "NAT gateways" -ExitCode $natsResult.ExitCode
     } else {
       Write-Check "No NAT gateways found"
     }
@@ -482,7 +523,8 @@ if (-not $AwsProfile) {
     }
 
     Write-SubHeader "VPCs"
-    $vpcsJson = aws ec2 describe-vpcs --filters $tagFilter --output json 2>$null
+    $vpcsResult = Invoke-AwsQuery -Arguments (@("ec2", "describe-vpcs", "--filters") + $tagFilters + @("--output", "json"))
+    $vpcsJson = if ($vpcsResult.Ok) { $vpcsResult.Json } else { $null }
     if ($vpcsJson) {
       $vpcs = ($vpcsJson | ConvertFrom-Json).Vpcs
       if ($vpcs -and $vpcs.Count -gt 0) {
@@ -493,6 +535,8 @@ if (-not $AwsProfile) {
       } else {
         Write-Check "No tagged VPCs found"
       }
+    } elseif (-not $vpcsResult.Ok) {
+      Write-AwsQueryError -What "VPCs" -ExitCode $vpcsResult.ExitCode
     } else {
       Write-Check "No tagged VPCs found"
     }
@@ -502,6 +546,11 @@ if (-not $AwsProfile) {
 
     if ($awsBillable.Count -gt 0) {
       $report.warnings += "AWS: $($awsBillable.Count) billable resources found"
+    }
+    if ($script:awsQueryErrors -gt 0) {
+      $report.warnings += "AWS: $($script:awsQueryErrors) queries failed - results are incomplete"
+      Write-Host ""
+      Write-Host "  [ERROR] $($script:awsQueryErrors) AWS queries failed. Do not treat this as a clean result." -ForegroundColor Red
     }
   }
 }
