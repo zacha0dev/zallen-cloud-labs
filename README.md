@@ -1,6 +1,8 @@
 # AI-Driven Cloud Labs
 
-> Azure networking labs built with [Claude Code](https://claude.ai/code) — from infrastructure design to deployment scripts, generated and refined through AI-assisted workflows.
+> Azure networking labs you can run by prompt: a Claude Code package that plans, previews, applies and **measures** real infrastructure changes, with guard rails so nothing reaches the cloud without your yes.
+
+**Topics:** Claude Code Azure infrastructure · prompt-based infrastructure management · agentic IaC · AI-driven cloud operations lab · Azure Virtual WAN · BGP · Azure DNS · Bicep · PowerShell
 
 A personal lab collection focused on Azure Virtual WAN, hybrid connectivity, and cloud networking patterns. Built using an AI-driven approach: every lab, script, and doc in this repository was designed and iterated with Claude Code as a coding partner.
 
@@ -13,6 +15,26 @@ Two goals:
 **1. Learn by building.** Real Azure infrastructure, real costs, real BGP sessions. No sandboxes, no simulations.
 
 **2. Show the AI-driven IaC workflow.** Every commit in this repo reflects a human-AI collaboration — prompting, reviewing, refining. If you want to build your own labs using Claude Code, this is a working reference for how to do it.
+
+---
+
+## Run It by Prompt: the Claude Code Package
+
+The [`.claude/`](.claude/README.md) folder turns this repo into an agentic ops workspace. It solves the usual problems with letting an AI agent touch real cloud infrastructure: silent changes, confident-but-wrong claims, forgotten billable resources, and drift.
+
+| Piece | What it does |
+|-------|--------------|
+| **Agents** | `orchestrator` plans in lanes with a confirm step; `measurer` proves claims read-only; `records-librarian` keeps docs in step; `claim-auditor` checks before anything is published |
+| **Skills** | infra-lane (code, what-if, apply, verify), deploy-lane, tagging-as-addressing, measure-before-claiming, cost-guard, lab-authoring, session-closeout |
+| **Rules** | No cloud change without an explicit ask; no identifiers in commits; every claim needs a measurement |
+| **Hooks** | A session-start briefing of live labs, and a guard that pauses raw `az ... create/delete` for your approval |
+
+```powershell
+.\.claude\setup.ps1     # checks the tools, prints first prompts
+claude                  # then: "Deploy lab-000, prove it worked, then destroy it and prove nothing is left."
+```
+
+Full guide: **[docs/AGENTIC-OPS.md](docs/AGENTIC-OPS.md)** · CI example: [examples/github-actions/infra-lane.yml](examples/github-actions/infra-lane.yml)
 
 ---
 
@@ -84,6 +106,7 @@ Everything is organized at: **[docs/README.md](docs/README.md)**
 | Validate / troubleshoot | [docs/DOMAINS/observability.md](docs/DOMAINS/observability.md) |
 | Check current known issues | [docs/AUDIT.md](docs/AUDIT.md) |
 | Build your own labs with AI | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Run the labs by prompt (Claude Code) | [docs/AGENTIC-OPS.md](docs/AGENTIC-OPS.md) |
 
 ---
 

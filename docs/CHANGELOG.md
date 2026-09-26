@@ -11,6 +11,24 @@ See [AUDIT.md](AUDIT.md) for current next actions.
 
 ---
 
+## v0.11.0 - 2026-09-26 - Claude Code Package for Agentic Ops
+
+> Changes between v0.7.1 and v0.10.0 (among them lab-010, the `-Watch` tool and the tagging helpers) are recorded in git history and pull requests rather than here.
+
+### Added
+
+- `.claude/` - Claude Code package: 4 agents (orchestrator, measurer, records-librarian, claim-auditor), 7 skills (infra-lane, deploy-lane, tagging-as-addressing, measure-before-claiming, cost-guard, lab-authoring, session-closeout), 2 rules (safety, scope), 2 hooks (session-start briefing, cloud-change guard), `settings.json`, `setup.ps1`
+- `docs/AGENTIC-OPS.md` - Guide: the problem it solves, 5-minute quickstart on lab-000, prompts, how to adapt it
+- `examples/github-actions/infra-lane.yml` - Example workflow: what-if on pull request, apply after environment approval, OIDC sign-in
+- `llms.txt`, `CITATION.cff` - Machine-readable summary and citation metadata
+
+### Changed
+
+- Root `README.md` - New one-line description, topics line, and a "Run It by Prompt" section
+- `CLAUDE.md` - Pointer to `.claude/` and the guide
+
+---
+
 ## v0.7.1 - 2026-03-02 - Cleanup, Rename + CONTRIBUTING.md
 
 ### Added

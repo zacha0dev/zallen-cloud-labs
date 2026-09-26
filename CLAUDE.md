@@ -4,6 +4,12 @@ This is an **Azure networking labs repository** built with Claude Code. All labs
 
 ---
 
+## Claude Code package (`.claude/`)
+
+Agents, skills, rules and hooks for running these labs by prompt live in `.claude/` (overview: `.claude/README.md`, guide: `docs/AGENTIC-OPS.md`). The rules in `.claude/rules/` apply to every session: no cloud change without an explicit ask, no identifiers in commits, every claim backed by a measurement.
+
+---
+
 ## Repository Purpose
 
 A personal collection of Azure cloud labs focused on Virtual WAN, hybrid connectivity, DNS, and networking patterns. Every lab is designed to be deployed, validated, and destroyed cleanly.
@@ -38,6 +44,7 @@ A personal collection of Azure cloud labs focused on Virtual WAN, hybrid connect
 | `docs/DOMAINS/dns.md` | Azure DNS concepts |
 | `docs/DOMAINS/aws-hybrid.md` | AWS hybrid connectivity (lab-003 only) |
 | `docs/AUDIT.md` | Living audit log / known issues |
+| `docs/AGENTIC-OPS.md` | Running the labs by prompt with the `.claude/` package |
 | `scripts/labs-common.ps1` | Shared helpers used by all deploy/destroy scripts |
 
 ---

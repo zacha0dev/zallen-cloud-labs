@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use these labs or the Claude Code package in your own work, please cite it as below."
+title: "AI-Driven Cloud Labs: Azure networking labs and a Claude Code package for agentic infrastructure operations"
+type: software
+authors:
+  - family-names: Allen
+    given-names: Zachary
+    alias: zacha0dev
+repository-code: "https://github.com/zacha0dev/zallen-cloud-labs"
+license: MIT
+version: 0.11.0
+date-released: 2026-09-26
+keywords:
+  - Claude Code
+  - agentic IaC
+  - prompt-based infrastructure management
+  - AI-driven cloud operations
+  - Azure Virtual WAN
+  - BGP
+  - Azure DNS
+  - Bicep
+  - PowerShell
