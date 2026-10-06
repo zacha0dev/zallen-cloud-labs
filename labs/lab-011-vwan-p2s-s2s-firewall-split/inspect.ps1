@@ -164,11 +164,19 @@ function Find-EffRoute {
 $appRoute = Find-EffRoute -Prefix $script:AppCidr
 $appHopType = ""; $appHop = ""
 if ($appRoute) { $appHopType = $appRoute.nextHopType; $appHop = (@($appRoute.nextHops) | ForEach-Object { Get-LastSegment $_ }) -join "," }
+# Same-prefix Default static route beats the propagated VNet-connection route;
+# a broader aggregate should not (longest prefix match comes first).
 $expectedHop = $script:FwConnName
-if ($scenario -ne "Baseline") { $expectedHop = $script:HubFwName }
+if ($scenario -eq "HubFwForP2S" -or $scenario -eq "HubFwSymmetric") { $expectedHop = $script:HubFwName }
 $st = "FAIL"; if ($appHop -match [regex]::Escape($expectedHop)) { $st = "PASS" }
 Add-Result -Key "Default RT: $($script:AppCidr) next hop is $expectedHop" -Status $st -Details "observed: $appHopType $appHop"
 
+if ($scenario -eq "HubFwAggregate") {
+  $agg = Find-EffRoute -Prefix "10.0.0.0/8"
+  $st = "FAIL"; $d = "10.0.0.0/8 not in effective routes"
+  if ($agg) { $d = "$($agg.nextHopType) " + ((@($agg.nextHops) | ForEach-Object { Get-LastSegment $_ }) -join ","); if ($d -match [regex]::Escape($script:HubFwName)) { $st = "PASS" } }
+  Add-Result -Key "Default RT: aggregate 10.0.0.0/8 next hop is $($script:HubFwName)" -Status $st -Details $d
+}
 foreach ($p in @($script:OnpremCidr, $script:P2sPool)) {
   $r = Find-EffRoute -Prefix $p
   $st = "FAIL"; $d = "missing"

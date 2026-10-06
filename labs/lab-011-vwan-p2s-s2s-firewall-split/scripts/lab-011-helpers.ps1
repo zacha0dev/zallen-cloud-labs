@@ -183,6 +183,7 @@ function Get-ActiveScenario {
   foreach ($r in (Get-HubStaticRoutes -RouteTable $RouteTable)) {
     if ($r.name -like "$($script:LabRoutePrefix)*") { $names += $r.name }
   }
+  if ($names -contains "lab011-agg-to-hub-fw") { return "HubFwAggregate" }
   if ($names -contains "lab011-pool-to-hub-fw") { return "HubFwSymmetric" }
   if ($names -contains "lab011-app-to-hub-fw") { return "HubFwForP2S" }
   return "Baseline"

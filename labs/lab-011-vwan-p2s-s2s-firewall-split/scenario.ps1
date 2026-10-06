@@ -8,6 +8,10 @@
 #                   "push P2S traffic to the hub firewall" on the shared Default RT.
 #   HubFwSymmetric  HubFwForP2S plus 172.16.110.0/24 (P2S pool) -> hub firewall,
 #                   so the return path from the app spoke also crosses the hub FW.
+#   HubFwAggregate  RFC1918 aggregates (10/8, 172.16/12, 192.168/16) -> hub firewall,
+#                   the Firewall Manager "private_traffic" pattern. Tests whether a
+#                   broader Default static route leaves the more specific propagated
+#                   VNet-connection route (10.112.0.0/24 -> spoke FW) in charge.
 #
 # Static routes in a hub route table win over propagated routes for the same
 # prefix, and every branch (S2S, P2S, ER) is associated with Default, so any
@@ -16,7 +20,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)]
-  [ValidateSet("Baseline", "HubFwForP2S", "HubFwSymmetric")]
+  [ValidateSet("Baseline", "HubFwForP2S", "HubFwSymmetric", "HubFwAggregate")]
   [string]$Mode,
   [string]$SubscriptionKey,
   [switch]$Force
@@ -47,7 +51,16 @@ $routes = @()
 foreach ($r in (Get-HubStaticRoutes -RouteTable $rt)) {
   if ($r.name -notlike "$($script:LabRoutePrefix)*") { $routes += $r }
 }
-if ($Mode -ne "Baseline") {
+if ($Mode -eq "HubFwAggregate") {
+  $routes += [ordered]@{
+    name            = "lab011-agg-to-hub-fw"
+    destinationType = "CIDR"
+    destinations    = @("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    nextHopType     = "ResourceId"
+    nextHop         = $fw.id
+  }
+}
+if ($Mode -eq "HubFwForP2S" -or $Mode -eq "HubFwSymmetric") {
   $routes += [ordered]@{
     name            = "lab011-app-to-hub-fw"
     destinationType = "CIDR"

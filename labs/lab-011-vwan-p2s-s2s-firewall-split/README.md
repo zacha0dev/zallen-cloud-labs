@@ -91,6 +91,46 @@ anything else are left alone.
 | `Baseline` (after deploy) | none | Both branches reach the app via the spoke FW (control case) |
 | `HubFwForP2S` | `10.112.0.0/24 -> hub Azure Firewall` | The design as asked: "push P2S to the hub firewall" |
 | `HubFwSymmetric` | above + `172.16.110.0/24 -> hub Azure Firewall` | Same, plus forcing the return path back through the hub FW |
+| `HubFwAggregate` | `10/8, 172.16/12, 192.168/16 -> hub Azure Firewall` | Firewall Manager's `private_traffic` pattern: does a broader Default static route leave the propagated `/24` VNet-connection route in charge? |
+
+## Known issues and documented behavior (researched 2026-10-06)
+
+Does a static route on `defaultRouteTable` break VNet-connection static routes that propagate into
+`defaultRouteTable`? The docs say it does not remove or withdraw them, but it can **shadow** them:
+
+| Default RT static route vs propagated VNet-connection route | Documented result | Lab scenario |
+|---|---|---|
+| Different, non-overlapping prefix | Both coexist; Microsoft's own hybrid design uses exactly this | n/a |
+| Broader aggregate (e.g. 10.0.0.0/8 -> hub FW) | Longest prefix match is step 1 of hub route selection, so the propagated `/24` still wins for the app | `HubFwAggregate` |
+| Same prefix | "Prefer static routes learned from the virtual hub route table over BGP routes" (step 2), so the Default static route wins for **every** connection associated with Default, S2S included | `HubFwForP2S` |
+| More specific than the propagated route | LPM, so the Default static route wins for that sub-range | n/a |
+
+Other documented constraints that hit this design:
+
+- **Hub FW then spoke NVA (double inspection) is not supported without routing intent.** From
+  *Combine static routing to Azure Firewall and spoke NVAs*: "This architecture doesn't support
+  double-inspection scenarios ... routed to and inspected by Azure Firewall in the Virtual WAN hub
+  and then forwarded to an NVA in a spoke". P2S -> hub FW -> spoke FW -> app is that path.
+- **Branch-to-branch traffic (P2S <-> S2S) is not inspected by the hub firewall with static routes.**
+  That needs routing intent.
+- **Mixing static routes to Azure Firewall and routing intent is not supported** ("two disjoint ways").
+- **Option 1 static routes** (VNet connection, propagate = true) "can't be used for inspection
+  scenarios between a Virtual WAN on-premises connection and spoke Virtual Network". Indirect
+  spokes peered behind the NVA, as in this lab, are a supported Option 1 use case.
+- **Branches must share one routing config.** P2S concepts: "Having different propagations for
+  branches connections might result in unexpected routing behaviors, as Virtual WAN will choose the
+  routing configuration for one branch and apply it to all branches."
+- **Bypass next hop is ignored** when propagate static routes is on and routing intent is used
+  (treated as `equals`). It can only be set when the connection is created.
+- Release-notes known issues: no open item matches this exact case. Related ones are #9 (concurrent
+  spoke address-space updates not synced to the hub), #10 (portal fails to update branch routing
+  config when hub and gateways sit in different resource groups; use CLI/REST) and #13 (incomplete
+  activity log for hub changes, so route edits may not show in change history).
+
+Sources (MicrosoftDocs/azure-docs, `articles/virtual-wan/`): `about-virtual-hub-routing.md`,
+`about-virtual-hub-routing-preference.md`, `static-routes.md`, `static-routes-firewall-basic.md`,
+`hybrid-firewall-spoke-static.md`, `point-to-site-concepts.md`, `how-to-routing-policies.md`,
+`whats-new.md` (Known issues).
 
 ## Cost
 
@@ -146,11 +186,15 @@ Re-running deploy is safe. Bicep is incremental, and the S2S key and certificate
 .\labs\lab-011-vwan-p2s-s2s-firewall-split\scenario.ps1 -Mode HubFwForP2S
 .\lab.ps1 -Inspect lab-011            # ~15 min: waits for firewall flow logs
 
-# 2. Symmetric variant
+# 2. Aggregate (Firewall Manager style) - checks the /24 is NOT shadowed
+.\labs\lab-011-vwan-p2s-s2s-firewall-split\scenario.ps1 -Mode HubFwAggregate
+.\lab.ps1 -Inspect lab-011
+
+# 3. Symmetric variant
 .\labs\lab-011-vwan-p2s-s2s-firewall-split\scenario.ps1 -Mode HubFwSymmetric
 .\lab.ps1 -Inspect lab-011
 
-# 3. Back to the control case
+# 4. Back to the control case (also proves the propagated route comes back)
 .\labs\lab-011-vwan-p2s-s2s-firewall-split\scenario.ps1 -Mode Baseline
 ```
 
@@ -179,6 +223,8 @@ inspect JSON after a run.
 | Baseline | Both branches via spoke FW; hub FW sees nothing | _pending_ |
 | HubFwForP2S | Static route beats the propagated one, so **S2S also** goes to the hub FW (design goal not met); return path from the app bypasses the hub FW (asymmetric) | _pending_ |
 | HubFwSymmetric | Return path also via hub FW; S2S still shares the hub FW path | _pending_ |
+| HubFwAggregate | `10.112.0.0/24` stays on conn-vnet-fw (LPM); only destinations with no more specific route go to the hub FW | _pending_ |
+| Baseline after any mode | Removing the Default static route restores `10.112.0.0/24 -> conn-vnet-fw` | _pending_ |
 | All | P2S client gets the hub, firewall VNet, on-prem prefixes; whether it gets `10.112.0.0/24` (a static-route-only prefix) is an open question | _pending_ |
 
 ### If the measurement confirms branches cannot be split
