@@ -23,6 +23,7 @@
 | [lab-008](../../labs/lab-008-azure-dns-private-resolver/README.md) | DNS Private Resolver in hub; forwarding ruleset to spoke; DNS Security Policy blocking listed domains | Azure | ~$0.03/hr | lab-007 recommended | `inspect.ps1` |
 | [lab-009](../../labs/lab-009-avnm-hub-spoke-global-mesh/README.md) | Azure Virtual Network Manager (AVNM) dual-region hub-spoke; script deploys two hub-spoke topologies; Global Mesh is a manual portal step | Azure | ~$0.01/hr | Azure CLI 2.51+ | `inspect.ps1` (mesh step is manual) |
 | [lab-010](../../labs/lab-010-vwan-route-maps/README.md) | vWAN Route Maps: community tagging, route filtering, AS path prepend applied to hub connections | Azure | ~$0.26/hr | lab-001 passing, Azure CLI 2.54+ | `inspect.ps1` |
+| [lab-011](../../labs/lab-011-vwan-p2s-s2s-firewall-split/README.md) | Can P2S use the hub Azure Firewall while S2S uses a spoke Azure Firewall when both share the Default route table? Measured with effective routes, a real P2S client and firewall logs | Azure | ~$2.26/hr | lab-001 passing, Azure CLI 2.54+ | `inspect.ps1` |
 
 ---
 
@@ -46,7 +47,7 @@ Full contract details: [docs/ops/LAB-STANDARD.md](../ops/LAB-STANDARD.md)
 
 | Labs | Primary Domain |
 |------|---------------|
-| lab-001, 003, 004, 005, 006, 010 | [vWAN](../DOMAINS/vwan.md) |
+| lab-001, 003, 004, 005, 006, 010, 011 | [vWAN](../DOMAINS/vwan.md) |
 | lab-002 | App Gateway + Front Door |
 | lab-003 | [AWS Hybrid](../DOMAINS/aws-hybrid.md) |
 | lab-007, lab-008 | [Azure DNS](../DOMAINS/dns.md) |
@@ -66,6 +67,7 @@ Full contract details: [docs/ops/LAB-STANDARD.md](../ops/LAB-STANDARD.md)
 8. **lab-008** - DNS Private Resolver. Cross-VNet forwarding, ruleset isolation. ~8-12 min.
 9. **lab-009** - AVNM hub-spoke + Global Mesh. Near-free, CLI deploys infra, portal step enables cross-region mesh. ~8-12 min.
 10. **lab-010** - vWAN Route Maps. Community tagging, route filtering, AS path prepend. Requires Azure CLI 2.54+. ~15-20 min.
+11. **lab-011** - P2S + S2S on the Default route table with a hub firewall and a spoke firewall. The priciest lab (~$2.26/hr); deploy ~75-100 min, so plan a ~3 hour session.
 
 **Always run `.\lab.ps1 -Destroy <lab-id>` after each lab session.**
 

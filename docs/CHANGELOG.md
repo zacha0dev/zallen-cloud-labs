@@ -9,6 +9,10 @@
 
 See [AUDIT.md](AUDIT.md) for current next actions.
 
+### Added
+
+- `labs/lab-011-vwan-p2s-s2s-firewall-split/` - vWAN hub with S2S and P2S on the Default route table, Azure Firewall in a spoke (VNet-connection static route) and in the hub. `scenario.ps1` switches Default static routes; `inspect.ps1` measures effective routes, a real OpenVPN P2S client's pushed routes, data-plane probes and firewall logs. Bicep compiles and the scripts were exercised against a mocked `az`; not yet deployed to Azure.
+
 ---
 
 ## v0.12.0 - 2026-09-26 - v2 Review Pass

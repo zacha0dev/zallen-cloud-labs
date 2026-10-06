@@ -16,7 +16,7 @@
 
 ## 2. Labs
 
-Eleven labs, lab-000 (free) to lab-010. Goals, costs, prerequisites and the recommended run
+Twelve labs, lab-000 (free) to lab-011. Goals, costs, prerequisites and the recommended run
 order live in one place: **[LABS/README.md](LABS/README.md)**.
 
 To run them by prompt with Claude Code, see **[AGENTIC-OPS.md](AGENTIC-OPS.md)** and the

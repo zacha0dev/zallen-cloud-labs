@@ -273,6 +273,7 @@ Windows (see CLAUDE.md).
 | lab-008 | Yes | Yes | Yes | Yes (no region allowlist) | Yes | Yes |
 | lab-009 | Yes | Yes | Yes | Yes | Yes | Yes |
 | lab-010 | Yes | Yes | Yes | Yes | Yes | Yes |
+| lab-011 | Yes | Yes | Yes | Yes | Yes | Yes |
 
 Last reviewed 2026-09-26. Labs without `inspect.ps1` validate in deploy Phase 5; open gaps are
 tracked in [docs/AUDIT.md](../AUDIT.md).

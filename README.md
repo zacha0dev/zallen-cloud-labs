@@ -4,7 +4,7 @@
 > applies and **measures** real infrastructure changes, with guard rails so cloud changes wait
 > for your yes.
 
-A personal project: eleven hands-on labs covering Azure Virtual WAN, BGP, site-to-site VPN
+A personal project: twelve hands-on labs covering Azure Virtual WAN, BGP, site-to-site VPN
 (including Azure to AWS), Azure DNS and Azure Virtual Network Manager. Each one deploys,
 proves a specific behavior, and tears itself down through a single PowerShell CLI. Every lab,
 script and doc was designed and iterated with [Claude Code](https://claude.ai/code) as a
@@ -116,6 +116,7 @@ ship today, and the framework is documented in [CLAUDE.md](CLAUDE.md).
 | [lab-008](labs/lab-008-azure-dns-private-resolver/) | Azure DNS Private Resolver + DNS Security Policy | Azure | ~$0.03/hr |
 | [lab-009](labs/lab-009-avnm-hub-spoke-global-mesh/) | AVNM dual-region hub-spoke + Global Mesh | Azure | ~$0.01/hr |
 | [lab-010](labs/lab-010-vwan-route-maps/) | vWAN Route Maps: community tagging, route filtering, AS path prepend | Azure | ~$0.26/hr |
+| [lab-011](labs/lab-011-vwan-p2s-s2s-firewall-split/) | vWAN P2S + S2S on the Default route table: hub firewall vs spoke firewall | Azure | ~$2.26/hr |
 
 Costs are list-price estimates. Goals, prerequisites and the recommended run order are in the
 [lab catalog](docs/LABS/README.md).

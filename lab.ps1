@@ -91,6 +91,7 @@ $LabCatalog = @{
   "lab-008" = @{ Desc = "DNS Private Resolver + DNS Security Policy";   Cost = "~`$0.03/hr"; Cloud = "Azure";       CostPerHr = 0.03 }
   "lab-009" = @{ Desc = "AVNM dual-region hub-spoke + Global Mesh";    Cost = "~`$0.01/hr"; Cloud = "Azure";       CostPerHr = 0.01 }
   "lab-010" = @{ Desc = "vWAN Route Maps";                              Cost = "~`$0.26/hr"; Cloud = "Azure";       CostPerHr = 0.26 }
+  "lab-011" = @{ Desc = "vWAN P2S + S2S on Default RT, hub vs spoke FW"; Cost = "~`$2.26/hr"; Cloud = "Azure";       CostPerHr = 2.26 }
 }
 
 # =============================================================================
@@ -262,7 +263,7 @@ function Show-Help {
   Write-Host "  .\lab.ps1 -Research <lab-id>          # List research scenarios (labs/<lab>/research/*.ps1)"
   Write-Host ""
   Write-Host "RECOMMENDED RUN ORDER" -ForegroundColor DarkGray
-  Write-Host "  lab-000 (free) -> lab-001 -> lab-006 -> lab-004/005 -> lab-002 -> lab-003 -> lab-007 -> lab-008 -> lab-009 -> lab-010" -ForegroundColor DarkGray
+  Write-Host "  lab-000 (free) -> lab-001 -> lab-006 -> lab-004/005 -> lab-002 -> lab-003 -> lab-007 -> lab-008 -> lab-009 -> lab-010 -> lab-011" -ForegroundColor DarkGray
   Write-Host ""
   Write-Host "  Always run -Destroy after each lab session to avoid charges." -ForegroundColor Yellow
   Write-Host ""
