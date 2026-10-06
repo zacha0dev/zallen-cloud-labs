@@ -86,6 +86,11 @@ function Invoke-BicepDeployment {
     if ($text -match "AnotherOperationInProgress|OperationNotAllowed.*in progress") {
       Write-Host "[HINT] The hub was busy with another operation. Wait 5 minutes and re-run deploy (it is idempotent)." -ForegroundColor Yellow
     }
+    if ($text -match "RequestDisallowedByPolicy|PolicyViolation") {
+      Write-Host "[HINT] An Azure Policy on this subscription blocked a resource. The error above names the policy." -ForegroundColor Yellow
+      Write-Host "       Common blockers here: public IPs (P2S client VM, gateways, firewalls), VM SKUs, regions, required tags." -ForegroundColor Yellow
+      Write-Host "       Ask for a lab exemption on rg-lab-011-vwan-fw-split, or deploy in a sandbox subscription." -ForegroundColor Yellow
+    }
     if ($text -match "SkuNotAvailable|NotAvailableForSubscription|QuotaExceeded") {
       Write-Host "[HINT] SKU or quota not available in $Location for this subscription. Try -Location eastus or -VmSize Standard_B2ats_v2." -ForegroundColor Yellow
     }
@@ -139,6 +144,23 @@ Write-Step "Authenticating..."
 Ensure-AzureAuth -DoLogin
 az account set --subscription $SubscriptionId | Out-Null
 Write-SubStep "Subscription: $SubscriptionId"
+
+# Subscription-level prerequisite: report, never register it ourselves
+Write-Step "Checking resource providers..."
+$missingRp = @()
+foreach ($ns in @("Microsoft.Network", "Microsoft.Compute", "Microsoft.OperationalInsights", "Microsoft.Insights")) {
+  $rp = Invoke-AzJson -AzArgs @("provider", "show", "-n", $ns, "--query", "{state:registrationState}")
+  $state = "Unknown"
+  if ($rp) { $state = $rp.state }
+  if ($state -ne "Registered") { $missingRp += $ns }
+  Write-SubStep "$ns : $state"
+}
+if ($missingRp.Count -gt 0) {
+  Write-Host ""
+  Write-Host "  Resource providers not registered on this subscription. Ask an owner to run:" -ForegroundColor Red
+  foreach ($ns in $missingRp) { Write-Host "    az provider register --namespace $ns --wait" -ForegroundColor Yellow }
+  throw "Missing resource provider registration(s): $($missingRp -join ', ')"
+}
 
 if (-not $Owner) {
   $Owner = $env:USERNAME
