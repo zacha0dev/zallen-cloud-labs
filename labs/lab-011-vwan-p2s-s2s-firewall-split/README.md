@@ -4,6 +4,19 @@ Can one vWAN hub send site-to-site (S2S) traffic through an Azure Firewall in a 
 point-to-site (P2S) traffic through an Azure Firewall in the hub, when both branches use the
 Default route table? This lab builds that design, then measures it.
 
+## Real-world design this models
+
+Both branch types (ExpressRoute and P2S in production; this lab uses **S2S VPN as the ExpressRoute
+stand-in**, since a circuit can't be deployed in a lab) sit on `defaultRouteTable`. That table mixes:
+
+- **Static routes entered on `defaultRouteTable`** with next hop **hub Azure Firewall**, and
+- **Routes propagated from a VNet connection's own static routes** (next hop IP = spoke firewall,
+  propagate static routes on). These are not typed into `defaultRouteTable`.
+
+The hub treats ExpressRoute and VPN connections the same here: same association rule, same
+propagation rule, same route selection. So a measured S2S result carries over to ExpressRoute.
+Confirming on a real circuit is still the only proof for ER itself.
+
 ## Goal
 
 Answer one falsifiable question with measurements, not diagrams:
